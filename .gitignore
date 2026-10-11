@@ -1,0 +1,20 @@
+# Secrets and local data never go to git
+.env
+.env.*
+!.env.example
+data/
+
+# Our working notes
+PROJECT.md
+
+# Python
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# Node
+node_modules/
+
+# macOS
+.DS_Store
