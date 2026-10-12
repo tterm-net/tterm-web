@@ -13,8 +13,10 @@ venv/
 __pycache__/
 *.pyc
 
-# Node
+# Node, and the built page: release archives bring it ready, and anyone can
+# build it from web/ with npm
 node_modules/
+web/dist/
 
 # macOS
 .DS_Store

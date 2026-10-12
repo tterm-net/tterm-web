@@ -1,0 +1,105 @@
+"""People and projects: initials, project codes, the local owner."""
+import asyncio
+
+import asyncpg
+
+from ..core import accounts
+
+
+def test_initials_as_on_the_avatar():
+    assert accounts.initials("Denis Gerasimenko") == "DG"
+    assert accounts.initials("anna nikolaeva") == "AN"
+    # First and last word: a middle name does not push the surname out.
+    assert accounts.initials("Anna Maria Nikolaeva") == "AN"
+    assert accounts.initials("Denis") == "D"
+    assert accounts.initials("Денис Герасименко") == "ДГ"
+    assert accounts.initials("  ") == "?"
+
+
+def test_first_name():
+    assert accounts.first_name("Denis Gerasimenko") == "Denis"
+    assert accounts.first_name("Denis") == "Denis"
+
+
+def test_project_code_suggestions():
+    assert accounts.suggest_code("Client X") == "CX"
+    assert accounts.suggest_code("Personal") == "P"
+    assert accounts.suggest_code("Lisbon Bikes") == "LB"
+    assert accounts.suggest_code("Shop staging") == "SS"
+    assert accounts.suggest_code("Клиент Х") == "КХ"
+    assert accounts.suggest_code("a b c d e f") == "ABCD", "four at most"
+    assert accounts.suggest_code("Client X", {"CX"}) == "CX2"
+    assert accounts.suggest_code("Client X", {"CX", "CX2"}) == "CX3"
+    assert accounts.suggest_code("!!!") == "P", "a name without letters"
+
+
+def test_project_code_rules():
+    for good in ("P", "CX", "SS1", "ABCD", "КХ"):
+        assert accounts.valid_code(good), good
+    for bad in ("", "ABCDE", "C_X", "C X", "C-X"):
+        assert not accounts.valid_code(bad), bad
+
+
+async def test_first_start_creates_owner_and_personal(h):
+    async with h.pool() as pool:
+        me = await accounts.ensure_local_owner(pool, "Denis Gerasimenko")
+        assert me.initials == "DG" and me.theme == "system" and me.plan == "free"
+        projects = await accounts.projects_of(pool, me.id)
+        assert [(p["name"], p["code"], p["role"]) for p in projects] == [
+            ("Personal", "P", "owner")], projects
+        assert projects[0]["machines"] == []
+        kinds = [r["kind"] for r in await pool.fetch(
+            "SELECT kind FROM journal ORDER BY id")]
+        assert kinds == ["user.created", "project.created"], kinds
+
+
+async def test_later_starts_find_the_same_owner(h):
+    async with h.pool() as pool:
+        first = await accounts.ensure_local_owner(pool, "Denis")
+        again = await accounts.ensure_local_owner(pool, "Denis Gerasimenko")
+        assert again.id == first.id
+        assert again.name == "Denis Gerasimenko", "the name follows the settings"
+        assert await pool.fetchval("SELECT count(*) FROM users") == 1
+        assert await pool.fetchval("SELECT count(*) FROM projects") == 1
+
+
+async def test_two_processes_starting_at_once_make_one_owner(h):
+    async with h.pool() as pool:
+        people = await asyncio.gather(
+            *[accounts.ensure_local_owner(pool, "Denis") for _ in range(4)])
+        assert len({p.id for p in people}) == 1
+        assert await pool.fetchval("SELECT count(*) FROM users") == 1
+
+
+async def test_theme_is_kept_in_the_account(h):
+    async with h.pool() as pool:
+        me = await accounts.ensure_local_owner(pool, "Denis")
+        await accounts.set_theme(pool, me.id, "light")
+        assert (await accounts.person(pool, me.id)).theme == "light"
+        try:
+            await accounts.set_theme(pool, me.id, "blue")
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("theme 'blue' accepted")
+
+
+async def test_codes_are_unique_per_owner(h):
+    async with h.pool() as pool:
+        me = await accounts.ensure_local_owner(pool, "Denis")
+        async with pool.acquire() as conn:
+            await accounts.create_project(conn, me.id, "Client X", "cx")
+            try:
+                await accounts.create_project(conn, me.id, "Copy", "CX")
+            except asyncpg.UniqueViolationError:
+                pass
+            else:
+                raise AssertionError("the same code twice for one owner")
+            try:
+                await accounts.create_project(conn, me.id, "Long", "ABCDE")
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("a five-letter code accepted")
+        codes = [p["code"] for p in await accounts.projects_of(pool, me.id)]
+        assert codes == ["P", "CX"], codes

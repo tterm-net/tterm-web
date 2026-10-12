@@ -1,0 +1,79 @@
+/* The design system's colours, as approved in the mockups on 11.10.2026.
+ *
+ * One set of names, two sets of values. The light theme keeps amber as a
+ * fill, while text in amber, green, red and blue is darker there, to keep
+ * a contrast of at least 4.5:1. Hex in upper case on purpose: it is how the
+ * mockups write it, so the two can be compared by eye. */
+
+:root,
+.tt-dark {
+  --ground: #0D0E11;
+  --surface: #16181C;
+  --raised: #1D2026;
+  --line: #262A31;
+  --live: #121419;
+  --sep: #3A3F48;
+  --ink: #EDEFF3;
+  --dim: #9AA0AA;
+  --faint: #7D838E;
+  --amber: #E9A33F;
+  --amber-ink: #E9A33F;
+  --amber-dim: #B8802F;
+  --amber-hover: #F2BD69;
+  --amber-tint: rgba(233, 163, 63, .12);
+  --amber-ring: rgba(233, 163, 63, .28);
+  --on-accent: #0D0E11;
+  --green: #46B95C;
+  --green-ink: #46B95C;
+  --green-tint: rgba(70, 185, 92, .12);
+  --red: #E5534B;
+  --red-ink: #E5534B;
+  --red-tint: rgba(229, 83, 75, .12);
+  --red-line: rgba(229, 83, 75, .45);
+  --blue: #6C8CFF;
+  --blue-ink: #6C8CFF;
+  --blue-tint: rgba(108, 140, 255, .12);
+  --blue-wash: rgba(108, 140, 255, .08);
+  --scrim: rgba(5, 6, 8, .62);
+  --shadow: 0 24px 64px rgba(0, 0, 0, .55);
+  color-scheme: dark;
+}
+
+.tt-light {
+  --ground: #FCFCFD;
+  --surface: #F3F4F6;
+  --raised: #E8EAEE;
+  --line: #DCDFE5;
+  --live: #F6F7F9;
+  --sep: #C4C9D1;
+  --ink: #15171C;
+  --dim: #545B67;
+  --faint: #5F6673;
+  --amber: #E9A33F;
+  --amber-ink: #93560A;
+  --amber-dim: #8A5A12;
+  --amber-hover: #6F4006;
+  --amber-tint: rgba(233, 163, 63, .16);
+  --amber-ring: rgba(233, 163, 63, .32);
+  --on-accent: #0D0E11;
+  --green: #2F9E4C;
+  --green-ink: #15702F;
+  --green-tint: rgba(47, 158, 76, .12);
+  --red: #E0574D;
+  --red-ink: #B3302A;
+  --red-tint: rgba(224, 87, 77, .1);
+  --red-line: rgba(179, 48, 42, .45);
+  --blue: #4766E6;
+  --blue-ink: #3554D1;
+  --blue-tint: rgba(71, 102, 230, .1);
+  --blue-wash: rgba(71, 102, 230, .06);
+  --scrim: rgba(21, 23, 28, .28);
+  --shadow: 0 24px 64px rgba(21, 23, 28, .16);
+  color-scheme: light;
+}
+
+:root {
+  --font-ui: "Manrope Variable", Manrope, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace,
+    SFMono-Regular, Menlo, monospace;
+}
