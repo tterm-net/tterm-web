@@ -64,6 +64,13 @@ export const Copy = (p: Props) => (
   </Stroke>
 );
 
+export const TerminalIcon = (p: Props) => (
+  <Stroke {...p}>
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <path d="M7 10l3 2-3 2M12 15h5" />
+  </Stroke>
+);
+
 export const Check = (p: Props) => (
   <Stroke {...p} width={2.4}><path d="M5 12l5 5 9-10" /></Stroke>
 );

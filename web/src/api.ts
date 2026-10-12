@@ -52,10 +52,32 @@ export interface Me {
   plan: string;
 }
 
+export type TerminalState = "connecting" | "open" | "ended" | "gone";
+
+export interface TerminalInfo {
+  id: string;
+  machineId: string;
+  machine: string;
+  /** As tabs show it: P/web-01, or P/web-01 · 2 for the second one. */
+  label: string;
+  name: string;
+  state: TerminalState;
+  /** How it ended, in a sentence; null while it runs. */
+  reason: string | null;
+  shell?: string | null;
+  /** Whether the shell prints our markers, so commands become blocks. */
+  markers?: boolean;
+  cwd?: string;
+  home?: string;
+  branch?: string;
+}
+
 export interface State {
   version: string;
   me: Me;
   projects: Project[];
+  /** The terminals running now, the oldest first. */
+  terminals: TerminalInfo[];
 }
 
 export interface Install {
@@ -119,5 +141,18 @@ export async function newInstall(projectId: string): Promise<Install> {
 
 export async function installStatus(id: string): Promise<InstallStatus> {
   const response = await fetch(`/api/installs/${id}`, { cache: "no-store" });
+  return (await check(response)).json();
+}
+
+export async function openTerminal(machineId: string, cols: number,
+  rows: number): Promise<TerminalInfo> {
+  const response = await fetch("/api/terminals",
+    change("POST", { machineId, cols, rows }));
+  return (await check(response)).json();
+}
+
+export async function terminalInfo(id: string): Promise<TerminalInfo | null> {
+  const response = await fetch(`/api/terminals/${id}`, { cache: "no-store" });
+  if (response.status === 404) return null;
   return (await check(response)).json();
 }

@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AddMachine } from "./AddMachine";
 import {
-  loadState, saveTheme, type MachineKind, type State, type Theme,
+  loadState, openTerminal, saveTheme, type MachineKind, type State,
+  type Theme,
 } from "./api";
 import { ChevronRight } from "./icons";
 import { Machines } from "./Machines";
 import { Sidebar } from "./Sidebar";
+import { TerminalView } from "./TerminalView";
 import {
   applyTheme, onSystemThemeChange, rememberedPin, rememberPin, shown,
   type Shown,
@@ -19,6 +21,18 @@ const OPEN_DELAY_MS = 180;
 const CLOSE_DELAY_MS = 250;
 const TOAST_MS = 3200;
 
+/** /t/<id> is a terminal; anything else is the machines page. */
+const TERMINAL_PATH = /^\/t\/([0-9a-f-]{36})\/?$/;
+
+/** A first guess at the window in characters, for the shell to start with;
+ * the terminal measures itself exactly as soon as it is on screen. */
+function guessSize(): { cols: number; rows: number } {
+  return {
+    cols: Math.max(20, Math.floor((window.innerWidth - 32) / 7.8)),
+    rows: Math.max(5, Math.floor((window.innerHeight - 64) / 15)),
+  };
+}
+
 export function App() {
   const [state, setState] = useState<State | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -30,6 +44,7 @@ export function App() {
   const [toast, setToast] = useState<string | null>(null);
   const [adding, setAdding] =
     useState<{ projectId: string; kind: MachineKind } | null>(null);
+  const [path, setPath] = useState(location.pathname);
   const openTimer = useRef<number | undefined>(undefined);
   const closeTimer = useRef<number | undefined>(undefined);
   const toastTimer = useRef<number | undefined>(undefined);
@@ -48,9 +63,22 @@ export function App() {
 
   useEffect(load, [load]);
 
-  /** After a machine connects: the sidebar and the page learn of it. */
+  /** After a machine connects or a terminal opens or ends: the sidebar and
+   * the page learn of it. */
   const refresh = useCallback(() => {
     loadState().then(setState).catch(() => {});
+  }, []);
+
+  // Addresses: back and forward move between the machines page and
+  // terminals the way they would between pages.
+  const navigate = useCallback((to: string) => {
+    if (to !== location.pathname) history.pushState(null, "", to);
+    setPath(to);
+  }, []);
+  useEffect(() => {
+    const onPop = () => setPath(location.pathname);
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
   }, []);
 
   // The theme: apply the choice, and follow the system while it says so.
@@ -70,6 +98,16 @@ export function App() {
     window.clearTimeout(toastTimer.current);
     toastTimer.current = window.setTimeout(() => setToast(null), TOAST_MS);
   }, []);
+
+  const startTerminal = useCallback((machineId: string) => {
+    const { cols, rows } = guessSize();
+    openTerminal(machineId, cols, rows)
+      .then((terminal) => {
+        navigate(`/t/${terminal.id}`);
+        refresh();
+      })
+      .catch((e: Error) => notYet(`Could not open a terminal: ${e.message}`));
+  }, [navigate, refresh, notYet]);
 
   const toggleTheme = () => {
     const next: Theme = shown(theme) === "light" ? "dark" : "light";
@@ -145,27 +183,41 @@ export function App() {
     if (!pinned) setOpen(false);
     setAdding({ projectId, kind });
   };
+  const leave = () => {
+    if (!pinned) setOpen(false);
+    navigate("/");
+  };
+  const terminalId = TERMINAL_PATH.exec(path)?.[1];
+
+  const sidebarButton = !pinned && (
+    <button type="button" className="icon-button"
+      aria-label="Open sidebar" aria-expanded={sidebarShown}
+      onClick={() => (sidebarShown ? closeSidebar() : setOpen(true))}
+      onMouseEnter={hoverOpen}
+      onMouseLeave={() => window.clearTimeout(openTimer.current)}>
+      <ChevronRight />
+    </button>
+  );
 
   return (
     <div className={pinned ? "app pinned" : "app"}>
-      <header className="topbar">
-        {!pinned && (
-          <button type="button" className="icon-button"
-            aria-label="Open sidebar" aria-expanded={sidebarShown}
-            onClick={() => (sidebarShown ? closeSidebar() : setOpen(true))}
-            onMouseEnter={hoverOpen}
-            onMouseLeave={() => window.clearTimeout(openTimer.current)}>
-            <ChevronRight />
-          </button>
-        )}
-      </header>
-
-      {anyMachine ? (
-        <Machines projects={state.projects} notYet={notYet}
-          onAdd={(projectId) => startAdding(projectId)} />
+      {terminalId ? (
+        <TerminalView key={terminalId} terminalId={terminalId}
+          shownTheme={shownTheme} sidebarButton={sidebarButton}
+          onLeave={leave} onOpenNew={startTerminal} onChanged={refresh} />
       ) : (
-        <Welcome me={state.me} personal={personal}
-          onAdd={(kind) => personal && startAdding(personal.id, kind)} />
+        <>
+          <header className="topbar">{sidebarButton}</header>
+          {anyMachine ? (
+            <Machines projects={state.projects} terminals={state.terminals}
+              onAdd={(projectId) => startAdding(projectId)}
+              onOpenTerminal={startTerminal}
+              onGoTo={(id) => navigate(`/t/${id}`)} />
+          ) : (
+            <Welcome me={state.me} personal={personal}
+              onAdd={(kind) => personal && startAdding(personal.id, kind)} />
+          )}
+        </>
       )}
 
       {sidebarShown && (
@@ -180,6 +232,16 @@ export function App() {
           onMouseEnter={cancelTimers}
           onMouseLeave={hoverAway}
           onAddMachine={(projectId) => startAdding(projectId)}
+          terminals={state.terminals}
+          currentTerminal={terminalId}
+          onOpenTerminal={(machineId) => {
+            if (!pinned) setOpen(false);
+            startTerminal(machineId);
+          }}
+          onGoTo={(id) => {
+            if (!pinned) setOpen(false);
+            navigate(`/t/${id}`);
+          }}
           notYet={notYet}
         />
       )}
@@ -187,7 +249,11 @@ export function App() {
       {adding && (
         <AddMachine projects={state.projects} projectId={adding.projectId}
           kind={adding.kind} onClose={() => setAdding(null)}
-          onConnected={refresh} notYet={notYet} />
+          onConnected={refresh} notYet={notYet}
+          onOpenTerminal={(machineId) => {
+            setAdding(null);
+            startTerminal(machineId);
+          }} />
       )}
 
       {toast && <div className="toast" role="status">{toast}</div>}

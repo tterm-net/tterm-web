@@ -4,11 +4,12 @@ tTerm in the browser: a real terminal with command blocks, for people who work
 with servers and for their teams. Projects, roles, a journal of who ran what,
 and watching a colleague's terminal, always with them knowing.
 
-**Status:** early development. Version 0.0.3 connects servers: one command
-on the server, and tTerm Web signs in to it with short-lived certificates.
-Terminals come next. The first stage ends with version 0.1, a real terminal
-to your own servers and computers in the browser on your laptop. Then come
-accounts and a server, then teams, then a public launch.
+**Status:** early development. Version 0.0.4 opens terminals: a real shell
+on your servers, in the browser, that keeps running when the page reloads,
+with every command kept as a block. Next come the block feed and tTerm's own
+input line. The first stage ends with version 0.1, a real terminal to your
+own servers and computers in the browser on your laptop. Then come accounts
+and a server, then teams, then a public launch.
 
 Related:
 
@@ -44,7 +45,7 @@ Then open http://localhost:8090. Stop it with Ctrl+C.
 To connect a server, the server must reach your machines' address: set
 `TTERM_CONNECT_URL` to an address that leads to port 8091 on this computer,
 for instance through a Cloudflare tunnel. Then "Add a machine" gives the
-command to run on the server.
+command to run on the server, and "Open a terminal" opens a shell on it.
 
 The checks need the same PostgreSQL. They create throwaway databases there
 and drop them at the end:
@@ -58,15 +59,18 @@ python -m tterm.tests
 ```
 tterm/
   core/          settings, the database and its migrations, people, projects,
-                 machines, SSH, the server passport
+                 machines, SSH, the server passport, terminals and the shell
+                 on the other end of them
   api/page.py    the page and its API, for people; only this computer
+  api/ws.py      the page's socket: every terminal on the page goes through it
   api/connect.py where machines talk to us: installer, registration, agents
   signer/        the signer: CA keys and short certificates, its own process
-  templates/     the installer for servers
+  templates/     the installer for servers, and the shell scripts terminals
+                 put on them
   server.py      runs both apps, on two ports
   dev.py         python -m tterm.dev: the signer, then the core
   tests/         python -m tterm.tests
-web/             the page: React, TypeScript, Vite
+web/             the page: React, TypeScript, Vite, xterm.js
 ```
 
 **How a server connects.** "Add a machine" makes a one-time command that
@@ -78,6 +82,24 @@ with those host keys pinned, and reads what the server is: system, shell,
 package manager, the commands it has. If anything fails, the reason shows
 in the page and in the installer's output, and the same command can be run
 again.
+
+**A terminal** is a real login shell in a real terminal on the server,
+bash or zsh as the server has it, reached over SSH with a certificate of its
+own. It lives in tTerm Web, not in the browser: closing the tab, reloading
+the page or a dropped connection leave it running, and the page takes up
+where it was. Only the shell's own end, or tTerm Web stopping, ends it.
+
+The shell also prints invisible markers, the way iTerm2, VS Code and Warp
+do: before each prompt (the exit code, the directory, the git branch) and
+when a command starts (its text). From them each command becomes a block:
+its text, where it ran, how long it took, how it ended and its output, kept
+in the database for as long as the project says. The scripts behind the
+markers live on the server in `~/.tterm` of the user `tterm`; tTerm Web
+writes them each time it opens a terminal there and starts the shell with
+them, after the usual startup files. Every marker carries a one-time key
+that the shell reads as the very first line, with echo off, so nothing a
+program prints can pass for one. The key never touches a file, the
+environment or a command line.
 
 **The signer** holds the CA keys and nothing else, in a process of its own.
 For every connection the core makes a throwaway key pair and asks the
@@ -93,7 +115,10 @@ machines' address.
 No sign-in yet, so the page guards itself: it answers only when the browser
 asks for `localhost` or `127.0.0.1` on its own port, which defeats DNS
 rebinding, and a request that changes something must come from the page
-itself. The page loads nothing from other sites, fonts included.
+itself, its socket included. The page loads nothing from other sites, fonts
+included, and its security policy allows no inline scripts or styles; the
+few style elements xterm.js writes carry a one-time number each copy of the
+page gets.
 
 ## Contributing
 
@@ -113,4 +138,4 @@ license matters when you distribute a modified version or run one as a service
 for others: then you must offer its source to the people who use it.
 
 The page bundles the fonts Manrope and JetBrains Mono, both under the SIL Open
-Font License 1.1.
+Font License 1.1, and xterm.js with its add-ons, under the MIT License.

@@ -16,6 +16,7 @@ interface Props {
   kind: MachineKind;
   onClose: () => void;
   onConnected: () => void;
+  onOpenTerminal: (machineId: string) => void;
   notYet: (what: string) => void;
 }
 
@@ -214,7 +215,8 @@ export function AddMachine(props: Props) {
             </div>
             <div className="button-row">
               <button type="button" className="button-accent big"
-                onClick={() => notYet("Terminals come in 0.0.4.")}>
+                onClick={() => status.machine &&
+                  props.onOpenTerminal(status.machine.id)}>
                 Open a terminal
               </button>
               <button type="button" className="button-plain" onClick={fresh}>

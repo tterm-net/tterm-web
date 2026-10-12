@@ -93,7 +93,8 @@ async def test_page_files_and_addresses_inside_the_page(h):
     async with h.core() as core:
         index = await request(core.page_port, "GET", "/")
         assert index.status == 200 and "<div id=root>" in index.text
-        assert index.headers["cache-control"] == "no-cache"
+        # Each copy carries its own one-time style number: never kept.
+        assert index.headers["cache-control"] == "no-store"
         # An address inside the page survives a reload.
         deep = await request(core.page_port, "GET", "/projects/p/overview")
         assert deep.status == 200 and "<div id=root>" in deep.text

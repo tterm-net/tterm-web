@@ -4,7 +4,7 @@
 // never changes the terminal's width; pinned, it narrows the page once.
 
 import { useState } from "react";
-import type { Me, Project, Role } from "./api";
+import type { Me, Project, Role, TerminalInfo } from "./api";
 import {
   ChevronDown, Close, Computer, Dots, Logo, Moon, Pin, Plus, Server, Sun,
 } from "./icons";
@@ -28,11 +28,16 @@ interface Props {
   onMouseEnter: () => void;
   onMouseLeave: () => void;
   onAddMachine: (projectId: string) => void;
+  terminals: TerminalInfo[];
+  currentTerminal?: string;
+  onOpenTerminal: (machineId: string) => void;
+  onGoTo: (terminalId: string) => void;
   notYet: (what: string) => void;
 }
 
 export function Sidebar(props: Props) {
   const { me, projects, pinned, shownTheme, notYet, onAddMachine } = props;
+  const { terminals, currentTerminal, onOpenTerminal, onGoTo } = props;
   const [folded, setFolded] = useState<Record<string, boolean>>({});
   const themeLabel =
     shownTheme === "light" ? "Switch to dark theme" : "Switch to light theme";
@@ -106,12 +111,29 @@ export function Sidebar(props: Props) {
                   {project.machines.map((machine) => (
                     <li key={machine.id}>
                       <button type="button" className="tree-machine"
-                        title={`Open a terminal on ${machine.name}`}
-                        onClick={() => notYet("Terminals come in 0.0.4.")}>
+                        title={`Open a new terminal on ${machine.name}`}
+                        onClick={() => onOpenTerminal(machine.id)}>
                         {machine.kind === "server" ? <Server size={15} />
                           : <Computer size={15} />}
                         <span>{machine.name}</span>
                       </button>
+                      {terminals.some((t) => t.machineId === machine.id) && (
+                        <ul className="tree-terminals">
+                          {terminals.filter((t) => t.machineId === machine.id)
+                            .map((t) => (
+                              <li key={t.id}>
+                                <button type="button" className="tree-terminal"
+                                  aria-current={t.id === currentTerminal
+                                    ? "page" : undefined}
+                                  title={`Go to ${t.label}`}
+                                  onClick={() => onGoTo(t.id)}>
+                                  <span className="dot open" aria-hidden="true" />
+                                  terminal {t.name}
+                                </button>
+                              </li>
+                            ))}
+                        </ul>
+                      )}
                     </li>
                   ))}
                   {canAdd && (

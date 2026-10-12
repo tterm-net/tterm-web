@@ -19,6 +19,7 @@ import uvicorn
 from .api.connect import create_connect_app
 from .api.page import create_page_app
 from .core import accounts, db, machines
+from .core.terminals import Terminals
 from .core.accounts import Person
 from .core.config import Settings
 from .core.signer_client import SignerClient, SignerRefused, SignerUnavailable
@@ -72,6 +73,7 @@ class Core:
         self.pool: asyncpg.Pool | None = None
         self.owner: Person | None = None
         self.active_ca: dict | None = None
+        self.terminals: Terminals | None = None
         self._servers: list[_Server] = []
         self._tasks: list[asyncio.Task] = []
         self._sockets: list[socket.socket] = []
@@ -100,12 +102,14 @@ class Core:
             await db.migrate(self.pool)
             self.owner = await accounts.ensure_local_owner(self.pool, s.owner_name)
             await self._meet_signer()
+            self.terminals = Terminals(self.pool, self.signer, self.owner)
+            await self.terminals.start()
         except BaseException:
             await self.stop()
             raise
 
         page = create_page_app(self.pool, self.owner, s.web_dist,
-                               self.page_port, s.connect_url)
+                               self.page_port, s.connect_url, self.terminals)
         connect = create_connect_app(self.pool, self.signer, s.connect_url)
         for app, sock, proxied in ((page, self._sockets[0], False),
                                    (connect, self._sockets[1], True)):
@@ -144,6 +148,11 @@ class Core:
             await asyncio.wait(self._tasks, return_when=asyncio.FIRST_COMPLETED)
 
     async def stop(self, grace: float = 5.0) -> None:
+        # Terminals first: their ends go to the database, which closes last.
+        if self.terminals is not None:
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(self.terminals.stop(), grace)
+            self.terminals = None
         for server in self._servers:
             server.should_exit = True
         if self._tasks:

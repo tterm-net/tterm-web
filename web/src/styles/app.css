@@ -607,6 +607,38 @@ code {
   background: var(--raised);
 }
 
+.tree-terminals {
+  list-style: none;
+  margin: 0 0 2px;
+  padding: 0 0 0 26px;
+}
+
+.tree-terminal {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--dim);
+  font: 600 12.5px var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.tree-terminal:hover {
+  background: var(--raised);
+  color: var(--ink);
+}
+
+.tree-terminal[aria-current="page"] {
+  color: var(--ink);
+  background: var(--raised);
+}
+
 /* ------------------------------------------------------------------ dialog */
 
 .scrim {
@@ -1061,6 +1093,187 @@ code {
 .status-card p {
   margin: 0;
   color: var(--dim);
+}
+
+/* --------------------------------------------------------------- terminal */
+
+/* One terminal over the whole window: the bar on top, the terminal below,
+ * nothing scrolls but the terminal itself. */
+.terminal-view {
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.terminal-bar {
+  flex: none;
+  gap: 6px;
+}
+
+.tab {
+  min-width: 0;
+  max-width: 340px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 4px 0 12px;
+  border-radius: 8px;
+  background: var(--surface);
+  font: 600 13px var(--font-ui);
+}
+
+.tab-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tab-close {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+}
+
+.tab-close:hover {
+  color: var(--ink);
+  background: var(--raised);
+}
+
+/* Machine and terminal state as a dot: green on line, a turning ring while
+ * a command runs or the terminal connects, a hollow ring once it ended. */
+.dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.dot.open {
+  background: var(--green);
+}
+
+.dot.busy {
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--amber-ring);
+  border-top-color: var(--amber);
+  animation: ttspin 0.9s linear infinite;
+}
+
+.dot.ended {
+  border: 2px solid var(--faint);
+}
+
+.lost-strip {
+  flex: none;
+  padding: 7px 16px;
+  background: var(--amber-tint);
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.terminal-area {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 8px 2px 4px 12px;
+  background: var(--ground);
+}
+
+.terminal-box {
+  width: 100%;
+  height: 100%;
+  /* xterm.js stacks its layers with z-index up to 11. Kept inside the box,
+   * so the notes laid over the terminal stay on top and take the clicks. */
+  position: relative;
+  z-index: 0;
+}
+
+/* xterm.js draws on its own; only its edges are ours. Below the last row
+ * there is a strip less than a row high: it shows the page's ground, not
+ * the black xterm.css gives it. */
+.terminal-box .xterm {
+  height: 100%;
+}
+
+.terminal-box .xterm .xterm-viewport {
+  background-color: var(--ground);
+}
+
+.terminal-box .xterm:focus,
+.terminal-box .xterm *:focus {
+  outline: none;
+}
+
+.terminal-note {
+  position: absolute;
+  z-index: 1;
+  top: 14px;
+  left: 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--dim);
+  font-size: 13px;
+}
+
+.terminal-ended {
+  position: absolute;
+  z-index: 1;
+  left: 16px;
+  right: 16px;
+  bottom: 16px;
+  max-width: 760px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 20px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.ended-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ended-text strong {
+  font: 700 14px var(--font-ui);
+}
+
+.ended-text span {
+  font-size: 13px;
+  color: var(--dim);
+}
+
+/* Beside "Open a terminal", so of its size. */
+.button-plain.running {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 8px;
+  font-size: 12px;
 }
 
 @media (prefers-reduced-motion: reduce) {

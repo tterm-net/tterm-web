@@ -26,12 +26,26 @@ ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 #: The header the page puts on every request that changes something.
 REQUEST_HEADER = "x-tterm"
 
+#: The page's security policy. Scripts, styles and fonts only from the
+#: page's own files; no inline scripts, no eval, no frames.
+CSP = ("default-src 'self'; script-src 'self'; style-src 'self'{nonce}; "
+       "font-src 'self'; img-src 'self' data:; connect-src 'self'; "
+       "frame-ancestors 'none'; base-uri 'none'; form-action 'self'; "
+       "object-src 'none'")
+
+
+def page_csp(nonce: str | None = None) -> str:
+    """The policy, optionally allowing style elements that carry `nonce`.
+
+    xterm.js writes a few small style elements of its own. Each copy of the
+    page gets a fresh one-time number for them (see web/src/styleNonce.ts);
+    a style slipped in by anyone else does not have it and is ignored.
+    """
+    return CSP.format(nonce=f" 'nonce-{nonce}'" if nonce else "")
+
+
 PAGE_HEADERS: list[tuple[bytes, bytes]] = [
-    (b"content-security-policy",
-     b"default-src 'self'; script-src 'self'; style-src 'self'; "
-     b"font-src 'self'; img-src 'self' data:; connect-src 'self'; "
-     b"frame-ancestors 'none'; base-uri 'none'; form-action 'self'; "
-     b"object-src 'none'"),
+    (b"content-security-policy", page_csp().encode()),
     (b"x-content-type-options", b"nosniff"),
     (b"x-frame-options", b"DENY"),
     (b"referrer-policy", b"no-referrer"),

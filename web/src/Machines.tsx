@@ -1,14 +1,16 @@
-// What the page shows once machines are connected and before terminals come
-// (0.0.4): each machine and its passport, what tTerm Web learned about it
-// over SSH when it connected.
+// The machines page: each machine with its passport, what tTerm Web learned
+// about it over SSH when it connected, a button for a new terminal, and the
+// terminals already running on it.
 
-import type { Machine, Passport, Project } from "./api";
-import { Computer, Plus, Server } from "./icons";
+import type { Machine, Passport, Project, TerminalInfo } from "./api";
+import { Computer, Plus, Server, TerminalIcon } from "./icons";
 
 interface Props {
   projects: Project[];
+  terminals: TerminalInfo[];
   onAdd: (projectId: string) => void;
-  notYet: (what: string) => void;
+  onOpenTerminal: (machineId: string) => void;
+  onGoTo: (terminalId: string) => void;
 }
 
 function gb(kb?: number): string | null {
@@ -34,8 +36,12 @@ function facts(p: Passport): [string, string][] {
   return rows.filter((row): row is [string, string] => row[1] !== null);
 }
 
-function MachineCard({ machine, code, notYet }: {
-  machine: Machine; code: string; notYet: (what: string) => void;
+function MachineCard({ machine, code, terminals, onOpenTerminal, onGoTo }: {
+  machine: Machine;
+  code: string;
+  terminals: TerminalInfo[];
+  onOpenTerminal: (machineId: string) => void;
+  onGoTo: (terminalId: string) => void;
 }) {
   const passport = machine.passport ?? {};
   return (
@@ -60,15 +66,24 @@ function MachineCard({ machine, code, notYet }: {
       </dl>
       <div className="button-row">
         <button type="button" className="button-accent"
-          onClick={() => notYet("Terminals come in 0.0.4.")}>
+          onClick={() => onOpenTerminal(machine.id)}>
           Open a terminal
         </button>
+        {terminals.map((t) => (
+          <button key={t.id} type="button" className="button-plain running"
+            title={`Back to ${t.label}, still running`}
+            onClick={() => onGoTo(t.id)}>
+            <TerminalIcon size={14} />
+            {t.label}
+          </button>
+        ))}
       </div>
     </article>
   );
 }
 
-export function Machines({ projects, onAdd, notYet }: Props) {
+export function Machines(props: Props) {
+  const { projects, terminals, onAdd, onOpenTerminal, onGoTo } = props;
   const withMachines = projects.filter((p) => p.machines.length > 0);
   const first = projects.find((p) => p.role === "owner") ?? projects[0];
   return (
@@ -83,8 +98,8 @@ export function Machines({ projects, onAdd, notYet }: Props) {
         )}
       </div>
       <p className="lead small">
-        Terminals open from here in 0.0.4. For now, this is what tTerm Web
-        learned about each machine when it connected.
+        A terminal keeps running when you close its tab: it waits here and in
+        the sidebar until its shell ends.
       </p>
       {withMachines.map((project) => (
         <section key={project.id} className="machines-project"
@@ -96,7 +111,9 @@ export function Machines({ projects, onAdd, notYet }: Props) {
           <div className="machine-list">
             {project.machines.map((machine) => (
               <MachineCard key={machine.id} machine={machine}
-                code={project.code} notYet={notYet} />
+                code={project.code} onOpenTerminal={onOpenTerminal}
+                onGoTo={onGoTo}
+                terminals={terminals.filter((t) => t.machineId === machine.id)} />
             ))}
           </div>
         </section>

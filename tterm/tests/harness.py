@@ -7,12 +7,17 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import fcntl
 import http.client
 import json
 import os
+import pty
 import shutil
+import signal
 import socket
+import struct
 import tempfile
+import termios
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
@@ -79,6 +84,137 @@ async def ssh_server(ca_public_key: str, *, host_key=None):
     finally:
         server.close()
         await server.wait_closed()
+
+
+@contextlib.asynccontextmanager
+async def shell_server(ca_public_key: str, home: Path, login_shell: str):
+    """An SSH server in this process that runs real shells in real ptys on
+    this computer, in a throwaway home: what a server does for a terminal.
+
+    Commands run as sshd runs them, with the login shell: `shell -c
+    command`. With a pty, the pty gets the size and the echo setting the
+    client asked for, the shell becomes its session's leader, and resizes
+    reach it. Yields (port, host_key).
+    """
+    host_key = asyncssh.generate_private_key("ssh-ed25519")
+    authorized = asyncssh.import_authorized_keys(
+        f"cert-authority {ca_public_key}\n")
+    env = {"HOME": str(home), "SHELL": login_shell, "USER": "tterm",
+           "LOGNAME": "tterm",
+           "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")}
+    tasks: set[asyncio.Task] = set()
+
+    async def handle(process: asyncssh.SSHServerProcess) -> None:
+        task = asyncio.current_task()
+        if task:
+            tasks.add(task)
+        try:
+            if process.get_terminal_type() is None:
+                await _plain(process, env, home)
+            else:
+                await _in_pty(process, env, home)
+        finally:
+            if task:
+                tasks.discard(task)
+
+    server = await asyncssh.create_server(
+        asyncssh.SSHServer, "127.0.0.1", 0, server_host_keys=[host_key],
+        authorized_client_keys=authorized, process_factory=handle,
+        encoding=None)
+    port = server.sockets[0].getsockname()[1]
+    try:
+        yield port, host_key
+    finally:
+        server.close()
+        for task in list(tasks):
+            task.cancel()
+        await server.wait_closed()
+
+
+async def _plain(process: asyncssh.SSHServerProcess, env: dict,
+                 home: Path) -> None:
+    proc = await asyncio.create_subprocess_exec(
+        env["SHELL"], "-c", process.command or "",
+        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE, env=env, cwd=home)
+    data = await process.stdin.read()
+    out, err = await proc.communicate(data)
+    process.stdout.write(out)
+    process.stderr.write(err)
+    process.exit(proc.returncode or 0)
+
+
+def _take_terminal() -> None:
+    """In the child: the pty becomes the controlling terminal of the new
+    session, so Ctrl+C and job control work as on a server."""
+    os.setsid()
+    request = getattr(termios, "TIOCSCTTY", None)
+    if request is not None:
+        fcntl.ioctl(0, request, 0)
+
+
+async def _in_pty(process: asyncssh.SSHServerProcess, env: dict,
+                  home: Path) -> None:
+    master, slave = pty.openpty()
+    cols, rows, _, _ = process.get_terminal_size()
+    fcntl.ioctl(master, termios.TIOCSWINSZ,
+                struct.pack("HHHH", rows, cols, 0, 0))
+    attrs = termios.tcgetattr(slave)
+    if process.get_terminal_mode(asyncssh.PTY_ECHO) == 0:
+        attrs[3] &= ~termios.ECHO
+    termios.tcsetattr(slave, termios.TCSANOW, attrs)
+    child_env = dict(env, TERM=process.get_terminal_type() or "xterm")
+    proc = await asyncio.create_subprocess_exec(
+        env["SHELL"], "-c", process.command or env["SHELL"],
+        stdin=slave, stdout=slave, stderr=slave, env=child_env, cwd=home,
+        preexec_fn=_take_terminal)
+    os.close(slave)
+    loop = asyncio.get_running_loop()
+    drained = asyncio.Event()
+
+    def readable() -> None:
+        try:
+            data = os.read(master, 65536)
+        except OSError:
+            data = b""
+        if data:
+            process.stdout.write(data)
+        else:
+            loop.remove_reader(master)
+            drained.set()
+
+    loop.add_reader(master, readable)
+
+    async def keys() -> None:
+        while True:
+            try:
+                data = await process.stdin.read(65536)
+            except asyncssh.TerminalSizeChanged as change:
+                fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack(
+                    "HHHH", change.height, change.width, 0, 0))
+                continue
+            except (asyncssh.BreakReceived, asyncssh.SignalReceived):
+                continue
+            if not data:
+                break
+            os.write(master, data)
+        # The client is gone: as with sshd, the shell hears a hangup.
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(proc.pid, signal.SIGHUP)
+
+    typing = asyncio.create_task(keys())
+    try:
+        code = await proc.wait()
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(drained.wait(), 2)
+    finally:
+        typing.cancel()
+        loop.remove_reader(master)
+        os.close(master)
+        if proc.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
+    process.exit(code)
 
 
 def admin_url(database_url: str) -> str:

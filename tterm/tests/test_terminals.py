@@ -1,0 +1,583 @@
+"""Terminals: the shell scripts, the markers, sessions over SSH, the socket.
+
+The shells here are real: bash and zsh on this computer, in real ptys, in a
+throwaway home. macOS ships bash 3.2, which cannot say when a command
+starts; there the bash checks look at prompts only, and zsh does the rest.
+"""
+import asyncio
+import contextlib
+import json
+import os
+import pty
+import random
+import select
+import shutil
+import socket
+import subprocess
+import tempfile
+import termios
+import time
+import uuid
+import zlib
+from pathlib import Path
+
+import asyncssh
+import websockets
+
+from ..core import shell, terminals
+from ..core.machines import remember_cas
+from .harness import request, shell_server
+
+KEY = "0123456789abcdef" * 2
+CHANGE = {"x-tterm": "1", "content-type": "application/json"}
+
+
+def _marker(*fields: str, key: str = KEY) -> bytes:
+    body = ";".join(f.replace("%", "%25").replace(";", "%3B") for f in fields)
+    return f"\x1b]6973;{key};{body}\x07".encode()
+
+
+def _bash_full() -> bool:
+    """bash 4.4 or newer: it has PS0, so commands get a start marker."""
+    if not shutil.which("bash"):
+        return False
+    out = subprocess.run(
+        ["bash", "-c", "echo ${BASH_VERSINFO[0]} ${BASH_VERSINFO[1]}"],
+        capture_output=True, text=True).stdout.split()
+    return len(out) == 2 and (int(out[0]), int(out[1])) >= (4, 4)
+
+
+# ---------------------------------------------------------------- parsing
+
+def test_markers_survive_any_split():
+    stream = (b"hi\x1b]0;title\x07" + _marker("C", "echo a;b%c") + b"out\r\n"
+              + b"\x1b]6973;not-our-key;P;0\x07" + b"\x1b]6973x"
+              + _marker("P", "0", "/home/u", "/home/u", "main", "")
+              + b"tail\x1b]69")
+    screen = (b"hi\x1b]0;title\x07out\r\n\x1b]6973;not-our-key;P;0\x07"
+              b"\x1b]6973xtail\x1b]69")
+    rnd = random.Random(7)
+    for _ in range(500):
+        parser = shell.MarkerParser(KEY)
+        out, marks, i = b"", [], 0
+        while i < len(stream):
+            n = rnd.randint(1, 9)
+            for piece in parser.feed(stream[i:i + n]):
+                if isinstance(piece, bytes):
+                    out += piece
+                else:
+                    marks.append(piece)
+            i += n
+        out += parser.flush()
+        assert out == screen, out
+        assert [m.kind for m in marks] == ["C", "P"]
+        assert marks[0].field(0) == "echo a;b%c"
+        assert marks[1].field(3) == "main" and marks[1].field(9) == ""
+
+
+def test_a_marker_without_its_end_is_not_one():
+    parser = shell.MarkerParser(KEY)
+    start = b"\x1b]6973;" + KEY.encode() + b";C;"
+    pieces = parser.feed(start + b"x" * (shell.MARKER_MAX + 10))
+    assert all(isinstance(p, bytes) for p in pieces)
+    assert b"".join(pieces).startswith(b"\x1b]6973;"), "handed to the screen"
+
+
+def test_zsh_mark_comes_off_the_end_of_output():
+    mark = b"\x1b[1m\x1b[7m%\x1b[27m\x1b[1m\x1b[0m"
+    assert shell.strip_eol_mark(b"hi\r\n" + mark + b" " * 79 + b"\r \r", 80) \
+        == b"hi\r\n"
+    assert shell.strip_eol_mark(b"foo<no-nl>" + b" " * 73 + b"\r" + b" " * 7
+                                + b"\r", 80) == b"foo"
+    assert shell.strip_eol_mark(b"plain\r\n", 80) == b"plain\r\n"
+    assert shell.strip_eol_mark(b"x" + b" " * 10 + b"\r \r", 80) == \
+        b"x" + b" " * 10 + b"\r \r", "only a mark as wide as the screen"
+
+
+def test_screen_modes_are_followed():
+    modes = shell.Modes()
+    modes.feed(b"\x1b[?1049h\x1b[?1h\x1b=")
+    modes.feed(b"\x1b[?25")
+    modes.feed(b"l\x1b[?2004h")
+    assert modes.alt_screen
+    restore = modes.restore()
+    for seq in (b"\x1b[?1049h", b"\x1b[?1h", b"\x1b[?25l", b"\x1b[?2004h",
+                b"\x1b="):
+        assert seq in restore, seq
+    modes.feed(b"\x1bc")
+    assert not modes.alt_screen and modes.restore() == b""
+
+
+def test_shell_follows_the_login_shell():
+    assert shell.plan("shell=/bin/bash\nbash=/bin/bash\nzsh=\n").shell == "bash"
+    zsh = shell.plan("shell=/usr/bin/zsh\nbash=/bin/bash\nzsh=/usr/bin/zsh\n")
+    assert zsh.shell == "zsh" and "ZDOTDIR" in zsh.command and zsh.markers
+    fish = shell.plan("shell=/usr/bin/fish\nbash=/bin/bash\nzsh=\n")
+    assert fish.shell == "bash", "neither bash nor zsh: bash, like the bot"
+    bare = shell.plan("shell=/bin/ash\nbash=\nzsh=\n")
+    assert bare.shell == "ash" and not bare.markers
+    assert not shell.plan("").markers, "nothing known: no key typed in"
+
+
+def test_block_keeps_the_start_and_the_end():
+    block = terminals.Block(command="yes", cwd="/", branch="", seq_start=1,
+                            started_at=None)  # type: ignore[arg-type]
+    for i in range(3000):
+        block.add(f"{i:06d}".encode() * 100)
+    out, cut = block.output()
+    assert cut and len(out) == terminals.BLOCK_HEAD + terminals.BLOCK_TAIL
+    assert out.startswith(b"000000") and out.endswith(b"002999")
+    small = terminals.Block(command="ls", cwd="/", branch="", seq_start=1,
+                            started_at=None)  # type: ignore[arg-type]
+    small.add(b"a\r\n")
+    assert small.output() == (b"a\r\n", False)
+
+
+# ------------------------------------------------------- the real shells
+
+def _deploy(home: Path, login_shell: str) -> str:
+    result = subprocess.run(
+        ["sh", "-s"], input=shell.deploy_script(), capture_output=True,
+        text=True, env={"HOME": str(home), "SHELL": login_shell,
+                        "PATH": os.environ.get("PATH", "/usr/bin:/bin")})
+    assert result.returncode == 0, result.stderr
+    return result.stdout
+
+
+class Pty:
+    """A shell in a pty, started the way the core starts it."""
+
+    def __init__(self, home: Path, login_shell: str, command: str) -> None:
+        self.master, slave = pty.openpty()
+        attrs = termios.tcgetattr(slave)
+        attrs[3] &= ~termios.ECHO
+        termios.tcsetattr(slave, termios.TCSANOW, attrs)
+        env = {"HOME": str(home), "SHELL": login_shell, "TERM": "xterm-256color",
+               "PATH": os.environ.get("PATH", "/usr/bin:/bin"), "USER": "tterm"}
+        self.proc = subprocess.Popen(
+            [login_shell, "-c", command], stdin=slave, stdout=slave,
+            stderr=slave, env=env, cwd=home, start_new_session=True)
+        os.close(slave)
+        self.parser = shell.MarkerParser(KEY)
+        self.screen = b""
+        self.marks: list[shell.Marker] = []
+        os.write(self.master, KEY.encode() + b"\n")
+
+    def read_until(self, count: int, kind: str = "P", timeout: float = 15) -> None:
+        """Reads until `count` markers of `kind` have come in all."""
+        end = time.monotonic() + timeout
+        while sum(m.kind == kind for m in self.marks) < count:
+            left = end - time.monotonic()
+            assert left > 0, f"no {kind} marker; screen: {self.screen[-400:]!r}"
+            ready, _, _ = select.select([self.master], [], [], min(left, 0.2))
+            if not ready:
+                continue
+            try:
+                data = os.read(self.master, 65536)
+            except OSError:
+                data = b""
+            assert data, f"the shell ended; screen: {self.screen[-400:]!r}"
+            for piece in self.parser.feed(data):
+                if isinstance(piece, bytes):
+                    self.screen += piece
+                else:
+                    self.marks.append(piece)
+
+    def type(self, line: str) -> None:
+        os.write(self.master, line.encode() + b"\n")
+
+    def close(self) -> None:
+        # The pty goes first: on macOS a dying process waits until what it
+        # wrote last is read, and nobody would read it any more.
+        os.close(self.master)
+        with contextlib.suppress(ProcessLookupError):
+            self.proc.kill()
+        self.proc.wait(10)
+
+
+def _home() -> Path:
+    home = Path(tempfile.mkdtemp(prefix="tthome"))
+    (home / ".bashrc").write_text("HISTCONTROL=ignoreboth\nPS1='$ '\n")
+    (home / ".profile").write_text('[ -n "$BASH" ] && . ~/.bashrc\n')
+    (home / ".zshrc").write_text(
+        "HISTFILE=~/.zsh_history\nHISTSIZE=100\nSAVEHIST=100\n"
+        "setopt hist_ignore_space\nPROMPT='%% '\n")
+    (home / "repo" / ".git").mkdir(parents=True)
+    (home / "repo" / ".git" / "HEAD").write_text("ref: refs/heads/feature/x\n")
+    return home
+
+
+def test_deploy_puts_the_scripts_in_place():
+    home = _home()
+    try:
+        out = _deploy(home, "/bin/bash")
+        assert "shell=/bin/bash" in out and "bash=" in out
+        for target, source in shell.FILES.items():
+            written = home / ".tterm" / target
+            assert written.read_text() == shell.template(source), target
+            assert written.stat().st_mode & 0o077 == 0, f"{target} is private"
+        assert not list((home / ".tterm").rglob("*.[0-9]*")), "no leftovers"
+        _deploy(home, "/bin/bash")          # again, over the old ones
+    finally:
+        shutil.rmtree(home, ignore_errors=True)
+
+
+def _run_shell(login_shell: str, full: bool) -> None:
+    home = _home()
+    p = None
+    failed = True
+    try:
+        plan = shell.plan(_deploy(home, login_shell))
+        assert plan.markers
+        p = Pty(home, login_shell, plan.command)
+        p.read_until(1)
+        assert KEY.encode() not in p.screen, "the key never shows"
+        first = p.marks[-1]
+        # On macOS /var is /private/var: the shell reports the real path.
+        assert os.path.realpath(first.field(1)) == os.path.realpath(home)
+        assert first.field(2) == str(home)
+        p.type("echo hello")
+        p.read_until(2)
+        assert b"hello" in p.screen
+        p.type("false")
+        p.read_until(3)
+        assert p.marks[-1].field(0) == "1", "the exit code comes along"
+        p.type("cd repo")
+        p.read_until(4)
+        assert p.marks[-1].field(3) == "feature/x", "the branch, with its /"
+        p.type(" echo secret")
+        p.read_until(5)
+        p.type('echo "a;b%c"')
+        p.read_until(6)
+        commands = [m.field(0) for m in p.marks if m.kind == "C"]
+        if full:
+            assert commands[:2] == ["echo hello", "false"], commands
+            assert commands[3].strip() == "echo secret", \
+                "a command history skips is still recorded"
+            assert commands[4] == 'echo "a;b%c"', commands
+        p.type("fc -ln -10")
+        p.read_until(7)
+        listed = p.screen.rsplit(b"fc -ln -10", 1)[-1]
+        assert b"secret" not in listed, "but it stays out of history, as asked"
+        failed = False
+    finally:
+        try:
+            if p:
+                p.close()
+        except Exception:
+            # A failure above says more than one in cleaning up after it.
+            if not failed:
+                raise
+        shutil.rmtree(home, ignore_errors=True)
+
+
+def test_bash_prints_markers():
+    if not shutil.which("bash"):
+        return
+    _run_shell(shutil.which("bash") or "bash", _bash_full())
+
+
+def test_zsh_prints_markers():
+    if not shutil.which("zsh"):
+        return
+    _run_shell(shutil.which("zsh") or "zsh", True)
+
+
+# ------------------------------------------------- terminals through SSH
+
+def _login_shell() -> tuple[str, bool]:
+    """The shell for the SSH checks: bash where it can mark commands,
+    zsh otherwise (macOS)."""
+    if _bash_full():
+        return shutil.which("bash") or "bash", True
+    if shutil.which("zsh"):
+        return shutil.which("zsh") or "zsh", True
+    return shutil.which("bash") or "bash", False
+
+
+async def _machine(core, port: int, host_key) -> uuid.UUID:
+    cas = await core.signer.keys()
+    await remember_cas(core.pool, cas)
+    ca = next(c for c in cas if c["active"])
+    project = await core.pool.fetchval(
+        "SELECT id FROM projects WHERE owner_id = $1", core.owner.id)
+    return await core.pool.fetchval(
+        """
+        INSERT INTO machines (project_id, kind, name, host, port, login,
+                              host_keys, ca_id, created_by)
+        VALUES ($1, 'server', 'lab', '127.0.0.1', $2, 'tterm', $3, $4, $5)
+        RETURNING id
+        """, project, port,
+        [host_key.export_public_key().decode().strip()], ca["id"],
+        core.owner.id)
+
+
+async def _until(check, timeout: float = 15, what: str = "") -> None:
+    end = time.monotonic() + timeout
+    while not check():
+        assert time.monotonic() < end, f"timed out waiting for {what}"
+        await asyncio.sleep(0.05)
+
+
+def _prompts(t: terminals.Terminal) -> int:
+    return sum(1 for e in t.events if e.kind == "ev" and e.data["t"] == "P")
+
+
+def _screen(t: terminals.Terminal) -> bytes:
+    return b"".join(e.data for e in t.events if e.kind == "out")
+
+
+async def test_a_terminal_runs_over_ssh_and_keeps_blocks(h):
+    login, full = _login_shell()
+    home = _home()
+    try:
+        async with h.core() as core, \
+                shell_server(await _ca_public(core), home, login) \
+                as (port, host_key):
+            machine_id = await _machine(core, port, host_key)
+            t = await core.terminals.open(machine_id, 100, 30)
+            assert t.label == "P/lab" and t.state == "connecting"
+            await _until(lambda: _prompts(t) >= 1, what="the first prompt")
+            assert t.state == "open" and t.markers and t.shell
+            assert KEY.encode() not in _screen(t)
+            assert t._key.encode() not in _screen(t), "the key never shows"
+            t.write(b"echo hello\n")
+            await _until(lambda: _prompts(t) >= 2, what="echo")
+            t.write(b"(exit 3)\n")
+            await _until(lambda: _prompts(t) >= 3, what="exit 3")
+            t.resize(120, 40)
+            t.write(b"stty size\n")
+            await _until(lambda: _prompts(t) >= 4, what="stty")
+            assert b"40 120" in _screen(t), "the size reached the shell"
+            if full:
+                rows = []
+
+                async def saved() -> bool:
+                    nonlocal rows
+                    rows = await core.pool.fetch(
+                        "SELECT command, exit_code, cwd, output, output_cut "
+                        "FROM blocks WHERE terminal_id = $1 ORDER BY id", t.id)
+                    return len(rows) >= 3
+
+                end = time.monotonic() + 10
+                while not await saved():
+                    assert time.monotonic() < end, "blocks were not saved"
+                    await asyncio.sleep(0.05)
+                assert [r["command"] for r in rows[:3]] == \
+                    ["echo hello", "(exit 3)", "stty size"], rows
+                assert [r["exit_code"] for r in rows[:3]] == [0, 3, 0]
+                assert os.path.realpath(rows[0]["cwd"]) == \
+                    os.path.realpath(home)
+                output = zlib.decompress(rows[0]["output"])
+                assert b"hello" in output and b"\x1b]6973" not in output
+            second = await core.terminals.open(machine_id, 80, 24)
+            assert second.name == "2" and second.label == "P/lab · 2"
+            await _until(lambda: second.state == "open", what="the second")
+            await second.close()
+            t.write(b"exit\n")
+            await _until(lambda: t.state == "ended", what="the end")
+            assert "ended" in (t.reason or "") or "code" in (t.reason or "")
+            row = await core.pool.fetchrow(
+                "SELECT closed_at, end_reason, shell, last_seq FROM terminals "
+                "WHERE id = $1", t.id)
+            assert row["closed_at"] and row["end_reason"] and row["shell"]
+            assert row["last_seq"] == t.last_seq
+            kinds = [r["kind"] for r in await core.pool.fetch(
+                "SELECT kind FROM journal WHERE terminal_id = $1 ORDER BY id",
+                t.id)]
+            assert kinds == ["terminal.opened", "terminal.closed"], kinds
+            assert second.reason == "Closed."
+    finally:
+        shutil.rmtree(home, ignore_errors=True)
+
+
+async def _ca_public(core) -> str:
+    cas = await core.signer.keys()
+    return next(c for c in cas if c["active"])["public_key"]
+
+
+async def test_a_terminal_that_cannot_connect_says_why(h):
+    async with h.core() as core:
+        cas = await core.signer.keys()
+        await remember_cas(core.pool, cas)
+        project = await core.pool.fetchval(
+            "SELECT id FROM projects WHERE owner_id = $1", core.owner.id)
+        key = asyncssh.generate_private_key("ssh-ed25519")
+        closed = _free_port()
+        machine_id = await core.pool.fetchval(
+            "INSERT INTO machines (project_id, kind, name, host, port, login, "
+            "host_keys, ca_id) VALUES ($1, 'server', 'gone', '127.0.0.1', $2, "
+            "'tterm', $3, $4) RETURNING id", project, closed,
+            [key.export_public_key().decode().strip()], cas[0]["id"])
+        t = await core.terminals.open(machine_id, 80, 24)
+        await _until(lambda: t.state == "ended", what="the refusal")
+        assert "connection refused" in (t.reason or ""), t.reason
+        try:
+            await core.terminals.open(uuid.uuid4(), 80, 24)
+        except terminals.NotAllowed:
+            pass
+        else:
+            raise AssertionError("opened a terminal on no machine")
+
+
+def _free_port() -> int:
+    """A port nothing listens on."""
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
+
+async def test_terminals_left_by_the_last_run_are_closed(h):
+    async with h.core() as core:
+        project = await core.pool.fetchval(
+            "SELECT id FROM projects WHERE owner_id = $1", core.owner.id)
+        machine = await core.pool.fetchval(
+            "INSERT INTO machines (project_id, kind, name) VALUES ($1, 'server', "
+            "'old') RETURNING id", project)
+        tid = await core.pool.fetchval(
+            "INSERT INTO terminals (machine_id, owner_id, name) VALUES ($1, $2, "
+            "'1') RETURNING id", machine, core.owner.id)
+        await core.terminals.start()
+        row = await core.pool.fetchrow(
+            "SELECT closed_at, end_reason FROM terminals WHERE id = $1", tid)
+        assert row["closed_at"] and "stopped" in row["end_reason"]
+        info = await core.terminals.ended(tid)
+        assert info and info["state"] == "gone" and info["label"] == "P/old"
+
+
+# ------------------------------------------------------------ the socket
+
+async def _frames(ws, until, timeout: float = 15) -> list:
+    got = []
+    end = time.monotonic() + timeout
+    while not until(got):
+        left = end - time.monotonic()
+        assert left > 0, f"timed out; got {got[-5:]!r}"
+        msg = await asyncio.wait_for(ws.recv(), left)
+        got.append(json.loads(msg) if isinstance(msg, str) else msg)
+    return got
+
+
+def _output(frames) -> bytes:
+    return b"".join(f[13:] for f in frames if isinstance(f, bytes))
+
+
+def _last_seq(frames) -> int:
+    seq = 0
+    for f in frames:
+        if isinstance(f, bytes):
+            seq = int.from_bytes(f[5:13], "big")
+        elif "seq" in f:
+            seq = f["seq"]
+    return seq
+
+
+async def test_the_socket_streams_replays_and_resumes(h):
+    login, _ = _login_shell()
+    home = _home()
+    try:
+        async with h.core() as core, \
+                shell_server(await _ca_public(core), home, login) \
+                as (port, host_key):
+            machine_id = await _machine(core, port, host_key)
+            r = await request(core.page_port, "POST", "/api/terminals",
+                              headers=CHANGE,
+                              body=json.dumps({"machineId": str(machine_id),
+                                               "cols": 90, "rows": 25}).encode())
+            assert r.status == 201, r.text
+            tid = r.json()["id"]
+            state = (await request(core.page_port, "GET", "/api/state")).json()
+            assert [t["id"] for t in state["terminals"]] == [tid]
+            url = f"ws://localhost:{core.page_port}/api/ws"
+            origin = f"http://localhost:{core.page_port}"
+
+            def prompted(n):
+                return lambda got: sum(1 for f in got if isinstance(f, dict)
+                                       and f.get("t") == "P") >= n
+
+            async with websockets.connect(url, origin=origin, proxy=None) as ws:
+                await ws.send(json.dumps({"op": "attach", "ch": 3, "id": tid,
+                                          "after": None, "cols": 90, "rows": 25}))
+                got = await _frames(ws, prompted(1))
+                assert got[0]["op"] == "attached" and not got[0]["resumed"]
+                assert got[1]["op"] == "reset"
+                await ws.send(bytes([2]) + (3).to_bytes(4, "big") + b"echo one\n")
+                got += await _frames(ws, prompted(1))
+                assert b"one" in _output(got)
+                assert all(f[1:5] == (3).to_bytes(4, "big")
+                           for f in got if isinstance(f, bytes))
+                seen = _last_seq(got)
+            # Back after a moment away: only what came since.
+            core.terminals.get(uuid.UUID(tid)).write(b"echo two\n")
+            await asyncio.sleep(0.6)
+            async with websockets.connect(url, origin=origin, proxy=None) as ws:
+                await ws.send(json.dumps({"op": "attach", "ch": 1, "id": tid,
+                                          "after": seen, "cols": 90, "rows": 25}))
+                got = await _frames(ws, prompted(1))
+                assert got[0]["op"] == "attached" and got[0]["resumed"]
+                assert not any(isinstance(f, dict) and f["op"] == "reset"
+                               for f in got)
+                assert b"two" in _output(got) and b"one" not in _output(got)
+            # A page that comes back empty gets everything kept.
+            async with websockets.connect(url, origin=origin, proxy=None) as ws:
+                await ws.send(json.dumps({"op": "attach", "ch": 1, "id": tid,
+                                          "after": None, "cols": 90, "rows": 25}))
+                got = await _frames(ws, lambda g: b"two" in _output(g))
+                assert b"one" in _output(got)
+                await ws.send(json.dumps({"op": "attach", "ch": 2,
+                                          "id": str(uuid.uuid4())}))
+                got = await _frames(ws, lambda g: any(
+                    isinstance(f, dict) and f["op"] == "gone" for f in g))
+                await ws.send(json.dumps({"op": "close", "ch": 1}))
+                got = await _frames(ws, lambda g: any(
+                    isinstance(f, dict) and f["op"] == "state"
+                    and f["terminal"]["state"] == "ended" for f in g))
+            r = await request(core.page_port, "GET", f"/api/terminals/{tid}")
+            assert r.json()["state"] in ("ended", "gone")
+    finally:
+        shutil.rmtree(home, ignore_errors=True)
+
+
+async def test_the_socket_is_only_for_this_page(h):
+    async with h.core() as core:
+        url = f"ws://localhost:{core.page_port}/api/ws"
+        for origin in ("http://evil.example", None):
+            try:
+                async with websockets.connect(url, origin=origin, proxy=None) as ws:
+                    await asyncio.wait_for(ws.recv(), 2)
+            except (websockets.exceptions.InvalidStatus,
+                    websockets.exceptions.ConnectionClosed) as exc:
+                assert "403" in str(exc) or "1008" in str(exc) or \
+                    isinstance(exc, websockets.exceptions.ConnectionClosed), exc
+            else:
+                raise AssertionError(f"a socket from {origin} was let in")
+        r = await request(core.page_port, "POST", "/api/terminals",
+                          headers={"content-type": "application/json"},
+                          body=json.dumps({"machineId": str(uuid.uuid4())}).encode())
+        assert r.status == 403, "no x-tterm, no terminal"
+        r = await request(core.page_port, "POST", "/api/terminals",
+                          headers=CHANGE,
+                          body=json.dumps({"machineId": str(uuid.uuid4())}).encode())
+        assert r.status == 404
+        r = await request(core.page_port, "GET",
+                          f"/api/terminals/{uuid.uuid4()}")
+        assert r.status == 404
+
+
+async def test_the_page_gets_a_fresh_style_number(h):
+    async with h.core() as core:
+        first = await request(core.page_port, "GET", "/")
+        second = await request(core.page_port, "GET", "/t/" + str(uuid.uuid4()))
+        nonces = []
+        for r in (first, second):
+            csp = r.headers["content-security-policy"]
+            assert "unsafe-inline" not in csp and "'nonce-" in csp
+            nonce = csp.split("'nonce-", 1)[1].split("'", 1)[0]
+            assert f'<meta name="tt-style-nonce" content="{nonce}">' in r.text
+            assert r.text.lower().startswith("<!doctype html>")
+            nonces.append(nonce)
+        assert nonces[0] != nonces[1], "a new number every time"
+        js = await request(core.page_port, "GET", "/assets/index.js")
+        assert "'nonce-" not in js.headers["content-security-policy"]

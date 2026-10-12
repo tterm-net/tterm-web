@@ -5,18 +5,22 @@ the page gets index.html, so that addresses inside the page survive a reload.
 """
 from __future__ import annotations
 
+import html
+import secrets
 import uuid
 from pathlib import Path
 
 import asyncpg
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel
 
 from .. import __version__
 from ..core import accounts, machines
 from ..core.accounts import Person
-from .security import PAGE_HEADERS, AddHeaders, LocalOnly
+from ..core.terminals import NotAllowed, Terminals
+from .security import PAGE_HEADERS, AddHeaders, LocalOnly, page_csp
+from .ws import PageSocket
 
 NO_STORE = {"cache-control": "no-store"}
 #: Stage 1 builds the page with stable file names, so the browser must ask
@@ -41,12 +45,36 @@ class InstallRequest(BaseModel):
     kind: str = "server"
 
 
+class TerminalRequest(BaseModel):
+    machineId: uuid.UUID
+    cols: int = 80
+    rows: int = 24
+
+
+def _with_nonce(page: str, nonce: str) -> str:
+    """The page with its one-time style number in a meta tag, right after
+    the charset, which must stay first."""
+    meta = f'<meta name="tt-style-nonce" content="{html.escape(nonce)}">'
+    at = page.find("<meta charset")
+    end = page.find(">", at) if at >= 0 else -1
+    if end >= 0:
+        return page[:end + 1] + "\n    " + meta + page[end + 1:]
+    at = page.lower().find("<head>")
+    if at >= 0:
+        return page[:at + 6] + meta + page[at + 6:]
+    # No head written out: after the doctype, never before it, or the
+    # browser would fall back to its old quirks.
+    end = page.find(">") if page.lower().startswith("<!doctype") else -1
+    return page[:end + 1] + meta + page[end + 1:]
+
+
 def _json(data, status: int = 200) -> Response:
     return JSONResponse(data, status_code=status, headers=NO_STORE)
 
 
 def create_page_app(pool: asyncpg.Pool, owner: Person, dist: Path,
-                    port: int, connect_url: str):
+                    port: int, connect_url: str,
+                    terminals: Terminals | None = None):
     """The ASGI app for the page, wrapped in the local-only guard."""
     app = FastAPI(title="tTerm Web", version=__version__, docs_url=None,
                   redoc_url=None, openapi_url=None)
@@ -73,6 +101,8 @@ def create_page_app(pool: asyncpg.Pool, owner: Person, dist: Path,
                 "plan": me.plan,
             },
             "projects": projects,
+            "terminals": ([t.describe() for t in terminals.live()]
+                          if terminals else []),
         })
 
     @app.patch("/api/me")
@@ -112,6 +142,38 @@ def create_page_app(pool: asyncpg.Pool, owner: Person, dist: Path,
             return _json({"error": "no such machine"}, 404)
         return _json(details)
 
+    @app.post("/api/terminals")
+    async def open_terminal(request: TerminalRequest) -> Response:
+        """A new terminal on a machine. It connects in the background; the
+        page attaches to it over the socket and watches it come up."""
+        if terminals is None:
+            return _json({"error": "terminals are not running"}, 503)
+        try:
+            terminal = await terminals.open(request.machineId, request.cols,
+                                            request.rows)
+        except NotAllowed as exc:
+            return _json({"error": str(exc)}, 404)
+        return _json(terminal.describe(), 201)
+
+    @app.get("/api/terminals/{terminal_id}")
+    async def terminal_info(terminal_id: uuid.UUID) -> Response:
+        if terminals is None:
+            return _json({"error": "terminals are not running"}, 503)
+        terminal = terminals.get(terminal_id)
+        if terminal is not None:
+            return _json(terminal.describe())
+        ended = await terminals.ended(terminal_id)
+        if ended is None:
+            return _json({"error": "no such terminal"}, 404)
+        return _json(ended)
+
+    @app.websocket("/api/ws")
+    async def socket(websocket: WebSocket) -> None:
+        if terminals is None:
+            await websocket.close(code=1013)
+            return
+        await PageSocket(websocket, terminals).run()
+
     @app.api_route("/api/{rest:path}", methods=["GET", "POST", "PUT", "PATCH",
                                                 "DELETE"])
     async def api_missing(rest: str) -> Response:
@@ -131,7 +193,11 @@ def create_page_app(pool: asyncpg.Pool, owner: Person, dist: Path,
         index = dist / "index.html"
         if not index.is_file():
             return HTMLResponse(PAGE_MISSING, status_code=503, headers=NO_STORE)
-        return FileResponse(index, media_type="text/html", headers=NO_CACHE)
+        # A fresh number for the page's own style elements, every time.
+        nonce = secrets.token_urlsafe(18)
+        text = _with_nonce(index.read_text(encoding="utf-8"), nonce)
+        return HTMLResponse(text, headers={
+            **NO_STORE, "content-security-policy": page_csp(nonce)})
 
     # The guard inside the headers, so that its refusals carry them too.
     return AddHeaders(LocalOnly(app, port), PAGE_HEADERS)

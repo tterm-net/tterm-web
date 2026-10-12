@@ -11,6 +11,9 @@ export default defineConfig({
     // only from the page's own address, and a small font slipped in as data:
     // would be refused.
     assetsInlineLimit: 0,
+    // The terminal (xterm.js and its WebGL renderer) makes the script
+    // large; it comes from this computer, so one file is fine.
+    chunkSizeWarningLimit: 1500,
     // Stable file names: every release archive overwrites the same files, so
     // nothing piles up in web/dist, and the core tells the browser to check
     // for a newer copy each time. Hashed names come with the server in stage 2.

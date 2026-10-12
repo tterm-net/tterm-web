@@ -1,3 +1,6 @@
+// First of all: style elements made by the page carry the one-time number
+// the page's security policy asks for (see styleNonce.ts).
+import "./styleNonce";
 // Fonts live with the page, not at Google: otherwise every visit would tell
 // Google the visitor's address.
 import "@fontsource-variable/manrope";
