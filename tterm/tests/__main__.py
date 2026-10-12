@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import inspect
+import logging
 import pkgutil
 import sys
 import time
@@ -78,5 +79,9 @@ async def main(pattern: str | None) -> int:
 
 
 if __name__ == "__main__":
+    # The checks provoke warnings on purpose (a missing signer, a refused
+    # certificate); the ✓ and ✗ lines are what matters, not the log.
+    logging.getLogger().addHandler(logging.NullHandler())
+    logging.getLogger().setLevel(logging.CRITICAL)
     only = sys.argv[1] if len(sys.argv) > 1 else None
     sys.exit(asyncio.run(main(only)))

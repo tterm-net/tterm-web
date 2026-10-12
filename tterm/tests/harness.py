@@ -10,6 +10,7 @@ import contextlib
 import http.client
 import json
 import os
+import shutil
 import socket
 import tempfile
 from dataclasses import dataclass, field
@@ -17,10 +18,67 @@ from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 import asyncpg
+import asyncssh
 
-from ..core import db
+from ..core import db, passport
 from ..core.config import Settings
+from ..core.signer_client import SignerClient
 from ..server import Core
+from ..signer.service import Signer, serve
+
+#: What a small Ubuntu server answers to the passport script.
+PASSPORT_OUTPUT = """os=Ubuntu 24.04.1 LTS
+os_id=ubuntu
+os_version=24.04
+kernel=6.8.0-45-generic
+arch=x86_64
+hostname=tterm-lab-01
+package_manager=apt-get
+shell=/bin/bash
+shells=bash
+cpus=1
+memory_kb=1003456
+disk_total_kb=25215872
+disk_free_kb=22000000
+sudo=yes
+systemd=yes
+--commands--
+apt
+git
+ls
+systemctl
+"""
+
+
+@contextlib.asynccontextmanager
+async def ssh_server(ca_public_key: str, *, host_key=None):
+    """A small SSH server in this process that trusts our CA, the way the
+    installer sets a real one up, and answers the passport script.
+
+    Yields (port, host_key, sign_ins): sign_ins collects the user name of
+    every session that got in.
+    """
+    host_key = host_key or asyncssh.generate_private_key("ssh-ed25519")
+    authorized = asyncssh.import_authorized_keys(
+        f"cert-authority {ca_public_key}\n")
+    sign_ins: list[str] = []
+
+    async def handle(process: asyncssh.SSHServerProcess) -> None:
+        sign_ins.append(process.get_extra_info("username") or "")
+        if passport.MARKER in (process.command or ""):
+            process.stdout.write(PASSPORT_OUTPUT)
+        process.exit(0)
+
+    server = await asyncssh.create_server(
+        asyncssh.SSHServer, "127.0.0.1", 0, server_host_keys=[host_key],
+        authorized_client_keys=authorized, process_factory=handle,
+        encoding="utf-8")
+    port = server.sockets[0].getsockname()[1]
+    try:
+        yield port, host_key, sign_ins
+    finally:
+        server.close()
+        await server.wait_closed()
 
 
 def admin_url(database_url: str) -> str:
@@ -140,21 +198,44 @@ class Harness:
             await pool.close()
 
     @contextlib.asynccontextmanager
-    async def core(self, *, dist: Path | None = None, owner: str = "Denis Gerasimenko"):
-        """A running core on free ports, with a small fake page."""
-        with tempfile.TemporaryDirectory() as tmp:
+    async def signer(self):
+        """A signer in this process, on a socket in a short temporary path
+        (Unix socket paths may be only about a hundred bytes long)."""
+        tmp = Path(tempfile.mkdtemp(prefix="tt"))
+        try:
+            signer = Signer(tmp / "signer")
+            signer.load_or_create()
+            server = await serve(signer, tmp / "s.sock")
+            try:
+                yield signer, SignerClient(tmp / "s.sock")
+            finally:
+                server.close()
+                await server.wait_closed()
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    @contextlib.asynccontextmanager
+    async def core(self, *, dist: Path | None = None,
+                   owner: str = "Denis Gerasimenko", with_signer: bool = True):
+        """A running core on free ports, with a small fake page and a signer."""
+        async with contextlib.AsyncExitStack() as stack:
+            tmp = stack.enter_context(tempfile.TemporaryDirectory())
             if dist is None:
                 dist = Path(tmp) / "dist"
                 (dist / "assets").mkdir(parents=True)
                 (dist / "index.html").write_text(
                     "<!doctype html><title>tTerm</title><div id=root></div>")
                 (dist / "assets" / "index.js").write_text("console.log(1)")
+            client = SignerClient(Path(tmp) / "nobody-here.sock", timeout=0.5)
+            if with_signer:
+                _, client = await stack.enter_async_context(self.signer())
             settings = Settings.load(environ={
                 "TTERM_DATABASE_URL": await self.database(),
                 "TTERM_OWNER_NAME": owner,
                 "TTERM_WEB_DIST": str(dist),
+                "TTERM_CONNECT_URL": "https://connect.test",
             }, env_file=Path(tmp) / "no.env")
-            core = Core(settings)
+            core = Core(settings, signer=client)
             await core.start(page_socket=free_socket(),
                              connect_socket=free_socket())
             try:

@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { loadState, saveTheme, type State, type Theme } from "./api";
+import { AddMachine } from "./AddMachine";
+import {
+  loadState, saveTheme, type MachineKind, type State, type Theme,
+} from "./api";
 import { ChevronRight } from "./icons";
+import { Machines } from "./Machines";
 import { Sidebar } from "./Sidebar";
 import {
   applyTheme, onSystemThemeChange, rememberedPin, rememberPin, shown,
@@ -24,6 +28,8 @@ export function App() {
   const [open, setOpen] = useState(false);
   const [pinned, setPinned] = useState(rememberedPin);
   const [toast, setToast] = useState<string | null>(null);
+  const [adding, setAdding] =
+    useState<{ projectId: string; kind: MachineKind } | null>(null);
   const openTimer = useRef<number | undefined>(undefined);
   const closeTimer = useRef<number | undefined>(undefined);
   const toastTimer = useRef<number | undefined>(undefined);
@@ -41,6 +47,11 @@ export function App() {
   }, []);
 
   useEffect(load, [load]);
+
+  /** After a machine connects: the sidebar and the page learn of it. */
+  const refresh = useCallback(() => {
+    loadState().then(setState).catch(() => {});
+  }, []);
 
   // The theme: apply the choice, and follow the system while it says so.
   useEffect(() => {
@@ -98,11 +109,11 @@ export function App() {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !pinned) setOpen(false);
+      if (event.key === "Escape" && !pinned && !adding) setOpen(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [pinned]);
+  }, [pinned, adding]);
 
   useEffect(() => () => {
     cancelTimers();
@@ -129,6 +140,11 @@ export function App() {
 
   const sidebarShown = open || pinned;
   const personal = state.projects.find((p) => p.role === "owner");
+  const anyMachine = state.projects.some((p) => p.machines.length > 0);
+  const startAdding = (projectId: string, kind: MachineKind = "server") => {
+    if (!pinned) setOpen(false);
+    setAdding({ projectId, kind });
+  };
 
   return (
     <div className={pinned ? "app pinned" : "app"}>
@@ -144,7 +160,13 @@ export function App() {
         )}
       </header>
 
-      <Welcome me={state.me} personal={personal} notYet={notYet} />
+      {anyMachine ? (
+        <Machines projects={state.projects} notYet={notYet}
+          onAdd={(projectId) => startAdding(projectId)} />
+      ) : (
+        <Welcome me={state.me} personal={personal}
+          onAdd={(kind) => personal && startAdding(personal.id, kind)} />
+      )}
 
       {sidebarShown && (
         <Sidebar
@@ -157,8 +179,15 @@ export function App() {
           onClose={closeSidebar}
           onMouseEnter={cancelTimers}
           onMouseLeave={hoverAway}
+          onAddMachine={(projectId) => startAdding(projectId)}
           notYet={notYet}
         />
+      )}
+
+      {adding && (
+        <AddMachine projects={state.projects} projectId={adding.projectId}
+          kind={adding.kind} onClose={() => setAdding(null)}
+          onConnected={refresh} notYet={notYet} />
       )}
 
       {toast && <div className="toast" role="status">{toast}</div>}

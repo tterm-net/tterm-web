@@ -176,15 +176,20 @@ async def projects_of(pool: asyncpg.Pool, user_id: uuid.UUID) -> list[dict]:
         """, user_id)
     machines = await pool.fetch(
         """
-        SELECT id, project_id, kind, name, last_seen_at
+        SELECT id, project_id, kind, name, host,
+               passport - 'commands' AS passport,
+               jsonb_array_length(COALESCE(passport->'commands', '[]')) AS commands
         FROM machines
         WHERE removed_at IS NULL AND project_id = ANY($1::uuid[])
         ORDER BY lower(name)
         """, [r["id"] for r in rows])
     by_project: dict[uuid.UUID, list[dict]] = {}
     for m in machines:
+        pp = json.loads(m["passport"]) if m["passport"] else {}
+        pp["commands_count"] = m["commands"]
         by_project.setdefault(m["project_id"], []).append({
-            "id": str(m["id"]), "kind": m["kind"], "name": m["name"]})
+            "id": str(m["id"]), "kind": m["kind"], "name": m["name"],
+            "host": m["host"], "os": pp.get("os"), "passport": pp})
     return [{
         "id": str(r["id"]),
         "name": r["name"],

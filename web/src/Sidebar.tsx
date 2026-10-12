@@ -27,11 +27,12 @@ interface Props {
   onClose: () => void;
   onMouseEnter: () => void;
   onMouseLeave: () => void;
+  onAddMachine: (projectId: string) => void;
   notYet: (what: string) => void;
 }
 
 export function Sidebar(props: Props) {
-  const { me, projects, pinned, shownTheme, notYet } = props;
+  const { me, projects, pinned, shownTheme, notYet, onAddMachine } = props;
   const [folded, setFolded] = useState<Record<string, boolean>>({});
   const themeLabel =
     shownTheme === "light" ? "Switch to dark theme" : "Switch to light theme";
@@ -58,6 +59,7 @@ export function Sidebar(props: Props) {
         <div className="section-label">Projects</div>
         {projects.map((project) => {
           const open = !folded[project.id];
+          const canAdd = project.role === "owner" || project.role === "admin";
           return (
             <div key={project.id}>
               <div className="project-row">
@@ -90,20 +92,39 @@ export function Sidebar(props: Props) {
                 <div className="empty-machines">
                   <p>No machines yet. Add a server or a computer to open
                     terminals on it.</p>
-                  <button type="button" className="button-accent"
-                    onClick={() => notYet("Adding a server comes in 0.0.3.")}>
-                    <Plus size={14} />
-                    Add machine
-                  </button>
+                  {canAdd && (
+                    <button type="button" className="button-accent"
+                      onClick={() => onAddMachine(project.id)}>
+                      <Plus size={14} />
+                      Add machine
+                    </button>
+                  )}
                 </div>
               )}
-              {open && project.machines.map((machine) => (
-                <div key={machine.id} className="machine-row">
-                  {machine.kind === "server" ? <Server size={14} />
-                    : <Computer size={14} />}
-                  {machine.name}
-                </div>
-              ))}
+              {open && project.machines.length > 0 && (
+                <ul className="tree">
+                  {project.machines.map((machine) => (
+                    <li key={machine.id}>
+                      <button type="button" className="tree-machine"
+                        title={`Open a terminal on ${machine.name}`}
+                        onClick={() => notYet("Terminals come in 0.0.4.")}>
+                        {machine.kind === "server" ? <Server size={15} />
+                          : <Computer size={15} />}
+                        <span>{machine.name}</span>
+                      </button>
+                    </li>
+                  ))}
+                  {canAdd && (
+                    <li>
+                      <button type="button" className="tree-add"
+                        onClick={() => onAddMachine(project.id)}>
+                        <Plus size={15} />
+                        Add machine
+                      </button>
+                    </li>
+                  )}
+                </ul>
+              )}
             </div>
           );
         })}

@@ -2,16 +2,16 @@
 // do. From the approved mockup "Первый вход", without the passkey offer and
 // the invitations line: sign-in and teams come in later stages.
 
-import type { Me, Project } from "./api";
+import type { MachineKind, Me, Project } from "./api";
 import { ArrowRight, Computer, Logo, Server } from "./icons";
 
 interface Props {
   me: Me;
   personal: Project | undefined;
-  notYet: (what: string) => void;
+  onAdd: (kind: MachineKind) => void;
 }
 
-export function Welcome({ me, personal, notYet }: Props) {
+export function Welcome({ me, personal, onAdd }: Props) {
   return (
     <main className="welcome">
       <div className="welcome-head">
@@ -28,7 +28,7 @@ export function Welcome({ me, personal, notYet }: Props) {
         <h2 id="w-connect">Connect your first machine</h2>
         <div className="connect-cards">
           <button type="button" className="connect-card"
-            onClick={() => notYet("Adding a server comes in 0.0.3.")}>
+            onClick={() => onAdd("server")}>
             <span className="card-top">
               <span className="tile" aria-hidden="true"><Server size={20} /></span>
               <span className="arrow"><ArrowRight /></span>
@@ -46,8 +46,7 @@ export function Welcome({ me, personal, notYet }: Props) {
             </span>
           </button>
           <button type="button" className="connect-card"
-            onClick={() =>
-              notYet("Computers come in 0.0.6, with agent 0.11.0.")}>
+            onClick={() => onAdd("computer")}>
             <span className="card-top">
               <span className="tile" aria-hidden="true">
                 <Computer size={20} />

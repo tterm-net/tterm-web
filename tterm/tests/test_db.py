@@ -14,7 +14,8 @@ async def test_migrations_apply_once(h):
     pool = await db.connect(await h.empty_database())
     try:
         first = await db.migrate(pool)
-        assert first and first[0] == "001_initial", first
+        assert first == sorted(p.stem for p in db.MIGRATIONS.glob("*.sql")), first
+        assert first[0] == "001_initial", first
         assert await db.migrate(pool) == [], "nothing left the second time"
         tables = {r["tablename"] for r in await pool.fetch(
             "SELECT tablename FROM pg_tables WHERE schemaname = 'public'")}
@@ -29,7 +30,8 @@ async def test_two_processes_migrating_at_once(h):
     pool_b = await db.connect(url)
     try:
         a, b = await asyncio.gather(db.migrate(pool_a), db.migrate(pool_b))
-        assert sorted([a, b], key=len) == [[], ["001_initial"]], (a, b)
+        every = sorted(path.stem for path in db.MIGRATIONS.glob("*.sql"))
+        assert sorted([a, b], key=len) == [[], every], (a, b)
     finally:
         await pool_a.close()
         await pool_b.close()

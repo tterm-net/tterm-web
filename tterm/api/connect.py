@@ -2,19 +2,73 @@
 
 Reachable from outside through the tunnel to connect-dev.tterm.net, and on
 the server later as connect.tterm.net. Nothing of the page and none of its
-API is here: a person's browser has no business on this address. From 0.0.3
-it serves the installer and registration, from 0.0.6 the agents.
+API is here: a person's browser has no business on this address.
+
+    GET  /s/TOKEN   the installer for a server, with the token inside
+    POST /enroll    the installer reports back; the core checks over SSH
+    GET  /ca.pub    the active CA's public key, to compare by eye
+    GET  /health
 """
 from __future__ import annotations
 
-from fastapi import FastAPI
-from fastapi.responses import JSONResponse, Response
+import ipaddress
+import logging
+
+import asyncpg
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse, PlainTextResponse, Response
+from pydantic import BaseModel, Field
 
 from .. import __version__
+from ..core import machines
+from ..core.signer_client import SignerClient, SignerRefused, SignerUnavailable
 from .security import CONNECT_HEADERS, AddHeaders
 
+log = logging.getLogger("tterm.connect")
 
-def create_connect_app():
+LOCAL_PEERS = {"127.0.0.1", "::1"}
+SCRIPT_HEADERS = {"content-type": "text/x-shellscript; charset=utf-8",
+                  "cache-control": "no-store"}
+
+
+class EnrollPayload(BaseModel):
+    token: str = Field(min_length=1, max_length=64)
+    hostname: str = Field(default="", max_length=255)
+    os: str = Field(default="", max_length=255)
+    ssh_port: int = Field(default=22, ge=1, le=65535)
+    ssh_user: str = Field(default="tterm", max_length=64)
+    host_keys: list[str] = Field(min_length=1, max_length=8)
+
+
+def client_ip(request: Request) -> str:
+    """The address the request really came from.
+
+    Headers are believed only from a proxy on this same machine: cloudflared
+    now, nginx on the server later. From anyone else they could be invented.
+    """
+    peer = request.client.host if request.client else ""
+    if peer in LOCAL_PEERS:
+        for header in ("cf-connecting-ip", "x-real-ip"):
+            value = request.headers.get(header, "").strip()
+            if _is_ip(value):
+                return value
+        forwarded = request.headers.get("x-forwarded-for", "")
+        first = forwarded.split(",")[0].strip()
+        if _is_ip(first):
+            return first
+    return peer
+
+
+def _is_ip(value: str) -> bool:
+    try:
+        ipaddress.ip_address(value)
+        return True
+    except ValueError:
+        return False
+
+
+def create_connect_app(pool: asyncpg.Pool, signer: SignerClient,
+                       connect_url: str):
     app = FastAPI(title="tTerm Web connect", version=__version__,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -23,5 +77,58 @@ def create_connect_app():
         return JSONResponse({"ok": True, "service": "tterm-web connect",
                              "version": __version__},
                             headers={"cache-control": "no-store"})
+
+    @app.get("/s/{token}")
+    async def installer(token: str) -> Response:
+        # A dead command says so before touching anything on the server.
+        problem = await machines.check_token(pool, token)
+        if problem:
+            return PlainTextResponse(machines.refusal_script(problem),
+                                     headers=SCRIPT_HEADERS)
+        try:
+            ca = await signer.active_key()
+        except (SignerUnavailable, SignerRefused) as exc:
+            log.error("cannot serve the installer: %s", exc)
+            return PlainTextResponse(machines.refusal_script(
+                "tTerm Web cannot sign certificates right now. Try again in "
+                "a minute."), headers=SCRIPT_HEADERS)
+        script = machines.render_installer(
+            token=token, ca_key=ca["public_key"], ca_id=ca["id"],
+            connect_url=connect_url)
+        return PlainTextResponse(script, headers=SCRIPT_HEADERS)
+
+    @app.post("/enroll")
+    async def enroll(payload: EnrollPayload, request: Request) -> Response:
+        ip = client_ip(request)
+        if not ip:
+            return PlainTextResponse("Could not tell this server's address.",
+                                     status_code=400)
+        try:
+            ca = await signer.active_key()
+            message = await machines.enroll(pool, signer, machines.Enrollment(
+                token=payload.token, hostname=payload.hostname,
+                os=payload.os, ssh_port=payload.ssh_port,
+                ssh_user=payload.ssh_user, host_keys=payload.host_keys,
+                ip=ip), ca=ca)
+        except machines.EnrollRefused as refused:
+            return PlainTextResponse(str(refused), status_code=refused.status)
+        except (SignerUnavailable, SignerRefused) as exc:
+            log.error("enroll: %s", exc)
+            return PlainTextResponse(
+                "tTerm Web cannot sign certificates right now. Run the "
+                "command again in a minute.", status_code=503)
+        return PlainTextResponse(message)
+
+    @app.get("/ca.pub")
+    async def ca_pub() -> Response:
+        try:
+            keys = await signer.keys()
+        except (SignerUnavailable, SignerRefused):
+            return PlainTextResponse("The signer is not answering.\n",
+                                     status_code=503)
+        lines = [f"{ca['public_key'].split()[0]} {ca['public_key'].split()[1]} "
+                 f"tterm-web {ca['id']}" for ca in keys]
+        return PlainTextResponse("\n".join(lines) + "\n",
+                                 headers={"cache-control": "no-store"})
 
     return AddHeaders(app, CONNECT_HEADERS)

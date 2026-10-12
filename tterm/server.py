@@ -3,7 +3,8 @@
 Two listeners, as on the server later with its two addresses: the page and
 its API for people, and the side machines talk to. They are separate apps on
 separate ports, so the tunnel, which points at the machines' port, cannot
-lead anyone to the page.
+lead anyone to the page. The signer is a separate process; the core only
+talks to it.
 """
 from __future__ import annotations
 
@@ -17,9 +18,10 @@ import uvicorn
 
 from .api.connect import create_connect_app
 from .api.page import create_page_app
-from .core import accounts, db
+from .core import accounts, db, machines
 from .core.accounts import Person
 from .core.config import Settings
+from .core.signer_client import SignerClient, SignerRefused, SignerUnavailable
 
 log = logging.getLogger("tterm")
 
@@ -63,10 +65,13 @@ def listen(host: str, port: int) -> socket.socket:
 class Core:
     """Starts and stops everything the core runs, in the right order."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings,
+                 signer: SignerClient | None = None) -> None:
         self.settings = settings
+        self.signer = signer or SignerClient(settings.signer_socket)
         self.pool: asyncpg.Pool | None = None
         self.owner: Person | None = None
+        self.active_ca: dict | None = None
         self._servers: list[_Server] = []
         self._tasks: list[asyncio.Task] = []
         self._sockets: list[socket.socket] = []
@@ -94,20 +99,22 @@ class Core:
             self.pool = await db.connect(s.database_url)
             await db.migrate(self.pool)
             self.owner = await accounts.ensure_local_owner(self.pool, s.owner_name)
+            await self._meet_signer()
         except BaseException:
             await self.stop()
             raise
 
-        page = create_page_app(self.pool, self.owner, s.web_dist, self.page_port)
-        connect = create_connect_app()
+        page = create_page_app(self.pool, self.owner, s.web_dist,
+                               self.page_port, s.connect_url)
+        connect = create_connect_app(self.pool, self.signer, s.connect_url)
         for app, sock, proxied in ((page, self._sockets[0], False),
                                    (connect, self._sockets[1], True)):
             config = uvicorn.Config(
                 app, lifespan="off", log_level="warning", access_log=False,
                 server_header=False,
-                # Only the machines' side sits behind a proxy, cloudflared on
-                # this computer now and nginx on the server later.
-                proxy_headers=proxied, forwarded_allow_ips="127.0.0.1")
+                # The core reads the proxy's headers itself, and only when the
+                # proxy is on this machine: see client_ip in api/connect.py.
+                proxy_headers=False)
             server = _Server(config)
             self._servers.append(server)
             self._tasks.append(asyncio.create_task(server.serve(sockets=[sock])))
@@ -118,6 +125,18 @@ class Core:
                     await task          # raises what killed it
                     raise RuntimeError("a server stopped while starting")
             await asyncio.sleep(0.02)
+
+    async def _meet_signer(self) -> None:
+        """Learns the CA keys. Without the signer the page still works;
+        connecting machines does not, and says so when tried."""
+        try:
+            cas = await self.signer.keys()
+        except (SignerUnavailable, SignerRefused) as exc:
+            log.warning("%s Connecting machines will not work until it does.",
+                        exc)
+            return
+        await machines.remember_cas(self.pool, cas)
+        self.active_ca = next((ca for ca in cas if ca["active"]), None)
 
     async def wait(self) -> None:
         """Returns when any server stops on its own, which it should not."""

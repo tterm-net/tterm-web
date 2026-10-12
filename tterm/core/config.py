@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import pwd
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
@@ -71,10 +72,14 @@ class Settings:
     connect_url: str
     #: The person this laptop belongs to, until accounts arrive.
     owner_name: str
-    #: Local state that never goes to git: CA keys from 0.0.3.
+    #: Local state that never goes to git.
     data_dir: Path
     #: The built page.
     web_dist: Path
+    #: The signer's own directory: CA keys, its journal. Only it reads them.
+    signer_dir: Path
+    #: How the core reaches the signer.
+    signer_socket: Path
 
     @classmethod
     def load(cls, environ: Mapping[str, str] | None = None,
@@ -100,6 +105,15 @@ class Settings:
             value = Path(get(key, default)).expanduser()
             return value if value.is_absolute() else ROOT / value
 
+        data_dir = path("TTERM_DATA_DIR", "data")
+        signer_dir = path("TTERM_SIGNER_DIR", str(data_dir / "signer"))
+        signer_socket = path("TTERM_SIGNER_SOCKET", str(signer_dir / "signer.sock"))
+        if not env.get("TTERM_SIGNER_SOCKET") and len(str(signer_socket)) > 100:
+            # A Unix socket path may be at most about a hundred bytes. In a
+            # deep folder the default is longer, so it moves to a private
+            # folder of this user in the system's temporary directory.
+            signer_socket = (Path(tempfile.gettempdir())
+                             / f"tterm-web-{os.getuid()}" / "signer.sock")
         return cls(
             database_url=get("TTERM_DATABASE_URL",
                              "postgresql://localhost:5433/tterm_web"),
@@ -110,6 +124,8 @@ class Settings:
             connect_url=get("TTERM_CONNECT_URL",
                             "https://connect-dev.tterm.net").rstrip("/"),
             owner_name=get("TTERM_OWNER_NAME", account_name()),
-            data_dir=path("TTERM_DATA_DIR", "data"),
+            data_dir=data_dir,
             web_dist=path("TTERM_WEB_DIST", "web/dist"),
+            signer_dir=signer_dir,
+            signer_socket=signer_socket,
         )
