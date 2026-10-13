@@ -14,9 +14,9 @@
 #      with echo off, so the key never shows. Every marker carries it, so
 #      nothing a program prints can pass for one.
 #   2. Invisible markers: before each prompt, with the exit code, the
-#      directory and the git branch, and when a command starts, with its
-#      text. tTerm Web takes them out of the stream; the screen never shows
-#      them.
+#      directory, the git branch and the PATH, and when a command starts,
+#      with its text. tTerm Web takes them out of the stream; the screen
+#      never shows them.
 
 if [[ -o interactive && -z ${__tt_key-} ]]; then
     builtin read -r __tt_key
@@ -73,18 +73,21 @@ if [[ -o interactive && -z ${__tt_key-} ]]; then
         esac
     }
 
-    # Before each prompt: how the last command ended and where zsh is now.
+    # Before each prompt: how the last command ended and where zsh is now,
+    # with the PATH it finds commands in, for tTerm's own Tab.
     __tt_precmd() {
         builtin local e=$?
         __tt_branch
-        __tt_put P "$e" "$PWD" "$HOME" "$__tt_b" "${VIRTUAL_ENV##*/}"
+        __tt_put P "$e" "$PWD" "$HOME" "$__tt_b" "${VIRTUAL_ENV##*/}" "$PATH"
         return $e
     }
 
-    # A command starts: its text as typed, history expanded; the full text
-    # zsh is about to run when history is off.
+    # A command starts: its text as typed, history expanded (the full text
+    # zsh is about to run when history is off), and how the one before it
+    # ended.
     __tt_preexec() {
-        __tt_put C "${1:-$3}"
+        builtin local e=$?
+        __tt_put C "${1:-$3}" "$e"
     }
 fi
 

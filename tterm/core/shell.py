@@ -81,23 +81,30 @@ def deploy_script() -> str:
         "printf 'shell=%s\\n' \"${SHELL:-}\"",
         "printf 'bash=%s\\n' \"$(command -v bash 2>/dev/null)\"",
         "printf 'zsh=%s\\n' \"$(command -v zsh 2>/dev/null)\"",
+        # Commands get a start marker from bash 4.4 on (PS0).
+        "if command -v bash >/dev/null 2>&1; then printf 'bash_version=%s\\n' "
+        "\"$(bash -c 'echo \"${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}\"' "
+        "2>/dev/null)\"; fi",
     ]
     return "\n".join(parts) + "\n"
 
 
 @dataclass(frozen=True)
 class Plan:
-    """How to start the shell: which one, the command, and whether it has
-    our markers."""
+    """How to start the shell: which one, the command, whether it has our
+    markers, and whether it marks the start of each command too, which is
+    what cuts the stream into blocks."""
     shell: str          # "bash", "zsh", or the login shell's own name
     command: str
     markers: bool
+    blocks: bool = False
 
 
 def plan(deploy_output: str) -> Plan:
     """The login shell decides, as with plain ssh: zsh if it is zsh,
     otherwise bash. Without bash (a bare busybox) the login shell starts as
-    it is, and the terminal works without blocks."""
+    it is, and the terminal works without blocks. bash older than 4.4 has
+    no PS0: it marks its prompts, but not where commands start."""
     found: dict[str, str] = {}
     for line in deploy_output.splitlines():
         name, sep, value = line.partition("=")
@@ -105,12 +112,22 @@ def plan(deploy_output: str) -> Plan:
             found[name.strip()] = value.strip()
     login = found.get("shell", "")
     if login.rsplit("/", 1)[-1] == "zsh" and found.get("zsh"):
-        return Plan("zsh", f'ZDOTDIR="$HOME/{FOLDER}/zsh" exec zsh -il', True)
+        return Plan("zsh", f'ZDOTDIR="$HOME/{FOLDER}/zsh" exec zsh -il', True,
+                    True)
     if found.get("bash"):
         return Plan("bash",
-                    f'exec bash --init-file "$HOME/{FOLDER}/bash.sh" -i', True)
+                    f'exec bash --init-file "$HOME/{FOLDER}/bash.sh" -i', True,
+                    _version(found.get("bash_version", "")) >= (4, 4))
     name = login.rsplit("/", 1)[-1] or "sh"
     return Plan(name, 'exec "${SHELL:-/bin/sh}" -l', False)
+
+
+def _version(text: str) -> tuple[int, int]:
+    major, _, minor = text.partition(".")
+    try:
+        return int(major), int(minor or 0)
+    except ValueError:
+        return 0, 0
 
 
 # --------------------------------------------------------------- markers
@@ -120,8 +137,10 @@ def plan(deploy_output: str) -> Plan:
 class Marker:
     """One marker from the shell.
 
-    P, before a prompt: code, cwd, home, branch, venv.
-    C, a command starts: its text.
+    P, before a prompt: code, cwd, home, branch, venv, PATH.
+    C, a command starts: its text, and how the command before it ended (a
+    line of several commands has a start marker for each and a prompt only
+    after the last).
     """
     kind: str
     fields: tuple[str, ...]

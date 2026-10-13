@@ -12,9 +12,9 @@
 #      so nothing a program prints can pass for one.
 #   2. Runs the startup files of a login shell, as plain `ssh` would.
 #   3. Prints invisible markers: before each prompt, with the exit code, the
-#      directory and the git branch, and when a command starts, with its
-#      text. tTerm Web takes them out of the stream; the screen never shows
-#      them.
+#      directory, the git branch and the PATH, and when a command starts,
+#      with its text. tTerm Web takes them out of the stream; the screen
+#      never shows them.
 
 builtin read -r __tt_key
 stty echo 2>/dev/null
@@ -68,21 +68,25 @@ __tt_branch() {
     esac
 }
 
-# A command starts: its text, as history recorded it. Runs from PS0, in a
-# subshell of its own, after the command is read and before it runs.
+# A command starts: its text, as history recorded it, and how the command
+# before it ended. Runs from PS0, in a subshell of its own, after the command
+# is read and before it runs. Several commands on one line, or lines pasted
+# together, get one of these each and a prompt only after the last, so the
+# code of the one before has to come along here.
 __tt_command() {
-    builtin local h n
+    builtin local e=$? h n
     case :$SHELLOPTS: in
         *:history:*) ;;
-        *) __tt_put C ""; return ;;
+        *) __tt_put C "" "$e"; return ;;
     esac
     h=$(HISTTIMEFORMAT= builtin history 1)
     h=${h#"${h%%[! ]*}"}
     n=${h%%[!0-9]*}
-    __tt_put C "${h:${#n}+2}"
+    __tt_put C "${h:${#n}+2}" "$e"
 }
 
-# Before each prompt: how the last command ended and where the shell is now.
+# Before each prompt: how the last command ended and where the shell is now,
+# with the PATH it finds commands in, for tTerm's own Tab.
 __tt_prompt() {
     builtin local e=$? h n t p q
     # Commands that history was asked to skip are taken out again here; see
@@ -119,7 +123,7 @@ __tt_prompt() {
     __tt_history_settings
     __tt_branch
     h=${VIRTUAL_ENV-}
-    __tt_put P "$e" "$PWD" "$HOME" "$__tt_b" "${h##*/}"
+    __tt_put P "$e" "$PWD" "$HOME" "$__tt_b" "${h##*/}" "$PATH"
     return "$e"
 }
 

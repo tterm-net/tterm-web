@@ -18,7 +18,7 @@ from pydantic import BaseModel
 from .. import __version__
 from ..core import accounts, machines
 from ..core.accounts import Person
-from ..core.terminals import NotAllowed, Terminals
+from ..core.terminals import NotAllowed, NotOpen, Terminal, Terminals
 from .security import PAGE_HEADERS, AddHeaders, LocalOnly, page_csp
 from .ws import PageSocket
 
@@ -49,6 +49,16 @@ class TerminalRequest(BaseModel):
     machineId: uuid.UUID
     cols: int = 80
     rows: int = 24
+
+
+class CompleteRequest(BaseModel):
+    line: str
+    cursor: int
+
+
+#: A line the input line may ask Tab about, at most.
+MAX_LINE = 64 * 1024
+NOT_OPEN = "The terminal is not open."
 
 
 def _with_nonce(page: str, nonce: str) -> str:
@@ -166,6 +176,81 @@ def create_page_app(pool: asyncpg.Pool, owner: Person, dist: Path,
         if ended is None:
             return _json({"error": "no such terminal"}, 404)
         return _json(ended)
+
+    @app.get("/api/terminals/{terminal_id}/blocks")
+    async def terminal_blocks(terminal_id: uuid.UUID, before: int | None = None,
+                              limit: int = 60) -> Response:
+        """The feed: finished blocks, the latest first page of them, each
+        with the end of its output."""
+        if terminals is None:
+            return _json({"error": "terminals are not running"}, 503)
+        feed = await terminals.feed(terminal_id, before, limit)
+        if feed is None:
+            return _json({"error": "no such terminal"}, 404)
+        return _json(feed)
+
+    @app.get("/api/terminals/{terminal_id}/blocks/{seq}/output")
+    async def block_output(terminal_id: uuid.UUID, seq: int) -> Response:
+        """Everything a block kept of its output, as the terminal printed it."""
+        if terminals is None:
+            return _json({"error": "terminals are not running"}, 503)
+        got = await terminals.block_output(terminal_id, seq)
+        if got is None:
+            return _json({"error": "no such block"}, 404)
+        output, cut = got
+        return Response(output, media_type="application/octet-stream",
+                        headers={**NO_STORE, "x-tterm-cut": "1" if cut else "0"})
+
+    @app.get("/api/terminals/{terminal_id}/history")
+    async def terminal_history(terminal_id: uuid.UUID) -> Response:
+        if terminals is None:
+            return _json({"error": "terminals are not running"}, 503)
+        commands = await terminals.history(terminal_id)
+        if commands is None:
+            return _json({"error": "no such terminal"}, 404)
+        return _json({"commands": commands})
+
+    def _open(terminal_id: uuid.UUID) -> Terminal | None:
+        terminal = terminals.get(terminal_id) if terminals else None
+        if terminal is None or terminal.state != "open":
+            return None
+        return terminal
+
+    # Tab and the two lists run a small script on the machine: changes in
+    # the HTTP sense or not, they carry the page's header like every POST.
+
+    @app.post("/api/terminals/{terminal_id}/complete")
+    async def complete_word(terminal_id: uuid.UUID,
+                            request: CompleteRequest) -> Response:
+        terminal = _open(terminal_id)
+        if terminal is None:
+            return _json({"error": NOT_OPEN}, 409)
+        if len(request.line) > MAX_LINE:
+            return _json({"error": "The line is too long."}, 422)
+        try:
+            return _json(await terminal.complete(request.line, request.cursor))
+        except NotOpen:
+            return _json({"error": NOT_OPEN}, 409)
+
+    @app.post("/api/terminals/{terminal_id}/dirs")
+    async def terminal_dirs(terminal_id: uuid.UUID) -> Response:
+        terminal = _open(terminal_id)
+        if terminal is None:
+            return _json({"error": NOT_OPEN}, 409)
+        try:
+            return _json(await terminal.dirs())
+        except NotOpen:
+            return _json({"error": NOT_OPEN}, 409)
+
+    @app.post("/api/terminals/{terminal_id}/branches")
+    async def terminal_branches(terminal_id: uuid.UUID) -> Response:
+        terminal = _open(terminal_id)
+        if terminal is None:
+            return _json({"error": NOT_OPEN}, 409)
+        try:
+            return _json(await terminal.branches())
+        except NotOpen:
+            return _json({"error": NOT_OPEN}, 409)
 
     @app.websocket("/api/ws")
     async def socket(websocket: WebSocket) -> None:

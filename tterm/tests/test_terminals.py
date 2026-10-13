@@ -515,11 +515,15 @@ async def test_the_socket_streams_replays_and_resumes(h):
             async with websockets.connect(url, origin=origin, proxy=None) as ws:
                 await ws.send(json.dumps({"op": "attach", "ch": 1, "id": tid,
                                           "after": seen, "cols": 90, "rows": 25}))
-                got = await _frames(ws, prompted(1))
+                got = await _frames(ws, lambda g: any(
+                    isinstance(f, dict) and f["op"] == "replayed" for f in g))
                 assert got[0]["op"] == "attached" and got[0]["resumed"]
                 assert not any(isinstance(f, dict) and f["op"] == "reset"
                                for f in got)
                 assert b"two" in _output(got) and b"one" not in _output(got)
+                # What was missed comes before the mark that it is all old
+                # news, so the page's terminal answers nothing in it.
+                assert got[-1]["op"] == "replayed"
             # A page that comes back empty gets everything kept.
             async with websockets.connect(url, origin=origin, proxy=None) as ws:
                 await ws.send(json.dumps({"op": "attach", "ch": 1, "id": tid,

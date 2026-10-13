@@ -65,11 +65,87 @@ export interface TerminalInfo {
   /** How it ended, in a sentence; null while it runs. */
   reason: string | null;
   shell?: string | null;
-  /** Whether the shell prints our markers, so commands become blocks. */
+  /** Whether the shell prints our markers at its prompts. */
   markers?: boolean;
+  /** Whether it marks where each command starts too: then commands become
+   * blocks and tTerm's own input line works. */
+  blocks?: boolean;
   cwd?: string;
   home?: string;
   branch?: string;
+  venv?: string;
+  /** The command running now, if any. */
+  running?: RunningCommand | null;
+}
+
+export interface RunningCommand {
+  command: string;
+  cwd: string;
+  branch: string;
+  seqStart: number;
+  cols: number;
+  at: number;
+}
+
+/** A finished block as the database keeps it, with the end of its output. */
+export interface StoredBlock {
+  id: number;
+  seqStart: number;
+  seqEnd: number | null;
+  command: string;
+  cwd: string;
+  branch: string;
+  startedAt: number | null;
+  finishedAt: number | null;
+  exitCode: number | null;
+  cols: number | null;
+  /** The middle of a long output was not kept. */
+  cut: boolean;
+  /** Only the end of the output came along. */
+  partial: boolean;
+  size: number;
+  /** Base64. */
+  output: string;
+}
+
+export interface Feed {
+  blocks: StoredBlock[];
+  /** There are earlier blocks. */
+  more: boolean;
+}
+
+export interface HistoryEntry {
+  command: string;
+  /** Run on this machine; otherwise elsewhere in the project. */
+  here: boolean;
+}
+
+export interface CompleteItem {
+  /** The whole word, quoted as it goes into the line. */
+  text: string;
+  label: string;
+  kind: "dir" | "file" | "command" | "branch";
+}
+
+export interface Completion {
+  start: number;
+  end: number;
+  quote: string;
+  kind: string;
+  items: CompleteItem[];
+  more: boolean;
+}
+
+export interface DirList {
+  cwd: string;
+  home: string;
+  dirs: string[];
+}
+
+export interface BranchList {
+  current: string;
+  local: string[];
+  remote: string[];
 }
 
 export interface State {
@@ -154,5 +230,48 @@ export async function openTerminal(machineId: string, cols: number,
 export async function terminalInfo(id: string): Promise<TerminalInfo | null> {
   const response = await fetch(`/api/terminals/${id}`, { cache: "no-store" });
   if (response.status === 404) return null;
+  return (await check(response)).json();
+}
+
+export async function loadFeed(id: string, before?: number,
+  limit = 60): Promise<Feed | null> {
+  const query = new URLSearchParams({ limit: String(limit) });
+  if (before !== undefined) query.set("before", String(before));
+  const response = await fetch(`/api/terminals/${id}/blocks?${query}`,
+    { cache: "no-store" });
+  if (response.status === 404) return null;
+  return (await check(response)).json();
+}
+
+export async function blockOutput(id: string,
+  seqStart: number): Promise<Uint8Array | null> {
+  const response = await fetch(`/api/terminals/${id}/blocks/${seqStart}/output`,
+    { cache: "no-store" });
+  if (response.status === 404) return null;
+  return new Uint8Array(await (await check(response)).arrayBuffer());
+}
+
+export async function loadHistory(id: string): Promise<HistoryEntry[]> {
+  const response = await fetch(`/api/terminals/${id}/history`,
+    { cache: "no-store" });
+  if (response.status === 404) return [];
+  return (await (await check(response)).json()).commands;
+}
+
+export async function completeWord(id: string, line: string,
+  cursor: number): Promise<Completion> {
+  const response = await fetch(`/api/terminals/${id}/complete`,
+    change("POST", { line, cursor }));
+  return (await check(response)).json();
+}
+
+export async function listDirs(id: string): Promise<DirList> {
+  const response = await fetch(`/api/terminals/${id}/dirs`, change("POST", {}));
+  return (await check(response)).json();
+}
+
+export async function listBranches(id: string): Promise<BranchList> {
+  const response = await fetch(`/api/terminals/${id}/branches`,
+    change("POST", {}));
   return (await check(response)).json();
 }

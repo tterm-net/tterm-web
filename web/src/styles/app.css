@@ -1185,12 +1185,38 @@ code {
   font-size: 13px;
 }
 
+/* Everything under the bar. Its notes, the full-screen program and the
+ * pickers are laid over it, so it is the one positioned box; the feed inside
+ * scrolls without being one, so that a full-screen program covers the area
+ * whatever the feed's scroll. */
 .terminal-area {
   position: relative;
   flex: 1 1 auto;
   min-height: 0;
-  padding: 8px 2px 4px 12px;
+  display: flex;
+  flex-direction: column;
   background: var(--ground);
+}
+
+.classic-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 8px 2px 4px 12px;
+}
+
+.classic-footer {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 8px 24px 10px;
+  border-top: 1px solid var(--raised);
+}
+
+.classic-footer .input-hints {
+  margin: 0;
 }
 
 .terminal-box {
@@ -1274,6 +1300,704 @@ code {
   padding: 0 12px;
   border-radius: 8px;
   font-size: 12px;
+}
+
+/* ------------------------------------------------------------------- feed */
+
+/* The feed, as in the mockup: a column of blocks, the running one on a
+ * ground of its own. The gutter is kept, so the column is as wide with a
+ * scrollbar as without, and the running command's width stays put. */
+.feed {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  padding: 26px 24px 18px;
+}
+
+/* Room under the last block for the note of an ended terminal. */
+.terminal-area.ended .feed {
+  padding-bottom: 120px;
+}
+
+.feed-col {
+  max-width: 1120px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.feed-empty {
+  margin: 48px 0 0;
+  text-align: center;
+  color: var(--faint);
+  font-size: 13px;
+}
+
+.feed-earlier,
+.block-more,
+.block-folded {
+  align-self: flex-start;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--faint);
+  font: 500 12px var(--font-ui);
+  cursor: pointer;
+}
+
+.feed-earlier {
+  align-self: center;
+}
+
+.block-more,
+.block-folded {
+  margin-left: 18px;
+}
+
+.feed-earlier:hover,
+.block-more:hover,
+.block-folded:hover {
+  color: var(--ink);
+  text-decoration: underline;
+}
+
+.block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.block.live {
+  gap: 8px;
+  margin: 0 -16px;
+  padding: 14px 16px 16px;
+  border-radius: 12px;
+  background: var(--live);
+}
+
+.block.flash {
+  border-radius: 10px;
+  box-shadow: 0 0 0 2px var(--amber-ring);
+}
+
+.block-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  min-height: 32px;
+}
+
+.block-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--faint);
+}
+
+.block-dot.ok {
+  background: var(--green);
+}
+
+.block-fail {
+  flex: none;
+  color: var(--red);
+}
+
+.block-spinner {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 2px solid var(--amber-ring);
+  border-top-color: var(--amber);
+  animation: ttspin 0.9s linear infinite;
+}
+
+.block-command {
+  flex: 1 1 240px;
+  min-width: 0;
+  font: 500 13.5px var(--font-mono);
+  color: var(--ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.block-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+  font: 400 12px var(--font-mono);
+  color: var(--faint);
+}
+
+.block-meta .amber,
+.input-hints .amber {
+  color: var(--amber-ink);
+}
+
+.block-meta .red,
+.confirm-text .red {
+  color: var(--red-ink);
+}
+
+.block-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* The actions show on the block under the mouse or the keyboard. */
+.block-actions {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.block:hover .block-actions,
+.block:focus-within .block-actions {
+  opacity: 1;
+}
+
+.block-actions button {
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+}
+
+.block-actions button:hover {
+  background: var(--raised);
+  color: var(--ink);
+}
+
+.block-stop {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font: 600 12px var(--font-ui);
+  cursor: pointer;
+}
+
+.block-stop:hover {
+  background: var(--raised);
+}
+
+.block-stop kbd {
+  font: 500 11px var(--font-mono);
+  color: var(--faint);
+}
+
+.block-pending {
+  margin-left: 18px;
+  color: var(--faint);
+}
+
+/* Frozen output: text, with the colours of the terminal as classes (see
+ * web/src/render.ts). Lines the terminal wrapped wrap here again at the
+ * column's width. */
+.out {
+  margin: 0 0 0 18px;
+  font: 400 13px/1.3 var(--font-mono);
+  color: var(--dim);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  tab-size: 8;
+}
+
+.out .ob { font-weight: 700; color: var(--ink); }
+.out .f0 { color: var(--ansi-0); }
+.out .f1 { color: var(--ansi-1); }
+.out .f2 { color: var(--ansi-2); }
+.out .f3 { color: var(--ansi-3); }
+.out .f4 { color: var(--ansi-4); }
+.out .f5 { color: var(--ansi-5); }
+.out .f6 { color: var(--ansi-6); }
+.out .f7 { color: var(--ansi-7); }
+.out .f8 { color: var(--ansi-8); }
+.out .f9 { color: var(--ansi-9); }
+.out .f10 { color: var(--ansi-10); }
+.out .f11 { color: var(--ansi-11); }
+.out .f12 { color: var(--ansi-12); }
+.out .f13 { color: var(--ansi-13); }
+.out .f14 { color: var(--ansi-14); }
+.out .f15 { color: var(--ansi-15); }
+.out .b0 { background-color: var(--ansi-0); }
+.out .b1 { background-color: var(--ansi-1); }
+.out .b2 { background-color: var(--ansi-2); }
+.out .b3 { background-color: var(--ansi-3); }
+.out .b4 { background-color: var(--ansi-4); }
+.out .b5 { background-color: var(--ansi-5); }
+.out .b6 { background-color: var(--ansi-6); }
+.out .b7 { background-color: var(--ansi-7); }
+.out .b8 { background-color: var(--ansi-8); }
+.out .b9 { background-color: var(--ansi-9); }
+.out .b10 { background-color: var(--ansi-10); }
+.out .b11 { background-color: var(--ansi-11); }
+.out .b12 { background-color: var(--ansi-12); }
+.out .b13 { background-color: var(--ansi-13); }
+.out .b14 { background-color: var(--ansi-14); }
+.out .b15 { background-color: var(--ansi-15); }
+.out .fbg { color: var(--ground); }
+.out .bfg { background-color: var(--dim); }
+.out .oi { font-style: italic; }
+.out .od { opacity: 0.62; }
+.out .ou { text-decoration: underline; }
+.out .os { text-decoration: line-through; }
+.out .ou.os { text-decoration: underline line-through; }
+.out .oh { color: transparent; }
+
+/* The running command's terminal. It is one element that moves: into the
+ * running block, over the whole area for a full-screen program, or parked
+ * out of sight between commands. Its size is set by script; the clip shows
+ * as many rows as the command has printed so far. */
+.live-clip {
+  margin-left: 18px;
+  overflow: hidden;
+}
+
+.live-park {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.live-full {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  padding: 8px 2px 6px 12px;
+  background: var(--ground);
+}
+
+.live-holder .xterm .xterm-viewport {
+  background-color: var(--live);
+}
+
+.live-full .live-holder .xterm .xterm-viewport {
+  background-color: var(--ground);
+}
+
+.live-holder .xterm:focus,
+.live-holder .xterm *:focus {
+  outline: none;
+}
+
+/* ------------------------------------------------------------- input line */
+
+.input-footer {
+  flex: none;
+  position: relative;
+  padding: 12px 24px 14px;
+  border-top: 1px solid var(--raised);
+  background: var(--ground);
+}
+
+.input-row,
+.input-footer > .input-hints {
+  max-width: 1120px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.input-row {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.prompt-chips {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 36px;
+  max-width: 45%;
+  font: 500 13px var(--font-mono);
+  color: var(--dim);
+  white-space: nowrap;
+}
+
+.chip {
+  min-width: 0;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.chip:hover:not(:disabled) {
+  background: var(--raised);
+  color: var(--ink);
+}
+
+.chip:disabled {
+  cursor: default;
+}
+
+.chip-branch {
+  color: var(--amber-dim);
+}
+
+.chip-venv {
+  color: var(--faint);
+}
+
+.prompt-arrow {
+  margin-left: 4px;
+  color: var(--amber);
+  font-weight: 700;
+}
+
+.input-box {
+  position: relative;
+  flex: 1 1 320px;
+  min-width: 0;
+}
+
+.input-field,
+.input-ghost {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 8px 2px;
+  border: 0;
+  font: 400 14px/20px var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  tab-size: 8;
+}
+
+.input-field {
+  position: relative;
+  display: block;
+  width: 100%;
+  min-height: 36px;
+  max-height: 40vh;
+  overflow-y: auto;
+  resize: none;
+  outline: none;
+  background: transparent;
+  color: var(--ink);
+  caret-color: var(--amber);
+}
+
+.input-field::placeholder {
+  color: var(--faint);
+}
+
+.input-field:read-only {
+  cursor: default;
+}
+
+.input-ghost {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  color: transparent;
+}
+
+.ghost-rest {
+  color: var(--faint);
+}
+
+.mode-toggle {
+  flex: none;
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+}
+
+.mode-toggle button {
+  height: 30px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dim);
+  font: 600 12px var(--font-ui);
+  cursor: pointer;
+}
+
+.mode-toggle button[aria-pressed="true"] {
+  background: var(--line);
+  color: var(--ink);
+}
+
+.mode-toggle button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.input-hints {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--faint);
+}
+
+.input-hints kbd {
+  font: 500 11px var(--font-mono);
+  color: var(--dim);
+}
+
+/* Tab's list rises over the field, the pickers over the line. */
+.complete-list,
+.picker {
+  position: absolute;
+  z-index: 3;
+  bottom: calc(100% + 6px);
+  left: 0;
+  max-width: min(560px, 100%);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.complete-list {
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  max-height: 260px;
+  overflow-y: auto;
+  font: 13px var(--font-mono);
+}
+
+.complete-list li {
+  padding: 5px 10px;
+  border-radius: 6px;
+  color: var(--ink);
+  white-space: pre;
+  cursor: pointer;
+}
+
+.complete-list li[aria-selected="true"],
+.complete-list li:hover {
+  background: var(--raised);
+}
+
+.complete-list .kind-dir {
+  color: var(--blue-ink);
+}
+
+.complete-list .complete-more {
+  color: var(--faint);
+  cursor: default;
+}
+
+.picker {
+  width: 420px;
+  display: flex;
+  flex-direction: column;
+}
+
+.picker-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  color: var(--faint);
+}
+
+.picker-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--ink);
+  font: 13px var(--font-mono);
+}
+
+.picker ul {
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.picker li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  color: var(--ink);
+  font: 13px var(--font-mono);
+  cursor: pointer;
+}
+
+.picker li[aria-selected="true"] {
+  background: var(--raised);
+}
+
+.picker li svg {
+  flex: none;
+  color: var(--faint);
+}
+
+.picker-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.picker-hint {
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.picker-typed .picker-label {
+  color: var(--amber-ink);
+}
+
+.picker li.picker-empty {
+  color: var(--faint);
+  cursor: default;
+}
+
+.picker-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 12px;
+  color: var(--dim);
+  font-size: 13px;
+}
+
+/* A command held back for a yes, over the line, as wide as the feed. */
+.confirm-bar {
+  flex: none;
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 12px;
+  width: calc(100% - 48px);
+  max-width: 1120px;
+  margin: 0 auto 10px;
+  box-sizing: border-box;
+  padding: 12px 14px;
+  border: 1px solid var(--red-line);
+  border-radius: 10px;
+  background: var(--red-tint);
+}
+
+.confirm-icon {
+  flex: none;
+  margin-top: 1px;
+  color: var(--red-ink);
+}
+
+.confirm-text {
+  flex: 1 1 280px;
+  min-width: 0;
+  font-size: 13px;
+}
+
+.confirm-text p {
+  margin: 0 0 4px;
+}
+
+.confirm-text code {
+  display: block;
+  margin-top: 6px;
+  font: 13px var(--font-mono);
+  color: var(--ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.button-danger {
+  height: 34px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--red);
+  color: #FFFFFF;
+  font: 700 12px var(--font-ui);
+  cursor: pointer;
+}
+
+.button-danger:hover {
+  filter: brightness(1.06);
+}
+
+.confirm-bar .button-plain {
+  height: 34px;
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+@media (max-width: 720px) {
+  .feed {
+    padding: 18px 14px 14px;
+  }
+
+  .input-footer {
+    padding: 10px 14px 12px;
+  }
+
+  .input-row {
+    flex-wrap: wrap;
+  }
+
+  .prompt-chips {
+    max-width: 100%;
+  }
+
+  .input-hints {
+    display: none;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

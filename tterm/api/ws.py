@@ -9,6 +9,8 @@ else as JSON text:
                   {"op": "resize", "ch": 1, "cols": 100, "rows": 30}
                   {"op": "focus" | "pause" | "resume" | "detach" | "close",
                    "ch": 1}
+                  {"op": "run", "ch": 1, "command": "ls -la",
+                   "confirmed": false}
                   binary: 0x02, channel (4 bytes), keystrokes
     core → page   {"op": "attached", "ch": 1, "terminal": {...}, "resumed": true}
                   {"op": "reset", "ch": 1, "seq": 40}   then a full replay,
@@ -16,6 +18,9 @@ else as JSON text:
                   {"op": "ev", "ch": 1, "seq": 52, "t": "P" | "C", ...}
                   {"op": "state", "ch": 1, "terminal": {...}}
                   {"op": "gone", "ch": 1, "terminal": {...} | null}
+                  {"op": "confirm", "ch": 1, "command": "...", "what": "...",
+                   "lost": "...", "everything": false}
+                  {"op": "refused", "ch": 1, "command": "...", "reason": "..."}
                   {"op": "error", "message": "..."}
                   binary: 0x01, channel (4 bytes), number (8 bytes), output
 
@@ -24,6 +29,11 @@ follows, or, if that is no longer kept or the page has nothing, a reset and
 everything kept. The page pauses a channel when it has more on its hands
 than it can draw, and resumes it when it catches up. "focus" makes this
 page the one that types into the terminal (see Watcher).
+
+"run" is a whole command from tTerm's own input line. A command that would
+do damage nothing brings back is first answered with "confirm"; the page
+asks, and sends it again with "confirmed". A command the shell cannot take
+now (another one is running) is answered with "refused".
 """
 from __future__ import annotations
 
@@ -34,7 +44,8 @@ import uuid
 
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from ..core.terminals import INPUT, Terminals, Watcher
+from ..core import danger
+from ..core.terminals import INPUT, Terminals, Watcher, clean_command
 
 log = logging.getLogger("tterm.ws")
 
@@ -109,6 +120,8 @@ class PageSocket:
             watcher.resume()
         elif op == "detach":
             await self._detach(ch)
+        elif op == "run":
+            await self._run(ch, watcher, msg)
         elif op == "close":
             # Ending a shell can take a moment; the socket goes on meanwhile.
             task = asyncio.create_task(watcher.terminal.close())
@@ -137,6 +150,27 @@ class PageSocket:
         if msg.get("focus") is True:
             watcher.focus()
         self.watchers[ch] = watcher
+
+    async def _run(self, ch: int, watcher: Watcher, msg: dict) -> None:
+        command = msg.get("command")
+        if not isinstance(command, str):
+            return
+        # Checked as it will be typed: a control character in the middle of
+        # a word must not hide it from the check and then vanish.
+        command = clean_command(command)
+        if msg.get("confirmed") is not True:
+            held = danger.looks_destructive(command)
+            if held is not None:
+                await self.json({"op": "confirm", "ch": ch, "command": command,
+                                 "what": held.what, "lost": held.lost,
+                                 "everything": danger.hits_everything(command)})
+                return
+        # Running a command is typing: this page becomes the one that types.
+        watcher.focus()
+        why = watcher.terminal.run(command)
+        if why is not None:
+            await self.json({"op": "refused", "ch": ch, "command": command,
+                             "reason": why})
 
     async def _detach(self, ch: int) -> None:
         watcher = self.watchers.pop(ch, None)

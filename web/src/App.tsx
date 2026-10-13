@@ -204,7 +204,8 @@ export function App() {
       {terminalId ? (
         <TerminalView key={terminalId} terminalId={terminalId}
           shownTheme={shownTheme} sidebarButton={sidebarButton}
-          onLeave={leave} onOpenNew={startTerminal} onChanged={refresh} />
+          onLeave={leave} onOpenNew={startTerminal} onChanged={refresh}
+          notify={notYet} />
       ) : (
         <>
           <header className="topbar">{sidebarButton}</header>

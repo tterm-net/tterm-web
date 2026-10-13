@@ -64,3 +64,11 @@ const light: ITheme = {
 export function terminalTheme(shown: Shown): ITheme {
   return shown === "light" ? light : dark;
 }
+
+/** The running block in the feed: its own quiet ground, and output in the
+ * dimmer text colour the finished blocks use too (--live and --dim). */
+export function liveTheme(shown: Shown): ITheme {
+  return shown === "light"
+    ? { ...light, background: "#F6F7F9", foreground: "#545B67" }
+    : { ...dark, background: "#121419", foreground: "#9AA0AA" };
+}

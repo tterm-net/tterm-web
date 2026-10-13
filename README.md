@@ -4,12 +4,13 @@ tTerm in the browser: a real terminal with command blocks, for people who work
 with servers and for their teams. Projects, roles, a journal of who ran what,
 and watching a colleague's terminal, always with them knowing.
 
-**Status:** early development. Version 0.0.4 opens terminals: a real shell
-on your servers, in the browser, that keeps running when the page reloads,
-with every command kept as a block. Next come the block feed and tTerm's own
-input line. The first stage ends with version 0.1, a real terminal to your
-own servers and computers in the browser on your laptop. Then come accounts
-and a server, then teams, then a public launch.
+**Status:** early development. Version 0.0.5 shows a terminal as a feed of
+blocks, one per command, typed into tTerm's own input line: history from all
+your devices, Tab that asks the server, the directory and the git branch as
+buttons, and a question before a command that would destroy something. The
+classic terminal is one click away. The first stage ends with version 0.1, a
+real terminal to your own servers and computers in the browser on your
+laptop. Then come accounts and a server, then teams, then a public launch.
 
 Related:
 
@@ -60,7 +61,7 @@ python -m tterm.tests
 tterm/
   core/          settings, the database and its migrations, people, projects,
                  machines, SSH, the server passport, terminals and the shell
-                 on the other end of them
+                 on the other end of them, Tab, the commands held back
   api/page.py    the page and its API, for people; only this computer
   api/ws.py      the page's socket: every terminal on the page goes through it
   api/connect.py where machines talk to us: installer, registration, agents
@@ -100,6 +101,27 @@ them, after the usual startup files. Every marker carries a one-time key
 that the shell reads as the very first line, with echo off, so nothing a
 program prints can pass for one. The key never touches a file, the
 environment or a command line.
+
+**The feed.** The page shows those blocks as a feed, as Warp does. The
+command running now is drawn by xterm.js, so colours, progress bars and
+password prompts work as in any terminal, and keys go straight to it. When
+it ends, its screen is read back into text you can select, search and copy,
+and a full-screen program such as vim or htop gets the whole window while it
+runs. Finished blocks come from the database, so a reload shows the feed at
+once and a running command is drawn again from what tTerm Web kept of it.
+
+**The input line** is the page's own, not the shell's: several lines, the
+mouse, history from every device you used, a grey suggestion from it. Enter
+hands the whole command to the shell at its prompt as a bracketed paste, so
+nothing in it is read as a key binding. Tab, and the lists behind the
+directory and branch buttons, come from the server itself over a quiet side
+channel of the same SSH connection: a small sh script that never touches the
+terminal, its screen or its history. A handful of commands that destroy
+something for good (a recursive delete, a wiped disk, a dropped database, a
+shutdown) wait for a yes first. The classic mode is the terminal of 0.0.4:
+every key goes to the shell, with its own Tab and history, and nothing is
+checked. bash older than 4.4 cannot say where a command starts, so there
+only the classic mode works.
 
 **The signer** holds the CA keys and nothing else, in a process of its own.
 For every connection the core makes a throwaway key pair and asks the

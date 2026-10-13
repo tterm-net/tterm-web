@@ -15,15 +15,21 @@ from a clean screen; a full-screen program is then asked to redraw itself.
 Each command becomes a block in the database: its text, the directory and
 branch it ran in, how long it took, how it ended, and its output, compressed,
 the beginning and the end of it if it was long.
+
+From 0.0.5 the page can also type a whole command at the prompt (run), and
+ask the machine, over a quiet side channel of the same SSH connection, what
+a word under Tab can become and which directories and branches there are.
 """
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import datetime as dt
 import itertools
 import json
 import logging
+import re
 import time
 import uuid
 import zlib
@@ -34,7 +40,7 @@ from typing import Awaitable, Callable
 import asyncpg
 import asyncssh
 
-from . import accounts, shell, ssh
+from . import accounts, complete, shell, ssh
 from .accounts import Person
 from .signer_client import SignerClient
 
@@ -62,9 +68,42 @@ CAN_OPEN = ("owner", "admin", "member")
 
 #: What deploying the shell scripts may take, at most.
 DEPLOY_TIMEOUT = 20
+#: A side script (Tab, the directory and branch lists) may take this long,
+#: print this much, and this many may run at once on one terminal.
+SIDE_TIMEOUT = 5
+SIDE_MAX = 1024 * 1024
+SIDE_AT_ONCE = 2
+#: Of each block in the feed's first answer, the end of its output, this
+#: much at most; the rest comes when the person asks for it.
+FEED_TAIL = 64 * 1024
+#: Blocks in one answer of the feed, at most.
+FEED_MAX = 200
+#: Commands in the history the input line gets.
+HISTORY_MAX = 1000
 
 MIN_COLS, MAX_COLS = 10, 1000
 MIN_ROWS, MAX_ROWS = 3, 500
+
+#: Control characters a command typed by the page may not carry. Escape
+#: above all: it could end the bracketed paste the command is wrapped in
+#: and type keys of its own.
+_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+#: A command typed by run() that the shell has not answered after this long
+#: never started: a quote or a heredoc left open, or a history expansion
+#: that failed (bash then shows its prompt again without a marker).
+TYPED_STALE = 3.0
+
+
+def clean_command(command: str) -> str:
+    """A command from the page as it will be typed: lines joined by \\n,
+    control characters out. Checked for danger in this form, so that what
+    is checked is what runs."""
+    text = command.replace("\r\n", "\n").replace("\r", "\n").strip("\n")
+    return _CONTROL.sub("", text)
+
+
+class NotOpen(Exception):
+    """The terminal is not running: nothing can be asked of its machine."""
 
 
 @dataclass
@@ -100,6 +139,8 @@ class Block:
     branch: str
     seq_start: int
     started_at: dt.datetime
+    #: The width it ran at: the page draws its output again at this width.
+    cols: int = 80
     started: float = field(default_factory=time.monotonic)
     head: bytearray = field(default_factory=bytearray)
     tail: deque = field(default_factory=deque)
@@ -131,6 +172,10 @@ def clamp_size(cols: int, rows: int) -> tuple[int, int]:
             max(MIN_ROWS, min(MAX_ROWS, int(rows))))
 
 
+def _code(text: str) -> int | None:
+    return int(text) if text.isdigit() else None
+
+
 class Terminal:
     """One shell on one machine."""
 
@@ -153,9 +198,15 @@ class Terminal:
         self.shell: str | None = None
         #: Whether this shell prints our markers; set by the first one seen.
         self.markers = False
+        #: Whether it marks where each command starts too, so that the page
+        #: can show blocks and type commands of its own (bash 4.4+, zsh).
+        self.blocks = False
         self.cwd = ""
         self.home = ""
         self.branch = ""
+        self.venv = ""
+        #: The shell's PATH at its last prompt, for Tab on a command.
+        self.path = ""
 
         self.events: deque[Event] = deque()
         self.first_seq = 1
@@ -171,6 +222,13 @@ class Terminal:
         self._proc: asyncssh.SSHClientProcess | None = None
         self._pending = bytearray()
         self._block: Block | None = None
+        #: The last commands, to say which one a replay starts inside of.
+        self._recent: deque[dict] = deque(maxlen=64)
+        #: A command was typed by run() and the shell has not answered with a
+        #: marker yet: no second one goes in on top of it.
+        self._typed = False
+        self._typed_at = 0.0
+        self._side = asyncio.Semaphore(SIDE_AT_ONCE)
         self._saving: set[asyncio.Task] = set()
         self._tick = asyncio.Event()
         self._task: asyncio.Task | None = None
@@ -197,11 +255,33 @@ class Terminal:
             "reason": self.reason,
             "shell": self.shell,
             "markers": self.markers,
+            "blocks": self.blocks,
             "cwd": self.cwd,
             "home": self.home,
             "branch": self.branch,
+            "venv": self.venv,
+            "running": self._running(),
             "openedAt": self.opened_at.isoformat(timespec="seconds"),
         }
+
+    def _running(self) -> dict | None:
+        """The command running now."""
+        b = self._block
+        if b is None:
+            return None
+        return {"command": b.command, "cwd": b.cwd, "branch": b.branch,
+                "seqStart": b.seq_start, "cols": b.cols,
+                "at": int(b.started_at.timestamp() * 1000)}
+
+    def block_at(self, seq: int) -> dict | None:
+        """The command whose output goes on past the number `seq`: a replay
+        that starts there starts inside it, after its start marker, and the
+        feed still has to know what it was."""
+        for entry in reversed(self._recent):
+            if entry["seqStart"] <= seq and (entry["seqEnd"] is None
+                                             or entry["seqEnd"] > seq):
+                return dict(entry)
+        return None
 
     @property
     def tick(self) -> asyncio.Event:
@@ -226,6 +306,7 @@ class Terminal:
                 who=ssh.key_id(self.owner.name, str(self.owner.id), m.name))
             how = await self._deploy()
             self.shell = how.shell
+            self.blocks = how.blocks
             self._proc = await self._conn.create_process(
                 how.command, term_type="xterm-256color",
                 term_size=(self.cols, self.rows),
@@ -334,36 +415,62 @@ class Terminal:
         self.events.append(Event(self.last_seq, "ev", data))
 
     def _marker(self, m: shell.Marker) -> None:
+        # Markers carry the core's clock, so that a page drawing them again
+        # later still knows when each command started and ended.
+        at = int(time.time() * 1000)
         if m.kind == "P":
-            code = m.field(0)
-            exit_code = int(code) if code.isdigit() else None
+            exit_code = _code(m.field(0))
+            trim = 0
             if self._block is not None:
-                self._finish_block(exit_code)
+                trim = self._finish_block(exit_code)
+            self._typed = False
             self.markers = True
             self.cwd, self.home, self.branch = m.field(1), m.field(2), m.field(3)
+            self.venv, self.path = m.field(4), m.field(5)
+            # trim: how much of the end of the block's output was zsh's
+            # partial-line mark, which the block does not keep.
             self._event({"t": "P", "code": exit_code, "cwd": self.cwd,
                          "home": self.home, "branch": self.branch,
-                         "venv": m.field(4)})
+                         "venv": self.venv, "trim": trim, "at": at})
         elif m.kind == "C":
+            prev = _code(m.field(1))
             if self._block is not None:
-                self._finish_block(None)
-            self._event({"t": "C", "command": m.field(0)})
+                # One line of several commands: the one before ended here.
+                self._finish_block(prev)
+            self._typed = False
+            self._event({"t": "C", "command": m.field(0), "prev": prev,
+                         "at": at})
             self._block = Block(command=m.field(0), cwd=self.cwd,
                                 branch=self.branch, seq_start=self.last_seq,
-                                started_at=dt.datetime.now(dt.UTC))
+                                started_at=dt.datetime.now(dt.UTC),
+                                cols=self.cols)
+            self._recent.append({
+                "command": m.field(0), "cwd": self.cwd, "branch": self.branch,
+                "seqStart": self.last_seq, "seqEnd": None, "cols": self.cols,
+                "at": at})
 
-    def _finish_block(self, exit_code: int | None) -> None:
+    def _finish_block(self, exit_code: int | None) -> int:
+        """Saves the running command's block; returns how many bytes of
+        zsh's partial-line mark came off the end of its output."""
         block, self._block = self._block, None
         if block is None:
-            return
+            return 0
+        for entry in reversed(self._recent):
+            if entry["seqStart"] == block.seq_start:
+                entry["seqEnd"] = self.last_seq
+                break
         output, cut = block.output()
+        trim = 0
         if self.shell == "zsh":
-            output = shell.strip_eol_mark(output, self.cols)
+            stripped = shell.strip_eol_mark(output, self.cols)
+            trim = len(output) - len(stripped)
+            output = stripped
         task = asyncio.create_task(self._save_block(
             block, exit_code, output, cut, self.last_seq,
             dt.datetime.now(dt.UTC)))
         self._saving.add(task)
         task.add_done_callback(self._saving.discard)
+        return trim
 
     async def _save_block(self, block: Block, exit_code: int | None,
                           output: bytes, cut: bool, seq_end: int,
@@ -374,16 +481,17 @@ class Terminal:
                 INSERT INTO blocks (terminal_id, kind, seq_start, seq_end,
                                     command, started_by, started_at,
                                     finished_at, exit_code, cwd, branch,
-                                    output, output_cut, expires_at)
+                                    output, output_cut, cols, expires_at)
                 VALUES ($1, 'command', $2, $3, $4, $5, $6, $7, $8, $9, $10,
-                        $11, $12,
+                        $11, $12, $14,
                         now() + make_interval(days => (
                             SELECT output_days FROM projects WHERE id = $13)))
                 """,
                 self.id, block.seq_start, seq_end, block.command,
                 self.owner.id, block.started_at, finished_at, exit_code,
                 block.cwd or None, block.branch or None,
-                zlib.compress(output, 6), cut, self.machine.project_id)
+                zlib.compress(output, 6), cut, self.machine.project_id,
+                block.cols)
         except Exception:               # noqa: BLE001 - the screen goes on
             log.exception("could not save a block of terminal %s", self.id)
 
@@ -397,6 +505,51 @@ class Terminal:
             if room > 0:
                 self._pending += data[:room]
 
+    def run(self, command: str) -> str | None:
+        """Types a whole command at the shell's prompt and presses Enter, the
+        way tTerm's own input line hands it over. Returns why not, or None.
+
+        The command goes in as a bracketed paste when the shell has that on
+        (bash 5.1+ and zsh do): the line editor then takes it as text, every
+        line of it, with no key in it read as a binding, and Enter runs it
+        all. Without it the text is typed as is.
+
+        Ctrl+U goes first and empties the line. Keys typed into the previous
+        command that it never read wait in the terminal, and the line editor
+        takes them in at the prompt; they would end up in front of this
+        command.
+        """
+        if self.state != "open" or self._proc is None:
+            return "The terminal is not open."
+        if not self.blocks:
+            return ("This shell does not mark where commands start, so it "
+                    "runs in the classic mode only.")
+        if self._block is not None:
+            return "A command is still running."
+        if self._typed:
+            if time.monotonic() - self._typed_at < TYPED_STALE:
+                return "A command is still running."
+            # The last one never started. Ctrl+C sets the shell back to an
+            # empty prompt; whatever follows it in the same moment would be
+            # thrown away by the terminal, so this command waits for Enter
+            # again.
+            self._proc.stdin.write(b"\x03")
+            self._typed_at = time.monotonic()
+            return ("The shell had not taken the last command (an open quote, "
+                    "or a history expansion with ! that failed). It is "
+                    "cancelled now: press Enter again.")
+        text = clean_command(command)
+        if not text.strip():
+            return "There is no command to run."
+        if self.modes.state.get(2004):
+            data = b"\x15\x1b[200~" + text.encode() + b"\x1b[201~\r"
+        else:
+            data = b"\x15" + text.replace("\t", " ").encode() + b"\r"
+        self._typed = True
+        self._typed_at = time.monotonic()
+        self._proc.stdin.write(data)
+        return None
+
     def resize(self, cols: int, rows: int) -> None:
         cols, rows = clamp_size(cols, rows)
         if (cols, rows) == (self.cols, self.rows):
@@ -405,6 +558,64 @@ class Terminal:
         if self.state == "open" and self._proc is not None:
             with contextlib.suppress(Exception):
                 self._proc.change_terminal_size(cols, rows)
+
+    # -------------------------------------------------------- side channel
+
+    async def side(self, script: str) -> list[str]:
+        """Runs a small sh script on the machine on a channel of its own in
+        the same SSH connection, and returns the lines it listed. The
+        terminal itself never sees it. An empty list when it fails: Tab
+        then simply finds nothing."""
+        conn = self._conn
+        if self.state != "open" or conn is None:
+            raise NotOpen("The terminal is not open.")
+        async with self._side:
+            try:
+                result = await conn.run("sh -s", input=script.encode(),
+                                        encoding=None, check=False,
+                                        timeout=SIDE_TIMEOUT)
+            except (asyncssh.Error, OSError, asyncio.TimeoutError) as exc:
+                log.info("side script on %s failed: %s", self.machine.label, exc)
+                return []
+        out = result.stdout if isinstance(result.stdout, bytes) else b""
+        return complete.listed(out[:SIDE_MAX])
+
+    async def complete(self, line: str, cursor: int) -> dict:
+        """What the word under the cursor can become."""
+        cursor = max(0, min(len(line), int(cursor)))
+        words, word = complete.split(line[:cursor])
+        ctx = complete.context(words, word)
+        items: list[dict] = []
+        if ctx.kind == "command":
+            names = await self.side(complete.commands_script(self.path,
+                                                             word.value))
+            items = complete.command_items(word, names)
+        elif ctx.kind == "git":
+            items = complete.git_items(word)
+        if ctx.kind in ("branch", "branch+file"):
+            refs = await self.side(complete.branches_script(self.cwd))
+            items = complete.branch_items(word, refs, ctx.switch)
+        if ctx.kind in ("file", "dir", "branch+file"):
+            where, _, _ = complete.dir_part(word.value, self.home)
+            entries = await self.side(complete.list_script(self.cwd, where))
+            items += complete.file_items(word, entries, self.home,
+                                         dirs_only=ctx.kind == "dir")
+        return {"start": word.start, "end": cursor, "quote": word.quote,
+                "kind": ctx.kind, "items": items[:complete.MAX_ITEMS],
+                "more": len(items) > complete.MAX_ITEMS}
+
+    async def dirs(self) -> dict:
+        """The directories in the terminal's current one."""
+        entries = await self.side(complete.list_script(self.cwd, "."))
+        return {"cwd": self.cwd, "home": self.home,
+                "dirs": complete.dirs_of(entries)}
+
+    async def branches(self) -> dict:
+        """The branches of the repository the terminal is in."""
+        if not self.branch:
+            return {"current": "", "local": [], "remote": []}
+        refs = await self.side(complete.branches_script(self.cwd))
+        return {"current": self.branch, **complete.branches_of(refs)}
 
     def nudge(self) -> None:
         """Asks a full-screen program to draw itself again: the window
@@ -519,8 +730,9 @@ class Terminal:
         try:
             await self.pool.execute(
                 "UPDATE terminals SET closed_at = now(), last_seq = $2, "
-                "end_reason = $3, shell = $4 WHERE id = $1",
-                self.id, self.last_seq, reason[:500], self.shell)
+                "end_reason = $3, shell = $4, home = $5 WHERE id = $1",
+                self.id, self.last_seq, reason[:500], self.shell,
+                self.home or None)
         except Exception:               # noqa: BLE001
             log.exception("could not record the end of terminal %s", self.id)
         await self._journal("terminal.closed", {"reason": reason[:500]})
@@ -539,6 +751,39 @@ class Terminal:
 
 class NotAllowed(Exception):
     """No such machine, or not one this person may open terminals on."""
+
+
+def _ms(when: dt.datetime | None) -> int | None:
+    return int(when.timestamp() * 1000) if when else None
+
+
+def _block_json(row: asyncpg.Record) -> dict:
+    """A finished block for the page: the end of its output only, starting
+    at a line, if it is long."""
+    output = zlib.decompress(row["output"]) if row["output"] else b""
+    size = len(output)
+    tail, partial = output, False
+    if size > FEED_TAIL:
+        start = size - FEED_TAIL
+        nl = output.find(b"\n", start)
+        tail = output[nl + 1:] if 0 <= nl < size - 1 else output[start:]
+        partial = True
+    return {
+        "id": row["id"],
+        "seqStart": row["seq_start"],
+        "seqEnd": row["seq_end"],
+        "command": row["command"] or "",
+        "cwd": row["cwd"] or "",
+        "branch": row["branch"] or "",
+        "startedAt": _ms(row["started_at"]),
+        "finishedAt": _ms(row["finished_at"]),
+        "exitCode": row["exit_code"],
+        "cols": row["cols"],
+        "cut": row["output_cut"],
+        "partial": partial,
+        "size": size,
+        "output": base64.b64encode(tail).decode("ascii"),
+    }
 
 
 class Terminals:
@@ -608,8 +853,8 @@ class Terminals:
         """A terminal no longer in memory, as the database remembers it."""
         row = await self.pool.fetchrow(
             """
-            SELECT t.id, t.name, t.closed_at, t.end_reason, m.id AS machine_id,
-                   m.name AS machine, p.code
+            SELECT t.id, t.name, t.closed_at, t.end_reason, t.home,
+                   m.id AS machine_id, m.name AS machine, p.code
             FROM terminals t
             JOIN machines m ON m.id = t.machine_id
             JOIN projects p ON p.id = m.project_id
@@ -622,8 +867,80 @@ class Terminals:
             label += f" · {row['name']}"
         return {"id": str(row["id"]), "machineId": str(row["machine_id"]),
                 "machine": row["machine"], "label": label,
-                "name": row["name"], "state": "gone",
+                "name": row["name"], "state": "gone", "home": row["home"] or "",
                 "reason": row["end_reason"] or "This terminal is no longer running."}
+
+    # ------------------------------------------------- blocks and history
+
+    async def _owned(self, terminal_id: uuid.UUID) -> asyncpg.Record | None:
+        return await self.pool.fetchrow(
+            """
+            SELECT t.id, t.machine_id, m.project_id
+            FROM terminals t JOIN machines m ON m.id = t.machine_id
+            WHERE t.id = $1 AND t.owner_id = $2
+            """, terminal_id, self.owner.id)
+
+    async def feed(self, terminal_id: uuid.UUID, before: int | None,
+                   limit: int) -> dict | None:
+        """The terminal's finished blocks, the latest `limit` of those that
+        started before the number `before`, oldest first. Each with the end
+        of its output; None if the terminal is not this person's."""
+        if await self._owned(terminal_id) is None:
+            return None
+        limit = max(1, min(FEED_MAX, int(limit)))
+        rows = await self.pool.fetch(
+            """
+            SELECT id, seq_start, seq_end, command, cwd, branch, started_at,
+                   finished_at, exit_code, output, output_cut, cols
+            FROM blocks
+            WHERE terminal_id = $1 AND kind = 'command' AND expires_at > now()
+              AND ($2::bigint IS NULL OR seq_start < $2)
+            ORDER BY seq_start DESC
+            LIMIT $3
+            """, terminal_id, before, limit + 1)
+        more = len(rows) > limit
+        rows = list(reversed(rows[:limit]))
+        # Unpacking a few megabytes is work: not in the event loop.
+        blocks = await asyncio.to_thread(lambda: [_block_json(r) for r in rows])
+        return {"blocks": blocks, "more": more}
+
+    async def block_output(self, terminal_id: uuid.UUID,
+                           seq_start: int) -> tuple[bytes, bool] | None:
+        """All a block kept of its output, and whether its middle was cut."""
+        row = await self.pool.fetchrow(
+            """
+            SELECT b.output, b.output_cut
+            FROM blocks b JOIN terminals t ON t.id = b.terminal_id
+            WHERE b.terminal_id = $1 AND t.owner_id = $2 AND b.seq_start = $3
+              AND b.expires_at > now()
+            """, terminal_id, self.owner.id, seq_start)
+        if row is None:
+            return None
+        data = row["output"] or b""
+        output = await asyncio.to_thread(zlib.decompress, data) if data else b""
+        return output, row["output_cut"]
+
+    async def history(self, terminal_id: uuid.UUID) -> list[dict] | None:
+        """The commands for the input line's history, newest first: those
+        run on this terminal's machine, then the rest of its project's."""
+        owned = await self._owned(terminal_id)
+        if owned is None:
+            return None
+        rows = await self.pool.fetch(
+            """
+            SELECT b.command, bool_or(t.machine_id = $2) AS here
+            FROM blocks b
+            JOIN terminals t ON t.id = b.terminal_id
+            JOIN machines m ON m.id = t.machine_id
+            WHERE t.owner_id = $1 AND m.project_id = $3
+              AND b.command IS NOT NULL AND b.command <> ''
+              AND b.expires_at > now()
+            GROUP BY b.command
+            ORDER BY bool_or(t.machine_id = $2) DESC, max(b.started_at) DESC
+            LIMIT $4
+            """, self.owner.id, owned["machine_id"], owned["project_id"],
+            HISTORY_MAX)
+        return [{"command": r["command"], "here": r["here"]} for r in rows]
 
     async def stop(self) -> None:
         if self._sweeper is not None:
@@ -724,6 +1041,19 @@ class Watcher:
             self.sent = after
             await self._json({"op": "attached", "ch": self.channel,
                               "terminal": t.describe(), "resumed": True})
+            # What came since, then the mark that it is all old news: the
+            # page's terminal must not answer questions programs asked in
+            # it, as on a replay. A flood during the await above may have
+            # pushed that out of what is kept: then a replay instead.
+            try:
+                new = t.events_after(self.sent)
+            except LookupError:
+                await self._replay()
+            else:
+                if new:
+                    await self._events(new)
+                await self._json({"op": "replayed", "ch": self.channel,
+                                  "seq": self.sent})
         else:
             await self._json({"op": "attached", "ch": self.channel,
                               "terminal": t.describe(), "resumed": False})
@@ -744,7 +1074,10 @@ class Watcher:
     async def _replay(self) -> None:
         t = self.terminal
         base, prefix, events = t.snapshot()
-        await self._json({"op": "reset", "ch": self.channel, "seq": base})
+        # The replay may begin inside a command, after its start marker: the
+        # feed needs to know which, to put its output under it.
+        await self._json({"op": "reset", "ch": self.channel, "seq": base,
+                          "running": t.block_at(base)})
         if prefix:
             await self._send(output_frame(self.channel, base, prefix))
         self.sent = base

@@ -6,4 +6,4 @@ Everything runs from the repository root, not from inside the package:
     python -m tterm.tests    the checks
 """
 
-__version__ = "0.0.4"
+__version__ = "0.0.5"

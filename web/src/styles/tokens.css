@@ -36,6 +36,24 @@
   --blue-wash: rgba(108, 140, 255, .08);
   --scrim: rgba(5, 6, 8, .62);
   --shadow: 0 24px 64px rgba(0, 0, 0, .55);
+  /* The sixteen colours programs ask for, as in the terminal (xtermTheme.ts):
+   * finished blocks in the feed use them as text. */
+  --ansi-0: #1D2026;
+  --ansi-1: #E5534B;
+  --ansi-2: #46B95C;
+  --ansi-3: #E9A33F;
+  --ansi-4: #6C8CFF;
+  --ansi-5: #C47BE0;
+  --ansi-6: #4CB8C8;
+  --ansi-7: #C9CDD4;
+  --ansi-8: #7D838E;
+  --ansi-9: #F2736B;
+  --ansi-10: #65D27A;
+  --ansi-11: #F2BD69;
+  --ansi-12: #93A9FF;
+  --ansi-13: #D89CEC;
+  --ansi-14: #73D0DD;
+  --ansi-15: #FFFFFF;
   color-scheme: dark;
 }
 
@@ -69,6 +87,22 @@
   --blue-wash: rgba(71, 102, 230, .06);
   --scrim: rgba(21, 23, 28, .28);
   --shadow: 0 24px 64px rgba(21, 23, 28, .16);
+  --ansi-0: #15171C;
+  --ansi-1: #B3302A;
+  --ansi-2: #15702F;
+  --ansi-3: #93560A;
+  --ansi-4: #3554D1;
+  --ansi-5: #8E3BA8;
+  --ansi-6: #0B6F80;
+  --ansi-7: #6B7280;
+  --ansi-8: #5F6673;
+  --ansi-9: #C9443B;
+  --ansi-10: #1E8A3E;
+  --ansi-11: #A8650D;
+  --ansi-12: #4766E6;
+  --ansi-13: #A452C2;
+  --ansi-14: #12879B;
+  --ansi-15: #9AA0AA;
   color-scheme: light;
 }
 

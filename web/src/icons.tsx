@@ -1,19 +1,89 @@
 // Icons from the approved mockups: 24×24 strokes, drawn with currentColor.
 
-type Props = { size?: number };
+type Props = { size?: number; className?: string };
 
-function Stroke({ size = 18, width = 2, children }: Props & {
+function Stroke({ size = 18, width = 2, className, children }: Props & {
   width?: number;
   children: React.ReactNode;
 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
       stroke="currentColor" strokeWidth={width} strokeLinecap="round"
-      strokeLinejoin="round" aria-hidden="true">
+      strokeLinejoin="round" aria-hidden="true" className={className}>
       {children}
     </svg>
   );
 }
+
+export const Branch = (p: Props) => (
+  <Stroke {...p}>
+    <circle cx="6" cy="6" r="2" />
+    <circle cx="6" cy="18" r="2" />
+    <circle cx="18" cy="8" r="2" />
+    <path d="M6 8v8" />
+    <path d="M18 10c0 4-4 5-10 6" />
+  </Stroke>
+);
+
+/** A failed command: a thick cross. */
+export const Cross = (p: Props) => (
+  <Stroke {...p} width={4}><path d="M6 6l12 12M18 6L6 18" /></Stroke>
+);
+
+export const Collapse = (p: Props) => (
+  <Stroke {...p}><path d="M6 15l6-6 6 6" /></Stroke>
+);
+
+export const Expand = (p: Props) => (
+  <Stroke {...p}><path d="M6 9l6 6 6-6" /></Stroke>
+);
+
+export const Link = (p: Props) => (
+  <Stroke {...p}>
+    <path d="M10 14a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1" />
+    <path d="M14 10a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1" />
+  </Stroke>
+);
+
+export const Rerun = (p: Props) => (
+  <Stroke {...p}>
+    <path d="M3 12a9 9 0 1 0 3-6.7" />
+    <path d="M3 4v5h5" />
+  </Stroke>
+);
+
+export function Stop({ size = 11 }: Props) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor"
+      aria-hidden="true">
+      <rect x="5" y="5" width="14" height="14" rx="2" />
+    </svg>
+  );
+}
+
+export const Folder = (p: Props) => (
+  <Stroke {...p}>
+    <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+  </Stroke>
+);
+
+export const ArrowUp = (p: Props) => (
+  <Stroke {...p}><path d="M12 19V5M6 11l6-6 6 6" /></Stroke>
+);
+
+export const Search = (p: Props) => (
+  <Stroke {...p}>
+    <circle cx="11" cy="11" r="7" />
+    <path d="M20 20l-3.5-3.5" />
+  </Stroke>
+);
+
+export const Warning = (p: Props) => (
+  <Stroke {...p}>
+    <path d="M12 3l9.5 17h-19z" />
+    <path d="M12 10v4M12 17.5h.01" />
+  </Stroke>
+);
 
 export const ChevronRight = (p: Props) => (
   <Stroke {...p}><path d="M9 6l6 6-6 6" /></Stroke>

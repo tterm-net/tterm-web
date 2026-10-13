@@ -7,30 +7,46 @@
 // back by itself, and each channel asks for what it missed after the last
 // number it has, so the screen goes on where it was.
 
-import type { TerminalInfo } from "./api";
+import type { RunningCommand, TerminalInfo } from "./api";
 
 const OUTPUT = 1;
 const INPUT = 2;
 const RETRY_MS = [300, 1000, 2000, 4000, 8000];
 
+/** A marker from the shell, as the core passes it on. `at` is the core's
+ * clock, in milliseconds. */
 export type MarkerEvent =
   | { t: "P"; code: number | null; cwd: string; home: string; branch: string;
-      venv: string }
-  | { t: "C"; command: string };
+      venv: string; trim: number; at: number }
+  | { t: "C"; command: string; prev: number | null; at: number };
+
+/** A command held back until the person says yes. */
+export interface Confirm {
+  command: string;
+  what: string;
+  lost: string;
+  everything: boolean;
+}
 
 export interface ChannelHandlers {
   /** The core knows this terminal; `resumed` says whether it went on from
    * the number we had or starts over with a reset. */
   attached: (terminal: TerminalInfo, resumed: boolean) => void;
-  /** A clean screen: everything kept follows, up to `replayed`. */
-  reset: () => void;
+  /** A clean screen: everything kept follows, up to `replayed`. `seq` is
+   * the number the replay goes on from; `running`, the command running as
+   * it starts. */
+  reset: (seq: number, running: RunningCommand | null) => void;
   /** The replay is over: what comes next is live. */
   replayed: () => void;
-  output: (data: Uint8Array) => void;
-  marker: (event: MarkerEvent) => void;
+  output: (data: Uint8Array, seq: number) => void;
+  marker: (event: MarkerEvent, seq: number) => void;
   state: (terminal: TerminalInfo) => void;
   /** The core does not have this terminal (any more). */
   gone: (terminal: TerminalInfo | null) => void;
+  /** A command from run() that needs a yes first. */
+  confirm?: (ask: Confirm) => void;
+  /** A command from run() the shell could not take. */
+  refused?: (command: string, reason: string) => void;
 }
 
 export interface Channel {
@@ -38,6 +54,8 @@ export interface Channel {
   focus: () => void;
   input: (data: string) => void;
   inputBinary: (data: string) => void;
+  /** A whole command, typed at the prompt by the core. */
+  run: (command: string, confirmed?: boolean) => void;
   resize: (cols: number, rows: number) => void;
   pause: () => void;
   resume: () => void;
@@ -73,10 +91,12 @@ class Socket {
     return () => this.listeners.delete(listener);
   }
 
+  /** `after`: the number the page already has everything up to (the feed
+   * has the finished blocks from the database); null for everything kept. */
   attach(id: string, cols: number, rows: number,
-    handlers: ChannelHandlers): Channel {
+    handlers: ChannelHandlers, after: number | null = null): Channel {
     const ch = this.nextChannel++;
-    const open: Open = { id, handlers, lastSeq: null, cols, rows,
+    const open: Open = { id, handlers, lastSeq: after, cols, rows,
       paused: false, focused: false };
     this.channels.set(ch, open);
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
@@ -95,6 +115,8 @@ class Socket {
         for (let i = 0; i < data.length; i++) bytes[i] = data.charCodeAt(i) & 255;
         this.sendInput(ch, bytes);
       },
+      run: (command, confirmed = false) =>
+        this.json({ op: "run", ch, command, confirmed }),
       resize: (c, r) => {
         open.cols = c;
         open.rows = r;
@@ -178,7 +200,7 @@ class Socket {
       const open = this.channels.get(view.getUint32(1));
       if (!open) return;
       open.lastSeq = Number(view.getBigUint64(5));
-      open.handlers.output(new Uint8Array(data, 13));
+      open.handlers.output(new Uint8Array(data, 13), open.lastSeq);
       return;
     }
     let msg: { op: string; ch?: number; [key: string]: unknown };
@@ -196,14 +218,21 @@ class Socket {
         break;
       case "reset":
         open.lastSeq = msg.seq as number;
-        h.reset();
+        h.reset(msg.seq as number,
+          (msg.running as RunningCommand | null | undefined) ?? null);
         break;
       case "replayed":
         h.replayed();
         break;
       case "ev":
         open.lastSeq = msg.seq as number;
-        h.marker(msg as unknown as MarkerEvent);
+        h.marker(msg as unknown as MarkerEvent, msg.seq as number);
+        break;
+      case "confirm":
+        h.confirm?.(msg as unknown as Confirm);
+        break;
+      case "refused":
+        h.refused?.(String(msg.command ?? ""), String(msg.reason ?? ""));
         break;
       case "state":
         h.state(msg.terminal as TerminalInfo);
