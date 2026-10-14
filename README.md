@@ -4,9 +4,12 @@ tTerm in the browser: a real terminal with command blocks, for people who work
 with servers and for their teams. Projects, roles, a journal of who ran what,
 and watching a colleague's terminal, always with them knowing.
 
-**Status:** early development. Version 0.0.5 shows a terminal as a feed of
-blocks, one per command, typed into tTerm's own input line: history from all
-your devices, Tab that asks the server, the directory and the git branch as
+**Status:** early development. Version 0.0.6 adds computers: a laptop
+without a public address connects through
+[tterm-agent](https://github.com/tterm-net/tterm-agent) 0.11.0 and gets the
+same terminals as a server. Since 0.0.5 a terminal is a feed of blocks, one
+per command, typed into tTerm's own input line: history from all your
+devices, Tab that asks the machine, the directory and the git branch as
 buttons, and a question before a command that would destroy something. The
 classic terminal is one click away. The first stage ends with version 0.1, a
 real terminal to your own servers and computers in the browser on your
@@ -46,10 +49,13 @@ Then open http://localhost:8090. Stop it with Ctrl+C.
 To connect a server, the server must reach your machines' address: set
 `TTERM_CONNECT_URL` to an address that leads to port 8091 on this computer,
 for instance through a Cloudflare tunnel. Then "Add a machine" gives the
-command to run on the server, and "Open a terminal" opens a shell on it.
+command to run on the server, and "Open a terminal" opens a shell on it. A
+computer gets a command that starts the agent instead, from a checkout of
+[tterm-agent](https://github.com/tterm-net/tterm-agent).
 
 The checks need the same PostgreSQL. They create throwaway databases there
-and drop them at the end:
+and drop them at the end. With tterm-agent checked out next to this
+repository, they run the real agent too:
 
 ```bash
 python -m tterm.tests
@@ -64,7 +70,8 @@ tterm/
                  on the other end of them, Tab, the commands held back
   api/page.py    the page and its API, for people; only this computer
   api/ws.py      the page's socket: every terminal on the page goes through it
-  api/connect.py where machines talk to us: installer, registration, agents
+  api/connect.py where machines talk to us: installer, registration, and
+                 the agents of computers, which stay connected
   signer/        the signer: CA keys and short certificates, its own process
   templates/     the installer for servers, and the shell scripts terminals
                  put on them
@@ -122,6 +129,26 @@ shutdown) wait for a yes first. The classic mode is the terminal of 0.0.4:
 every key goes to the shell, with its own Tab and history, and nothing is
 checked. bash older than 4.4 cannot say where a command starts, so there
 only the classic mode works.
+
+**A computer** has no address to reach, so its agent reaches us: it opens a
+WebSocket to the machines' side and keeps it, and every terminal on that
+computer goes through it. "Add a machine", then "Computer", gives a token
+that connects the agent once within ten minutes; from then on that token is
+the computer's key, and only its hash is kept. Through that connection the
+agent starts the shell a terminal asks for, in a terminal of the page's size,
+and passes the bytes both ways untouched; it also runs the small sh scripts
+behind Tab and the lists, and the one that puts the shell scripts in
+`~/.tterm`. A computer is online while its agent runs: the page shows it, and
+terminals there end, saying why, when the agent goes. The agent is still a
+pipe: markers, blocks and the rest stay here, as for a server. A computer
+added again is a new machine, even under the same name: a name is whatever
+a computer calls itself. A second agent with a key already connected is
+turned away while the first one answers.
+
+The machines' side is open to the internet, so `/agent` keeps strangers
+short: the hello is small and comes at once, only a few connections from
+one address may wait to say it, an address whose unknown tokens keep failing
+waits a while, and no message is larger than a script's answer.
 
 **The signer** holds the CA keys and nothing else, in a process of its own.
 For every connection the core makes a throwaway key pair and asks the

@@ -12,6 +12,7 @@ import asyncio
 import contextlib
 import logging
 import socket
+import sys
 
 import asyncpg
 import uvicorn
@@ -19,6 +20,7 @@ import uvicorn
 from .api.connect import create_connect_app
 from .api.page import create_page_app
 from .core import accounts, db, machines
+from .core.agents import FRAME_MAX, Agents
 from .core.terminals import Terminals
 from .core.accounts import Person
 from .core.config import Settings
@@ -41,6 +43,29 @@ class _Server(uvicorn.Server):
     @contextlib.contextmanager
     def capture_signals(self):
         yield
+
+
+def more_open_files() -> None:
+    """Lets the core keep more sockets open than the system's default
+    allows, which on macOS is 256: agents connect from the internet, and a
+    connection the core closed keeps its socket a few seconds for the other
+    side's goodbye. Only ever raised, as far as the system lets it."""
+    try:
+        import resource
+    except ImportError:         # not a Unix
+        return
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    top = 10240 if hard == resource.RLIM_INFINITY else hard
+    if sys.platform == "darwin":
+        top = min(top, 10240)   # macOS refuses more for one process
+    for want in (top, 4096, 1024):
+        if soft == resource.RLIM_INFINITY or want <= soft:
+            return
+        try:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (want, hard))
+            return
+        except (ValueError, OSError):
+            continue
 
 
 def listen(host: str, port: int) -> socket.socket:
@@ -74,6 +99,8 @@ class Core:
         self.owner: Person | None = None
         self.active_ca: dict | None = None
         self.terminals: Terminals | None = None
+        #: The computers whose agent is connected right now.
+        self.agents = Agents()
         self._servers: list[_Server] = []
         self._tasks: list[asyncio.Task] = []
         self._sockets: list[socket.socket] = []
@@ -89,6 +116,7 @@ class Core:
     async def start(self, page_socket: socket.socket | None = None,
                     connect_socket: socket.socket | None = None) -> None:
         s = self.settings
+        more_open_files()
         page_socket = page_socket or listen(s.page_host, s.page_port)
         try:
             connect_socket = connect_socket or listen(s.connect_host,
@@ -102,23 +130,29 @@ class Core:
             await db.migrate(self.pool)
             self.owner = await accounts.ensure_local_owner(self.pool, s.owner_name)
             await self._meet_signer()
-            self.terminals = Terminals(self.pool, self.signer, self.owner)
+            self.terminals = Terminals(self.pool, self.signer, self.owner,
+                                       self.agents)
             await self.terminals.start()
         except BaseException:
             await self.stop()
             raise
 
         page = create_page_app(self.pool, self.owner, s.web_dist,
-                               self.page_port, s.connect_url, self.terminals)
-        connect = create_connect_app(self.pool, self.signer, s.connect_url)
-        for app, sock, proxied in ((page, self._sockets[0], False),
-                                   (connect, self._sockets[1], True)):
+                               self.page_port, s.connect_url, self.terminals,
+                               self.agents)
+        connect = create_connect_app(self.pool, self.signer, s.connect_url,
+                                     self.agents)
+        for app, sock, limits in ((page, self._sockets[0], {}),
+                                  (connect, self._sockets[1],
+                                   # Agents, from the internet: no message
+                                   # larger than a script's answer.
+                                   {"ws_max_size": FRAME_MAX})):
             config = uvicorn.Config(
                 app, lifespan="off", log_level="warning", access_log=False,
                 server_header=False,
                 # The core reads the proxy's headers itself, and only when the
                 # proxy is on this machine: see client_ip in api/connect.py.
-                proxy_headers=False)
+                proxy_headers=False, **limits)
             server = _Server(config)
             self._servers.append(server)
             self._tasks.append(asyncio.create_task(server.serve(sockets=[sock])))
@@ -153,6 +187,7 @@ class Core:
             with contextlib.suppress(Exception):
                 await asyncio.wait_for(self.terminals.stop(), grace)
             self.terminals = None
+        self.agents.close_all("tTerm Web stopped.")
         for server in self._servers:
             server.should_exit = True
         if self._tasks:

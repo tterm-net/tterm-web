@@ -20,6 +20,8 @@ const OPEN_DELAY_MS = 180;
 /** Leaving the sidebar closes it after this pause, forgiving a sloppy mouse. */
 const CLOSE_DELAY_MS = 250;
 const TOAST_MS = 3200;
+/** How often the page asks whether computers came online or went. */
+const COMPUTERS_MS = 10_000;
 
 /** /t/<id> is a terminal; anything else is the machines page. */
 const TERMINAL_PATH = /^\/t\/([0-9a-f-]{36})\/?$/;
@@ -68,6 +70,21 @@ export function App() {
   const refresh = useCallback(() => {
     loadState().then(setState).catch(() => {});
   }, []);
+
+  // A computer comes online when its agent starts and goes when it stops,
+  // with nothing done on this page: while there are computers, ask now and
+  // then, and whenever the window comes back into view.
+  const computers = !!state?.projects.some((p) =>
+    p.machines.some((m) => m.kind === "computer"));
+  useEffect(() => {
+    if (!computers) return;
+    const timer = window.setInterval(refresh, COMPUTERS_MS);
+    window.addEventListener("focus", refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+    };
+  }, [computers, refresh]);
 
   // Addresses: back and forward move between the machines page and
   // terminals the way they would between pages.

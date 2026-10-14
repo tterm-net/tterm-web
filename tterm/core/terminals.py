@@ -19,6 +19,9 @@ the beginning and the end of it if it was long.
 From 0.0.5 the page can also type a whole command at the prompt (run), and
 ask the machine, over a quiet side channel of the same SSH connection, what
 a word under Tab can become and which directories and branches there are.
+
+From 0.0.6 a terminal can be on a computer too, through its agent instead of
+SSH; the terminal does it all the same way over either (see transport.py).
 """
 from __future__ import annotations
 
@@ -38,11 +41,11 @@ from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
 import asyncpg
-import asyncssh
 
-from . import accounts, complete, shell, ssh
+from . import accounts, complete, shell, ssh, transport
 from .accounts import Person
 from .signer_client import SignerClient
+from .transport import LinkError
 
 log = logging.getLogger("tterm.terminals")
 
@@ -120,11 +123,13 @@ class Machine:
     project_id: uuid.UUID
     code: str
     name: str
-    host: str
-    port: int
-    login: str
+    host: str | None
+    port: int | None
+    login: str | None
     host_keys: list[str]
     ca_id: str | None
+    #: A server is reached over SSH, a computer through its agent.
+    kind: str = "server"
 
     @property
     def label(self) -> str:
@@ -146,25 +151,41 @@ class Block:
     tail: deque = field(default_factory=deque)
     tail_bytes: int = 0
     total: int = 0
+    #: The screen modes of everything before the kept tail.
+    before_tail: shell.Modes = field(default_factory=shell.Modes)
 
     def add(self, data: bytes) -> None:
         self.total += len(data)
         room = BLOCK_HEAD - len(self.head)
         if room > 0:
             self.head += data[:room]
+            self.before_tail.feed(data[:room])
             data = data[room:]
         if data:
             self.tail.append(data)
             self.tail_bytes += len(data)
             while self.tail_bytes - len(self.tail[0]) >= BLOCK_TAIL:
-                self.tail_bytes -= len(self.tail.popleft())
+                dropped = self.tail.popleft()
+                self.tail_bytes -= len(dropped)
+                self.before_tail.feed(dropped)
 
     def output(self) -> tuple[bytes, bool]:
+        """What is kept, and whether the middle was left out. Where it was,
+        the screen is switched to the modes the tail began in: a full-screen
+        program that started in the middle otherwise draws its end on the
+        main screen, as a jumble."""
         tail = b"".join(self.tail)
         cut = len(self.head) + len(tail) < self.total
+        before = self.before_tail
         if len(tail) > BLOCK_TAIL:
+            before = before.copy()
+            before.feed(tail[:-BLOCK_TAIL])
             tail, cut = tail[-BLOCK_TAIL:], True
-        return bytes(self.head) + tail, cut
+        if not cut:
+            return bytes(self.head) + tail, False
+        at_head_end = shell.Modes()
+        at_head_end.feed(bytes(self.head))
+        return bytes(self.head) + at_head_end.switch_to(before) + tail, True
 
 
 def clamp_size(cols: int, rows: int) -> tuple[int, int]:
@@ -181,10 +202,12 @@ class Terminal:
 
     def __init__(self, *, pool: asyncpg.Pool, signer: SignerClient,
                  owner: Person, machine: Machine, name: str,
-                 cols: int, rows: int) -> None:
+                 cols: int, rows: int, agents=None) -> None:
         self.id = uuid.uuid4()
         self.pool = pool
         self.signer = signer
+        #: The connected agents, for a terminal on a computer.
+        self.agents = agents
         self.owner = owner
         self.machine = machine
         self.name = name
@@ -218,8 +241,9 @@ class Terminal:
 
         self._key = shell.new_key()
         self._parser = shell.MarkerParser(self._key)
-        self._conn: asyncssh.SSHClientConnection | None = None
-        self._proc: asyncssh.SSHClientProcess | None = None
+        #: The way to the machine, and the shell running through it.
+        self._link: transport.Link | None = None
+        self._chan: transport.Channel | None = None
         self._pending = bytearray()
         self._block: Block | None = None
         #: The last commands, to say which one a replay starts inside of.
@@ -300,30 +324,38 @@ class Terminal:
     async def _run(self) -> None:
         m = self.machine
         try:
-            self._conn = await ssh.connect(
-                self.signer, host=m.host, port=m.port, login=m.login,
-                host_keys=m.host_keys, ca=m.ca_id,
-                who=ssh.key_id(self.owner.name, str(self.owner.id), m.name))
+            if m.kind == "computer":
+                link = self.agents.get(m.id) if self.agents is not None else None
+                if link is None:
+                    await self._end(
+                        f"{m.name} is not connected right now: its agent is not "
+                        "running. Start the agent on that computer, then open "
+                        "a terminal again.")
+                    return
+                self._link = link
+            else:
+                self._link = transport.SshLink(await ssh.connect(
+                    self.signer, host=m.host, port=m.port, login=m.login,
+                    host_keys=m.host_keys, ca=m.ca_id,
+                    who=ssh.key_id(self.owner.name, str(self.owner.id), m.name)))
             how = await self._deploy()
             self.shell = how.shell
             self.blocks = how.blocks
-            self._proc = await self._conn.create_process(
-                how.command, term_type="xterm-256color",
-                term_size=(self.cols, self.rows),
-                # Echo starts off so the key never shows; the shell turns
-                # it back on as soon as it has read the key.
-                term_modes={asyncssh.PTY_ECHO: 0} if how.markers else {},
-                encoding=None, stderr=asyncssh.STDOUT)
+            # Echo starts off so the key never shows; the shell turns it
+            # back on as soon as it has read the key.
+            self._chan = await self._link.open(how.command, self.cols,
+                                               self.rows, echo=not how.markers)
         except asyncio.CancelledError:
             raise
         except Exception as exc:        # noqa: BLE001 - every reason is shown
             log.info("terminal on %s did not open: %s", m.label, exc)
-            await self._end(ssh.explain(exc, m.host, m.port))
+            await self._end(ssh.explain(exc, m.host, m.port) if m.kind != "computer"
+                            else f"Could not open a terminal on {m.name}: {exc}")
             return
         if how.markers:
-            self._proc.stdin.write(self._key.encode() + b"\n")
+            self._chan.write(self._key.encode() + b"\n")
         if self._pending:
-            self._proc.stdin.write(bytes(self._pending))
+            self._chan.write(bytes(self._pending))
             self._pending.clear()
         self.state = "open"
         self._changed()
@@ -338,46 +370,42 @@ class Terminal:
         works, only without blocks. Sending the key to a shell that does not
         expect it would type it in as a command.
         """
-        assert self._conn is not None
+        assert self._link is not None
         try:
-            result = await self._conn.run(
-                "sh -s", input=shell.deploy_script(), check=False,
-                timeout=DEPLOY_TIMEOUT)
-        except (asyncssh.Error, OSError, asyncio.TimeoutError) as exc:
+            code, out, err = await self._link.script(shell.deploy_script(),
+                                                     DEPLOY_TIMEOUT)
+        except LinkError as exc:
             log.warning("could not put the shell scripts on %s: %s",
                         self.machine.label, exc)
             return shell.plan("")
-        output = result.stdout if isinstance(result.stdout, str) else ""
-        if result.exit_status != 0 or "shell=" not in output:
-            errors = result.stderr if isinstance(result.stderr, str) else ""
+        output = out.decode("utf-8", "replace")
+        if code != 0 or "shell=" not in output:
             log.warning("could not put the shell scripts on %s: %s",
-                        self.machine.label, errors.strip()[-300:])
+                        self.machine.label,
+                        err.decode("utf-8", "replace").strip()[-300:])
             return shell.plan("")
         return shell.plan(output)
 
     # ------------------------------------------------------------ stream
 
     async def _read(self) -> None:
-        proc = self._proc
-        assert proc is not None
+        chan = self._chan
+        assert chan is not None
         reason = None
         try:
             while True:
-                data = await proc.stdout.read(65536)
+                data = await chan.read()
                 if not data:
                     break
                 self._take(data)
         except asyncio.CancelledError:
             raise
-        except (asyncssh.Error, OSError) as exc:
+        except OSError as exc:
             reason = f"The connection to {self.machine.name} was lost: {exc}"
         held = self._parser.flush()
         if held:
             self._output(held)
-        code = None
-        with contextlib.suppress(Exception):
-            await asyncio.wait_for(proc.wait_closed(), 2)
-            code = proc.exit_status
+        code = await chan.exit_code()
         if self._closing:
             reason = "Closed."
         elif reason is None:
@@ -498,8 +526,8 @@ class Terminal:
     # ------------------------------------------------------------ input
 
     def write(self, data: bytes) -> None:
-        if self.state == "open" and self._proc is not None:
-            self._proc.stdin.write(data)
+        if self.state == "open" and self._chan is not None:
+            self._chan.write(data)
         elif self.state == "connecting":
             room = PENDING_MAX - len(self._pending)
             if room > 0:
@@ -519,7 +547,7 @@ class Terminal:
         takes them in at the prompt; they would end up in front of this
         command.
         """
-        if self.state != "open" or self._proc is None:
+        if self.state != "open" or self._chan is None:
             return "The terminal is not open."
         if not self.blocks:
             return ("This shell does not mark where commands start, so it "
@@ -533,7 +561,7 @@ class Terminal:
             # empty prompt; whatever follows it in the same moment would be
             # thrown away by the terminal, so this command waits for Enter
             # again.
-            self._proc.stdin.write(b"\x03")
+            self._chan.write(b"\x03")
             self._typed_at = time.monotonic()
             return ("The shell had not taken the last command (an open quote, "
                     "or a history expansion with ! that failed). It is "
@@ -547,7 +575,7 @@ class Terminal:
             data = b"\x15" + text.replace("\t", " ").encode() + b"\r"
         self._typed = True
         self._typed_at = time.monotonic()
-        self._proc.stdin.write(data)
+        self._chan.write(data)
         return None
 
     def resize(self, cols: int, rows: int) -> None:
@@ -555,29 +583,25 @@ class Terminal:
         if (cols, rows) == (self.cols, self.rows):
             return
         self.cols, self.rows = cols, rows
-        if self.state == "open" and self._proc is not None:
-            with contextlib.suppress(Exception):
-                self._proc.change_terminal_size(cols, rows)
+        if self.state == "open" and self._chan is not None:
+            self._chan.resize(cols, rows)
 
     # -------------------------------------------------------- side channel
 
     async def side(self, script: str) -> list[str]:
         """Runs a small sh script on the machine on a channel of its own in
-        the same SSH connection, and returns the lines it listed. The
-        terminal itself never sees it. An empty list when it fails: Tab
-        then simply finds nothing."""
-        conn = self._conn
-        if self.state != "open" or conn is None:
+        the same SSH connection, or through the agent, and returns the lines
+        it listed. The terminal itself never sees it. An empty list when it
+        fails: Tab then simply finds nothing."""
+        link = self._link
+        if self.state != "open" or link is None:
             raise NotOpen("The terminal is not open.")
         async with self._side:
             try:
-                result = await conn.run("sh -s", input=script.encode(),
-                                        encoding=None, check=False,
-                                        timeout=SIDE_TIMEOUT)
-            except (asyncssh.Error, OSError, asyncio.TimeoutError) as exc:
+                _, out, _ = await link.script(script, SIDE_TIMEOUT)
+            except LinkError as exc:
                 log.info("side script on %s failed: %s", self.machine.label, exc)
                 return []
-        out = result.stdout if isinstance(result.stdout, bytes) else b""
         return complete.listed(out[:SIDE_MAX])
 
     async def complete(self, line: str, cursor: int) -> dict:
@@ -620,19 +644,19 @@ class Terminal:
     def nudge(self) -> None:
         """Asks a full-screen program to draw itself again: the window
         narrows by a column and back, which it hears as two resizes."""
-        if self._nudging or self.state != "open" or self._proc is None:
+        if self._nudging or self.state != "open" or self._chan is None:
             return
         self._nudging = True
 
         async def go() -> None:
             try:
-                proc = self._proc
-                if proc is None:
+                chan = self._chan
+                if chan is None:
                     return
-                proc.change_terminal_size(max(MIN_COLS, self.cols - 1), self.rows)
+                chan.resize(max(MIN_COLS, self.cols - 1), self.rows)
                 await asyncio.sleep(0.08)
-                if self._proc is proc and self.state == "open":
-                    proc.change_terminal_size(self.cols, self.rows)
+                if self._chan is chan and self.state == "open":
+                    chan.resize(self.cols, self.rows)
             except Exception:            # noqa: BLE001 - only a redraw
                 pass
             finally:
@@ -686,9 +710,8 @@ class Terminal:
         if self.state == "ended":
             return
         self._closing = True
-        if self._proc is not None:
-            with contextlib.suppress(Exception):
-                self._proc.close()
+        if self._chan is not None:
+            self._chan.close()
         if self._task is not None and self.state == "connecting":
             self._task.cancel()
             with contextlib.suppress(BaseException):
@@ -720,10 +743,11 @@ class Terminal:
         self.reason = reason
         self.exit_code = code
         self.ended_at = time.monotonic()
-        if self._conn is not None:
-            with contextlib.suppress(Exception):
-                self._conn.close()
-        self._proc = None
+        if self._chan is not None:
+            self._chan.close()
+        if self._link is not None:
+            self._link.release()
+        self._chan = None
         self._changed()
         if self._saving:
             await asyncio.wait(set(self._saving), timeout=5)
@@ -759,14 +783,23 @@ def _ms(when: dt.datetime | None) -> int | None:
 
 def _block_json(row: asyncpg.Record) -> dict:
     """A finished block for the page: the end of its output only, starting
-    at a line, if it is long."""
+    at a line, if it is long.
+
+    That end begins in the screen modes the output was in at that point. A
+    full-screen program (htop, top, vim) switches to its second screen at
+    the start, which the end leaves out: without the switch the page drew
+    its last screens on the main one, a jumble of numbers where the live
+    block had been empty."""
     output = zlib.decompress(row["output"]) if row["output"] else b""
     size = len(output)
     tail, partial = output, False
     if size > FEED_TAIL:
         start = size - FEED_TAIL
         nl = output.find(b"\n", start)
-        tail = output[nl + 1:] if 0 <= nl < size - 1 else output[start:]
+        at = nl + 1 if 0 <= nl < size - 1 else start
+        modes = shell.Modes()
+        modes.feed(output[:at])
+        tail = modes.restore() + output[at:]
         partial = True
     return {
         "id": row["id"],
@@ -790,10 +823,12 @@ class Terminals:
     """The live terminals of this core."""
 
     def __init__(self, pool: asyncpg.Pool, signer: SignerClient,
-                 owner: Person) -> None:
+                 owner: Person, agents=None) -> None:
         self.pool = pool
         self.signer = signer
         self.owner = owner
+        #: The connected agents (agents.Agents), for terminals on computers.
+        self.agents = agents
         self._live: dict[uuid.UUID, Terminal] = {}
         self._sweeper: asyncio.Task | None = None
 
@@ -812,7 +847,7 @@ class Terminals:
         name = str(next(n for n in itertools.count(1) if str(n) not in used))
         terminal = Terminal(pool=self.pool, signer=self.signer,
                             owner=self.owner, machine=machine, name=name,
-                            cols=cols, rows=rows)
+                            cols=cols, rows=rows, agents=self.agents)
         await self.pool.execute(
             "INSERT INTO terminals (id, machine_id, owner_id, name, kind) "
             "VALUES ($1, $2, $3, $4, 'term')",
@@ -825,11 +860,11 @@ class Terminals:
         row = await self.pool.fetchrow(
             """
             SELECT m.id, m.project_id, p.code, m.name, m.host, m.port, m.login,
-                   m.host_keys, m.ca_id
+                   m.host_keys, m.ca_id, m.kind
             FROM machines m
             JOIN projects p ON p.id = m.project_id
             JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = $2
-            WHERE m.id = $1 AND m.removed_at IS NULL AND m.kind = 'server'
+            WHERE m.id = $1 AND m.removed_at IS NULL
               AND pm.role = ANY($3::text[])
               AND (pm.until IS NULL OR pm.until > now())
             """, machine_id, self.owner.id, list(CAN_OPEN))
@@ -837,7 +872,7 @@ class Terminals:
             raise NotAllowed("No such machine.")
         return Machine(row["id"], row["project_id"], row["code"], row["name"],
                        row["host"], row["port"], row["login"],
-                       list(row["host_keys"]), row["ca_id"])
+                       list(row["host_keys"]), row["ca_id"], row["kind"])
 
     def get(self, terminal_id: uuid.UUID) -> Terminal | None:
         t = self._live.get(terminal_id)

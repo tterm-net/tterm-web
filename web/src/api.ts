@@ -24,6 +24,16 @@ export interface Passport {
   systemd?: boolean;
   commands_count?: number;
   checked_at?: string;
+  /** A computer's agent version, and whose account it runs as. */
+  agent?: string;
+  user?: string;
+}
+
+/** A computer's agent while it is connected. */
+export interface AgentInfo {
+  version: string;
+  /** Connected since, in milliseconds. */
+  since: number;
 }
 
 export interface Machine {
@@ -33,6 +43,9 @@ export interface Machine {
   host: string | null;
   os: string | null;
   passport?: Passport;
+  /** A computer is online while its agent is connected. */
+  online?: boolean;
+  agent?: AgentInfo | null;
 }
 
 export interface Project {
@@ -170,8 +183,8 @@ export interface InstallStatus {
   state: InstallState;
   error: string | null;
   expiresAt: string;
-  machine: { id: string; name: string; host: string; os: string | null;
-    label: string } | null;
+  machine: { id: string; name: string; host: string | null;
+    os: string | null; label: string } | null;
 }
 
 export class CoreError extends Error {}
@@ -209,9 +222,10 @@ export async function saveTheme(theme: Theme): Promise<void> {
   await check(await fetch("/api/me", change("PATCH", { theme })));
 }
 
-export async function newInstall(projectId: string): Promise<Install> {
+export async function newInstall(projectId: string,
+  kind: MachineKind = "server"): Promise<Install> {
   const response = await fetch("/api/installs",
-    change("POST", { projectId, kind: "server" }));
+    change("POST", { projectId, kind }));
   return (await check(response)).json();
 }
 

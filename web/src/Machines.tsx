@@ -1,6 +1,7 @@
 // The machines page: each machine with its passport, what tTerm Web learned
-// about it over SSH when it connected, a button for a new terminal, and the
-// terminals already running on it.
+// about it when it connected (over SSH from a server, through the agent from
+// a computer), a button for a new terminal, and the terminals already
+// running on it. A computer is online only while its agent runs.
 
 import type { Machine, Passport, Project, TerminalInfo } from "./api";
 import { Computer, Plus, Server, TerminalIcon } from "./icons";
@@ -32,6 +33,8 @@ function facts(p: Passport): [string, string][] {
       ? ` (has ${p.shells.join(", ")})` : ""}` : null],
     ["sudo", p.sudo === undefined ? null : p.sudo ? "works" : "not available"],
     ["Commands", p.commands_count ? `${p.commands_count} known` : null],
+    ["Agent", p.agent ? `tterm-agent ${p.agent}` : null],
+    ["Account", p.user ?? null],
   ];
   return rows.filter((row): row is [string, string] => row[1] !== null);
 }
@@ -44,18 +47,35 @@ function MachineCard({ machine, code, terminals, onOpenTerminal, onGoTo }: {
   onGoTo: (terminalId: string) => void;
 }) {
   const passport = machine.passport ?? {};
+  const computer = machine.kind === "computer";
+  const offline = computer && !machine.online;
   return (
     <article className="machine-card" aria-label={machine.name}>
       <div className="machine-top">
         <span className="tile" aria-hidden="true">
-          {machine.kind === "server" ? <Server size={20} /> : <Computer size={20} />}
+          {computer ? <Computer size={20} /> : <Server size={20} />}
         </span>
         <div className="machine-names">
           <strong>{machine.name}</strong>
-          <span>{[machine.os, machine.host].filter(Boolean).join(" · ")}</span>
+          <span>
+            {computer && (
+              <span className="machine-state">
+                <span className={offline ? "dot ended" : "dot open"}
+                  aria-hidden="true" />
+                {offline ? "offline" : "online"}
+              </span>
+            )}
+            {[machine.os, machine.host].filter(Boolean).join(" · ")}
+          </span>
         </div>
         <span className="chip">{code}/{machine.name}</span>
       </div>
+      {offline && (
+        <p className="machine-note">
+          Its agent is not running. Start it on the computer with the same
+          command as when you added it; this page notices within ten seconds.
+        </p>
+      )}
       <dl className="facts">
         {facts(passport).map(([label, value]) => (
           <div key={label}>
@@ -65,7 +85,8 @@ function MachineCard({ machine, code, terminals, onOpenTerminal, onGoTo }: {
         ))}
       </dl>
       <div className="button-row">
-        <button type="button" className="button-accent"
+        <button type="button" className="button-accent" disabled={offline}
+          title={offline ? "Start its agent first" : undefined}
           onClick={() => onOpenTerminal(machine.id)}>
           Open a terminal
         </button>

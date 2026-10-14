@@ -6,6 +6,7 @@ API is here: a person's browser has no business on this address.
 
     GET  /s/TOKEN   the installer for a server, with the token inside
     POST /enroll    the installer reports back; the core checks over SSH
+    WS   /agent     a computer's agent dials in and stays (from 0.0.6)
     GET  /ca.pub    the active CA's public key, to compare by eye
     GET  /health
 """
@@ -15,11 +16,13 @@ import ipaddress
 import logging
 
 import asyncpg
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, WebSocket
 from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from pydantic import BaseModel, Field
+from starlette.requests import HTTPConnection
 
 from .. import __version__
+from ..core import agents as agents_mod
 from ..core import machines
 from ..core.signer_client import SignerClient, SignerRefused, SignerUnavailable
 from .security import CONNECT_HEADERS, AddHeaders
@@ -40,8 +43,8 @@ class EnrollPayload(BaseModel):
     host_keys: list[str] = Field(min_length=1, max_length=8)
 
 
-def client_ip(request: Request) -> str:
-    """The address the request really came from.
+def client_ip(request: HTTPConnection) -> str:
+    """The address the request, or the WebSocket, really came from.
 
     Headers are believed only from a proxy on this same machine: cloudflared
     now, nginx on the server later. From anyone else they could be invented.
@@ -68,7 +71,7 @@ def _is_ip(value: str) -> bool:
 
 
 def create_connect_app(pool: asyncpg.Pool, signer: SignerClient,
-                       connect_url: str):
+                       connect_url: str, agents: agents_mod.Agents | None = None):
     app = FastAPI(title="tTerm Web connect", version=__version__,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -118,6 +121,14 @@ def create_connect_app(pool: asyncpg.Pool, signer: SignerClient,
                 "tTerm Web cannot sign certificates right now. Run the "
                 "command again in a minute.", status_code=503)
         return PlainTextResponse(message)
+
+    @app.websocket("/agent")
+    async def agent(ws: WebSocket) -> None:
+        """Where the agent of a computer connects and stays connected."""
+        if agents is None:
+            await ws.close(code=1013)
+            return
+        await agents_mod.session(ws, pool, agents, client_ip(ws))
 
     @app.get("/ca.pub")
     async def ca_pub() -> Response:

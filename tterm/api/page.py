@@ -84,8 +84,17 @@ def _json(data, status: int = 200) -> Response:
 
 def create_page_app(pool: asyncpg.Pool, owner: Person, dist: Path,
                     port: int, connect_url: str,
-                    terminals: Terminals | None = None):
+                    terminals: Terminals | None = None, agents=None):
     """The ASGI app for the page, wrapped in the local-only guard."""
+
+    def with_agents(machine: dict) -> dict:
+        """A computer is online while its agent is connected; the page shows
+        it and which agent it has."""
+        if machine.get("kind") == "computer":
+            agent = agents.describe(machine["id"]) if agents is not None else None
+            machine["online"] = agent is not None
+            machine["agent"] = agent
+        return machine
     app = FastAPI(title="tTerm Web", version=__version__, docs_url=None,
                   redoc_url=None, openapi_url=None)
     dist = dist.resolve()
@@ -100,6 +109,8 @@ def create_page_app(pool: asyncpg.Pool, owner: Person, dist: Path,
         """Everything the page needs on start."""
         me = await accounts.person(pool, owner.id)
         projects = await accounts.projects_of(pool, owner.id)
+        for project in projects:
+            project["machines"] = [with_agents(m) for m in project["machines"]]
         return _json({
             "version": __version__,
             "me": {
@@ -125,7 +136,8 @@ def create_page_app(pool: asyncpg.Pool, owner: Person, dist: Path,
 
     @app.post("/api/installs")
     async def new_install(request: InstallRequest) -> Response:
-        """A one-time command that connects a server, for ten minutes."""
+        """A one-time command that connects a server, for ten minutes; for a
+        computer, the command that starts its agent with a new key."""
         try:
             install = await machines.create_install(
                 pool, project_id=request.projectId, user_id=owner.id,
@@ -150,7 +162,7 @@ def create_page_app(pool: asyncpg.Pool, owner: Person, dist: Path,
         details = await machines.machine_details(pool, owner.id, machine_id)
         if details is None:
             return _json({"error": "no such machine"}, 404)
-        return _json(details)
+        return _json(with_agents(details))
 
     @app.post("/api/terminals")
     async def open_terminal(request: TerminalRequest) -> Response:

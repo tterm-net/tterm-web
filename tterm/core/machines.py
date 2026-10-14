@@ -11,6 +11,10 @@ How a server joins:
    fresh certificate and with the host keys just received pinned. If that
    works, it reads the passport and the machine is in. If not, the person
    sees why, and the same command can be run again until it expires.
+
+A computer joins through its agent instead (from 0.0.6): the command starts
+the agent with a token, and the agent's connection does the rest, see
+agents.py. The token then stays the computer's key, so it is longer.
 """
 from __future__ import annotations
 
@@ -34,17 +38,26 @@ from .signer_client import SignerClient
 log = logging.getLogger("tterm.machines")
 
 INSTALL_MINUTES = 10
-TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{12}$")
+#: Twelve characters for a server's command, thirty-two for a computer's,
+#: whose token stays its key.
+TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{12,64}$")
 LOGIN = "tterm"
 TEMPLATE = Path(__file__).resolve().parent.parent / "templates" / "install.sh"
 #: Everything the core may spend on checking a fresh server.
 CHECK_TIMEOUT = 40
 
 
-def new_token() -> str:
-    """Twelve characters, 72 random bits: short enough to read, far too many
-    to guess in ten minutes."""
-    return secrets.token_urlsafe(9)
+def new_token(kind: str = "server") -> str:
+    """For a server, twelve characters, 72 random bits: short enough to
+    read, far too many to guess in the ten minutes the command works. For a
+    computer the token stays its key for good, so 192 bits.
+
+    Never one that starts with "-": pasted after an option, as in
+    `--token -x…`, it would read as another option."""
+    while True:
+        token = secrets.token_urlsafe(24 if kind == "computer" else 9)
+        if not token.startswith("-"):
+            return token
 
 
 def token_hash(token: str) -> bytes:
@@ -55,11 +68,32 @@ def command(connect_url: str, token: str) -> str:
     return f"curl -sSL {connect_url}/s/{token} | sudo sh"
 
 
-def machine_name(hostname: str) -> str:
+def hub_url(connect_url: str) -> str:
+    """Where agents connect: the machines' side, over a WebSocket."""
+    if connect_url.startswith("https://"):
+        return "wss://" + connect_url[len("https://"):] + "/agent"
+    if connect_url.startswith("http://"):
+        return "ws://" + connect_url[len("http://"):] + "/agent"
+    return connect_url + "/agent"
+
+
+def agent_command(connect_url: str, token: str) -> str:
+    """What a computer runs, in the folder of tterm-agent 0.11.0 or newer.
+    Started by hand for now: an installer that keeps it running comes
+    later, and on a computer connected to the Telegram bot it would take
+    the bot's agent's place.
+
+    The token goes in the environment: on the command line any user of the
+    computer could read it in the list of processes, and it stays the
+    computer's key."""
+    return f"TTERM_TOKEN={token} python3 agent.py --hub {hub_url(connect_url)}"
+
+
+def machine_name(hostname: str, default: str = "server") -> str:
     """The short hostname, cleaned up: web-01.example.com → web-01."""
     short = hostname.strip().split(".")[0]
     short = re.sub(r"[^A-Za-z0-9_-]+", "-", short).strip("-")[:40]
-    return short or "server"
+    return short or default
 
 
 def free_name(wanted: str, taken: set[str]) -> str:
@@ -106,8 +140,8 @@ class Install:
 async def create_install(pool: asyncpg.Pool, *, project_id: uuid.UUID,
                          user_id: uuid.UUID, kind: str,
                          connect_url: str) -> Install:
-    if kind != "server":
-        raise ValueError("only servers connect this way for now")
+    if kind not in ("server", "computer"):
+        raise ValueError("a machine is a server or a computer")
     async with pool.acquire() as conn, conn.transaction():
         role = await conn.fetchval(
             "SELECT role FROM project_members WHERE project_id = $1 "
@@ -115,7 +149,7 @@ async def create_install(pool: asyncpg.Pool, *, project_id: uuid.UUID,
             project_id, user_id)
         if role not in ("owner", "admin"):
             raise PermissionError("only the owner and admins add machines")
-        token = new_token()
+        token = new_token(kind)
         row = await conn.fetchrow(
             "INSERT INTO install_tokens (project_id, kind, token_hash, "
             "created_by, expires_at) VALUES ($1, $2, $3, $4, "
@@ -123,8 +157,9 @@ async def create_install(pool: asyncpg.Pool, *, project_id: uuid.UUID,
             project_id, kind, token_hash(token), user_id, INSTALL_MINUTES)
         await accounts.journal(conn, "install.command", project_id=project_id,
                                user_id=user_id, details={"kind": kind})
-    return Install(row["id"], token, command(connect_url, token),
-                   row["expires_at"])
+    shown = (agent_command(connect_url, token) if kind == "computer"
+             else command(connect_url, token))
+    return Install(row["id"], token, shown, row["expires_at"])
 
 
 async def install_status(pool: asyncpg.Pool, install_id: uuid.UUID,
@@ -190,7 +225,7 @@ async def claim(pool: asyncpg.Pool, token: str) -> asyncpg.Record:
                                  "machine, get a new command in tTerm Web.")
     if why["state"] == "connecting":
         raise EnrollRefused(409, "This command is being used right now, on "
-                                 "this or another server. Wait a minute.")
+                                 "this or another machine. Wait a minute.")
     raise EnrollRefused(410, "This command has expired: it works for 10 "
                              "minutes. Get a new one in tTerm Web.")
 
@@ -200,10 +235,13 @@ async def check_token(pool: asyncpg.Pool, token: str) -> str | None:
     if not TOKEN_RE.match(token):
         return "This command is not valid. Get a new one in tTerm Web."
     row = await pool.fetchrow(
-        "SELECT state, expires_at <= now() AS expired FROM install_tokens "
+        "SELECT state, kind, expires_at <= now() AS expired FROM install_tokens "
         "WHERE token_hash = $1", token_hash(token))
     if row is None:
         return "This command is not valid. Get a new one in tTerm Web."
+    if row["kind"] != "server":
+        return ("This token is for a computer: it is used by the agent, not "
+                "by this installer.")
     if row["state"] == "connected":
         return ("This command was already used. For another machine, get a "
                 "new command in tTerm Web.")
@@ -211,6 +249,57 @@ async def check_token(pool: asyncpg.Pool, token: str) -> str | None:
         return ("This command has expired: it works for 10 minutes. Get a "
                 "new one in tTerm Web.")
     return None
+
+
+async def fail_install(pool: asyncpg.Pool, install_id: uuid.UUID,
+                       error: str) -> None:
+    """The attempt failed; the same command works again until it expires."""
+    await pool.execute(
+        "UPDATE install_tokens SET state = 'failed', error = $2, "
+        "updated_at = now() WHERE id = $1", install_id, error[:500])
+
+
+async def add_computer(pool: asyncpg.Pool, claimed: asyncpg.Record,
+                       reported: str, details: dict) -> tuple[uuid.UUID, str]:
+    """Registers a computer whose agent came with a fresh token: its token
+    becomes the computer's key.
+
+    Always a new machine, even when one of the same name is there: a name
+    is whatever the computer calls itself, and another computer could call
+    itself the same and so take over that machine's place, its terminals
+    and its history. The old one, if it was this computer, is removed by
+    hand."""
+    project_id = claimed["project_id"]
+    owner_id = claimed["created_by"]
+    token_id = claimed["id"]
+    name = machine_name(reported, default="computer")
+    async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))",
+                           str(project_id))
+        key = await conn.fetchval(
+            "SELECT token_hash FROM install_tokens WHERE id = $1", token_id)
+        taken = {r["name"] for r in await conn.fetch(
+            "SELECT name FROM machines WHERE project_id = $1 AND "
+            "removed_at IS NULL", project_id)}
+        final = free_name(name, taken)
+        machine_id = await conn.fetchval(
+            """
+            INSERT INTO machines (project_id, kind, name, agent_token_hash,
+                                  passport, created_by, last_seen_at)
+            VALUES ($1, 'computer', $2, $3, $4::jsonb, $5, now())
+            RETURNING id
+            """, project_id, final, key, json.dumps(details), owner_id)
+        await conn.execute(
+            "UPDATE install_tokens SET state = 'connected', used_at = now(), "
+            "machine_id = $2, updated_at = now() WHERE id = $1",
+            token_id, machine_id)
+        await accounts.journal(conn, "machine.added", project_id=project_id,
+                               user_id=owner_id, machine_id=machine_id,
+                               details={"name": final, "kind": "computer",
+                                        "os": details.get("os"),
+                                        "agent": details.get("agent")})
+    log.info("machine.added: computer %s", final)
+    return machine_id, final
 
 
 def clean_host_keys(keys: list[str]) -> list[str]:
@@ -269,6 +358,11 @@ async def enroll(pool: asyncpg.Pool, signer: SignerClient, e: Enrollment,
     e.host_keys = clean_host_keys(e.host_keys)
     claimed = await claim(pool, e.token)
     install_id = claimed["id"]
+    if claimed["kind"] != "server":
+        await fail_install(pool, install_id, "This token is for a computer: "
+                           "start the agent with it instead.")
+        raise EnrollRefused(400, "This token is for a computer: it is used by "
+                                 "the agent, not by this installer.")
     owner = await accounts.person(pool, claimed["created_by"])
     project_id = claimed["project_id"]
     name = machine_name(e.hostname) if e.hostname else "server"

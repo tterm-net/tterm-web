@@ -318,4 +318,19 @@ class Modes:
         other = Modes()
         other.state = dict(self.state)
         other.keypad = self.keypad
+        other._tail = self._tail
         return other
+
+    def switch_to(self, other: "Modes") -> bytes:
+        """The sequences that take a screen in these modes to `other`'s:
+        where the middle of a stream is left out, what follows it is drawn
+        on the screen it was meant for."""
+        seq = []
+        for mode in sorted(set(self.state) | set(other.state)):
+            default = DEFAULTS.get(TRACKED[mode], False)
+            now = other.state.get(mode, default)
+            if self.state.get(mode, default) != now:
+                seq.append(b"\x1b[?%d%s" % (mode, b"h" if now else b"l"))
+        if self.keypad != other.keypad:
+            seq.append(b"\x1b=" if other.keypad else b"\x1b>")
+        return b"".join(seq)

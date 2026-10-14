@@ -317,7 +317,12 @@ export function FeedTerminal(props: Props) {
           stored: true,
         } : b));
         if (CLEARS.test(live.command) && code === 0) setClearedAt(key);
-        const raw = trim > 0 ? join(live.chunks, live.size) : null;
+        // Drawn again without zsh's mark, but only from the whole output:
+        // with its start gone, so is a full-screen program's switch to its
+        // second screen, and its screens would land on the main one. The
+        // screen as it was is right then, the mark and all.
+        const raw = trim > 0 && !live.dropped ? join(live.chunks, live.size)
+          : null;
         // Read its screen back once everything before the end is drawn.
         t.write(EMPTY, () => {
           const buffer = t.buffer.normal;

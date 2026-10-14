@@ -108,11 +108,17 @@ export function Sidebar(props: Props) {
               )}
               {open && project.machines.length > 0 && (
                 <ul className="tree">
-                  {project.machines.map((machine) => (
+                  {project.machines.map((machine) => {
+                    const offline = machine.kind === "computer" && !machine.online;
+                    return (
                     <li key={machine.id}>
-                      <button type="button" className="tree-machine"
-                        title={`Open a new terminal on ${machine.name}`}
-                        onClick={() => onOpenTerminal(machine.id)}>
+                      <button type="button"
+                        className={offline ? "tree-machine offline" : "tree-machine"}
+                        title={offline ? `${machine.name} is offline: its agent is not running`
+                          : `Open a new terminal on ${machine.name}`}
+                        onClick={() => offline
+                          ? notYet(`${machine.name} is offline: start its agent first.`)
+                          : onOpenTerminal(machine.id)}>
                         {machine.kind === "server" ? <Server size={15} />
                           : <Computer size={15} />}
                         <span>{machine.name}</span>
@@ -135,7 +141,8 @@ export function Sidebar(props: Props) {
                         </ul>
                       )}
                     </li>
-                  ))}
+                    );
+                  })}
                   {canAdd && (
                     <li>
                       <button type="button" className="tree-add"

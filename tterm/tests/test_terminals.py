@@ -5,6 +5,7 @@ throwaway home. macOS ships bash 3.2, which cannot say when a command
 starts; there the bash checks look at prompts only, and zsh does the rest.
 """
 import asyncio
+import base64
 import contextlib
 import json
 import os
@@ -131,6 +132,39 @@ def test_block_keeps_the_start_and_the_end():
                             started_at=None)  # type: ignore[arg-type]
     small.add(b"a\r\n")
     assert small.output() == (b"a\r\n", False)
+
+
+def test_cut_output_stays_on_its_screen():
+    """A full-screen program's last screens, without its start, are drawn
+    on its second screen, not as a jumble on the main one (found by the
+    owner with top on his Mac, 14.10)."""
+    frames = b"".join(b"\x1b[H" + b"%06d " % i * 10 + b"\r\n"
+                      for i in range(3000))
+    output = b"before\r\n\x1b[?1049h" + frames + b"\x1b[?1049l"
+    row = {"output": zlib.compress(output), "id": 1, "seq_start": 1,
+           "seq_end": 2, "command": "top", "cwd": "", "branch": "",
+           "started_at": None, "finished_at": None, "exit_code": 0,
+           "cols": 80, "output_cut": False}
+    sent = terminals._block_json(row)  # type: ignore[arg-type]
+    tail = base64.b64decode(sent["output"])
+    assert sent["partial"] and tail.startswith(b"\x1b[?1049h\x1b[H"), tail[:20]
+    assert tail.endswith(b"\x1b[?1049l")
+    plain = dict(row, output=zlib.compress(b"x\r\n" * 40000))
+    assert not base64.b64decode(terminals._block_json(plain)["output"]) \
+        .startswith(b"\x1b"), "plain output starts as it was"
+    # The middle left out: the program started in it.
+    block = terminals.Block(command="make; top", cwd="/", branch="",
+                            seq_start=1, started_at=None)  # type: ignore[arg-type]
+    for i in range(30000):          # 720 KB: past what the start keeps
+        block.add(b"line %06d of the build\r\n" % i)
+    block.add(b"\x1b[?1049h")
+    for i in range(40000):
+        block.add(b"\x1b[H" + b"%06d " % i * 5 + b"\r\n")
+    block.add(b"\x1b[?1049l")
+    out, cut = block.output()
+    head = terminals.BLOCK_HEAD
+    assert cut and out[head:head + 8] == b"\x1b[?1049h", out[head:head + 20]
+    assert out.endswith(b"\x1b[?1049l")
 
 
 # ------------------------------------------------------- the real shells

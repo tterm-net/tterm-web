@@ -22,6 +22,18 @@ def test_tokens_and_commands():
     assert len(machines.token_hash(token)) == 32
     assert machines.command("https://connect-dev.tterm.net", "abcDEF123_-x") == \
         "curl -sSL https://connect-dev.tterm.net/s/abcDEF123_-x | sudo sh"
+    key = machines.new_token("computer")
+    assert len(key) == 32 and machines.TOKEN_RE.match(key), key
+    # One in sixty-four would start with "-" and read as an option.
+    drawn = [machines.new_token(kind) for kind in ("server", "computer")
+             for _ in range(500)]
+    assert not [t for t in drawn if t.startswith("-")]
+    assert machines.hub_url("https://connect-dev.tterm.net") == \
+        "wss://connect-dev.tterm.net/agent"
+    assert machines.hub_url("http://127.0.0.1:8091") == "ws://127.0.0.1:8091/agent"
+    # The key in the environment, out of the list of processes.
+    assert machines.agent_command("https://c.test", key) == \
+        f"TTERM_TOKEN={key} python3 agent.py --hub wss://c.test/agent"
 
 
 def test_machine_names():
@@ -289,8 +301,19 @@ async def test_install_api_guards(h):
         assert r.status == 404
         r = await request(core.page_port, "POST", "/api/installs", headers=CHANGE,
                           body=json.dumps({"projectId": state["projects"][0]["id"],
+                                           "kind": "phone"}).encode())
+        assert r.status == 422, "a machine is a server or a computer"
+        r = await request(core.page_port, "POST", "/api/installs", headers=CHANGE,
+                          body=json.dumps({"projectId": state["projects"][0]["id"],
                                            "kind": "computer"}).encode())
-        assert r.status == 422, "computers come with the agent"
+        assert r.status == 201, r.text
+        command = r.json()["command"]
+        m = re.fullmatch(r"TTERM_TOKEN=([A-Za-z0-9_-]{32}) python3 agent\.py "
+                         r"--hub wss://connect\.test/agent", command)
+        assert m, f"a computer starts its agent, with a long key: {command}"
+        r = await request(core.connect_port, "GET", f"/s/{m.group(1)}")
+        assert "exit 1" in r.text and "for a computer" in r.text, \
+            "a computer's token does not install a server"
 
 
 async def test_cas_are_remembered_and_guarded(h):

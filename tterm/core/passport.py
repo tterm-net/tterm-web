@@ -1,11 +1,14 @@
-"""The server passport: what a machine is, learned over SSH right after it
-connects. The page shows it; later the input line uses the list of commands
-to tell a command from a question, and to complete words.
+"""The machine passport: what a machine is, learned right after it connects,
+over SSH from a server, through the agent from a computer. The page shows
+it; later the input line uses the list of commands to tell a command from a
+question, and to complete words.
 """
 from __future__ import annotations
 
-#: Plain POSIX sh, run as the tterm user without a terminal. Every line is
-#: key=value; after the marker, one command name per line.
+#: Plain POSIX sh, run without a terminal: as the tterm user on a server, as
+#: the person on a computer, which may be a Mac (sw_vers, dscl, sysctl and
+#: Homebrew there instead of os-release, getent, /proc and apt). Every line
+#: is key=value; after the marker, one command name per line.
 SCRIPT = r"""
 LC_ALL=C; export LC_ALL
 os=""; os_id=""; os_version=""
@@ -13,6 +16,10 @@ if [ -r /etc/os-release ]; then
   os=$(. /etc/os-release; printf '%s' "${PRETTY_NAME:-}")
   os_id=$(. /etc/os-release; printf '%s' "${ID:-}")
   os_version=$(. /etc/os-release; printf '%s' "${VERSION_ID:-}")
+elif command -v sw_vers >/dev/null 2>&1; then
+  os_version=$(sw_vers -productVersion 2>/dev/null)
+  os="$(sw_vers -productName 2>/dev/null) $os_version"
+  os_id=macos
 fi
 [ -n "$os" ] || os=$(uname -s)
 printf 'os=%s\n' "$os"
@@ -21,15 +28,20 @@ printf 'os_version=%s\n' "$os_version"
 printf 'kernel=%s\n' "$(uname -r)"
 printf 'arch=%s\n' "$(uname -m)"
 printf 'hostname=%s\n' "$(hostname 2>/dev/null)"
-for pm in apt-get dnf yum apk pacman zypper; do
+for pm in apt-get dnf yum apk pacman zypper brew; do
   if command -v "$pm" >/dev/null 2>&1; then printf 'package_manager=%s\n' "$pm"; break; fi
 done
-printf 'shell=%s\n' "$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f7)"
+login=$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f7)
+[ -n "$login" ] || login=$(dscl . -read "/Users/$(id -un)" UserShell 2>/dev/null | awk '{print $2}')
+[ -n "$login" ] || login=${SHELL:-}
+printf 'shell=%s\n' "$login"
 for s in bash zsh fish; do
   command -v "$s" >/dev/null 2>&1 && printf 'shells=%s\n' "$s"
 done
 printf 'cpus=%s\n' "$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null)"
-printf 'memory_kb=%s\n' "$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null)"
+memory=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null)
+[ -n "$memory" ] || memory=$(sysctl -n hw.memsize 2>/dev/null | awk '{printf "%d", $1 / 1024}')
+printf 'memory_kb=%s\n' "$memory"
 df -Pk / 2>/dev/null | awk 'NR==2 {print "disk_total_kb=" $2; print "disk_free_kb=" $4}'
 if sudo -n true 2>/dev/null; then echo sudo=yes; else echo sudo=no; fi
 if [ -d /run/systemd/system ]; then echo systemd=yes; else echo systemd=no; fi

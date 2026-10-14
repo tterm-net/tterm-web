@@ -1,5 +1,7 @@
 // "Add a machine", from the approved mockup: pick the project, run one
-// command on the server, keep the window open, see it connect.
+// command on the server, keep the window open, see it connect. A computer
+// (from 0.0.6) runs its agent with a token instead; the agent connects out
+// and the window sees the computer come in the same way.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -36,6 +38,13 @@ export function AddMachine(props: Props) {
   const [now, setNow] = useState(Date.now());
   const dialog = useRef<HTMLElement>(null);
   const announced = useRef(false);
+  // The page passes new functions each time it draws, every ten seconds
+  // while a computer is listed. Kept here, they do not restart the watch
+  // below or take the focus back to the dialog each time.
+  const handlers = useRef({ onClose, onConnected });
+  useEffect(() => {
+    handlers.current = { onClose, onConnected };
+  });
 
   const project = projects.find((p) => p.id === projectId);
 
@@ -45,15 +54,15 @@ export function AddMachine(props: Props) {
     setProblem(null);
     setCopied(false);
     announced.current = false;
-    newInstall(projectId)
+    newInstall(projectId, kind)
       .then(setInstall)
       .catch((e: Error) => setProblem(e.message));
-  }, [projectId]);
+  }, [projectId, kind]);
 
-  // A command for the chosen project, made when the server side is shown.
+  // A command for the chosen project and kind of machine.
   useEffect(() => {
-    if (kind === "server") fresh();
-  }, [kind, fresh]);
+    fresh();
+  }, [fresh]);
 
   // Watch the install until it connects or expires; after that nothing
   // more can change, so the asking stops.
@@ -72,7 +81,7 @@ export function AddMachine(props: Props) {
         }
         if (next.state === "connected" && !announced.current) {
           announced.current = true;
-          onConnected();
+          handlers.current.onConnected();
         }
       } catch {
         // The core may be restarting; the next tick tries again.
@@ -84,18 +93,18 @@ export function AddMachine(props: Props) {
       stopped = true;
       window.clearInterval(timer);
     };
-  }, [install, onConnected]);
+  }, [install]);
 
   const done = status?.state === "connected";
 
   useEffect(() => {
     dialog.current?.focus();
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") handlers.current.onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, []);
 
   const copy = async () => {
     if (!install) return;
@@ -146,11 +155,55 @@ export function AddMachine(props: Props) {
           </div>
         )}
 
-        {kind === "computer" && (
-          <div className="note-box">
-            Computers connect through a small agent. That comes in 0.0.6,
-            together with agent 0.11.0. For now, add a server.
-          </div>
+        {kind === "computer" && !done && (
+          <>
+            <ol className="dialog-steps">
+              <li>
+                <span className="step-number" aria-hidden="true">1</span>
+                <div className="dialog-step">
+                  <strong>Start the agent on the computer</strong>
+                  <div className="command-box">
+                    <code>{install ? install.command : "…"}</code>
+                    <button type="button" className="button-accent"
+                      onClick={copy} disabled={!install}>
+                      <Copy size={14} />
+                      {copied ? "Copied" : "Copy"}
+                    </button>
+                  </div>
+                  <span className="hint">
+                    In the folder of tterm-agent 0.11.0 or newer, as yourself,
+                    not root. It needs Python 3.11+ with the websockets
+                    package. The token connects it within the next {left}{" "}
+                    minute{left === 1 ? "" : "s"}, and from then on it is this
+                    computer's key.
+                  </span>
+                </div>
+              </li>
+              <li>
+                <span className="step-number" aria-hidden="true">2</span>
+                <div className="dialog-step">
+                  <strong>Keep this window open</strong>
+                  <Progress state={state} problem={problem}
+                    error={status?.error ?? null} onAgain={fresh}
+                    project={project?.name ?? "the project"} kind="computer" />
+                </div>
+              </li>
+            </ol>
+            <details className="explain">
+              <summary>What the agent does</summary>
+              <ul>
+                <li>Runs as you, never as root, and opens no ports: it
+                  connects out to tTerm Web and keeps that one connection.</li>
+                <li>Each terminal here is a shell of yours on that computer,
+                  as in any terminal app.</li>
+                <li>Tab and the lists of directories and branches come from
+                  small scripts it runs when asked, outside the terminal.</li>
+                <li>The computer is online while the agent runs: Ctrl+C in its
+                  window disconnects it. An installer that keeps it running
+                  comes later.</li>
+              </ul>
+            </details>
+          </>
         )}
 
         {kind === "server" && !done && (
@@ -180,7 +233,7 @@ export function AddMachine(props: Props) {
                   <strong>Keep this window open</strong>
                   <Progress state={state} problem={problem}
                     error={status?.error ?? null} onAgain={fresh}
-                    project={project?.name ?? "the project"} />
+                    project={project?.name ?? "the project"} kind="server" />
                 </div>
               </li>
             </ol>
@@ -230,13 +283,15 @@ export function AddMachine(props: Props) {
   );
 }
 
-function Progress({ state, problem, error, onAgain, project }: {
+function Progress({ state, problem, error, onAgain, project, kind }: {
   state: string;
   problem: string | null;
   error: string | null;
   onAgain: () => void;
   project: string;
+  kind: MachineKind;
 }) {
+  const computer = kind === "computer";
   if (problem) {
     return (
       <div className="error-box" role="alert">
@@ -250,7 +305,8 @@ function Progress({ state, problem, error, onAgain, project }: {
   if (state === "expired") {
     return (
       <div className="error-box" role="alert">
-        This command has expired: it works for 10 minutes.
+        This {computer ? "token" : "command"} has expired: it works for 10
+        minutes.
         <button type="button" className="button-plain" onClick={onAgain}>
           Get a new command
         </button>
@@ -260,7 +316,8 @@ function Progress({ state, problem, error, onAgain, project }: {
   if (state === "failed") {
     return (
       <div className="error-box" role="alert">
-        <span>{error ?? "The server could not be checked."}</span>
+        <span>{error ?? (computer ? "The computer could not be added."
+          : "The server could not be checked.")}</span>
         <span className="hint">The same command still works: fix this and
           run it again.</span>
       </div>
@@ -271,12 +328,15 @@ function Progress({ state, problem, error, onAgain, project }: {
       <span role="status" className="waiting">
         <span className="spinner" aria-hidden="true" />
         {state === "connecting"
-          ? "The server reported in. Signing in to check it…"
-          : "Waiting for the server…"}
+          ? computer ? "The agent is in. Reading the computer's details…"
+            : "The server reported in. Signing in to check it…"
+          : computer ? "Waiting for the agent…" : "Waiting for the server…"}
       </span>
       <span className="hint">
-        It appears in {project} as soon as the script finishes, usually within
-        a minute.
+        {computer
+          ? `It appears in ${project} a moment after the agent starts.`
+          : `It appears in ${project} as soon as the script finishes, usually
+            within a minute.`}
       </span>
     </>
   );
