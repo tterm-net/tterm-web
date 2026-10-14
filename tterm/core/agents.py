@@ -28,6 +28,18 @@ The protocol, all of it on the one WebSocket (web 1):
     agent → core  text   exit {ch, code, error}, ran {id, code, out, err},
                          hb, pong
 
+From agent 0.12.0 (web 2) a computer's terminals outlive the connection:
+the laptop sleeps, the network blinks, the agent keeps its shells and the
+core keeps the terminals, away, until it is back. The hello then says which
+shells it kept, and the core takes each back from the byte it has:
+
+    agent → core  text   hello {…, kept: [ch, …]}
+    core → agent  text   resume {ch, from}; the shells it no longer has a
+                         terminal for get a close
+    agent → core  text   gap {ch, lost}: output no longer kept, skipped;
+                         exit {ch, gone: true}: no such shell any more;
+                         bye: stopped on purpose, its shells end with it
+
 The Telegram bot speaks an older form of it to the same agent; the agent
 tells the two apart by what it is sent.
 
@@ -48,6 +60,7 @@ import ipaddress
 import itertools
 import json
 import logging
+import random
 import time
 import uuid
 from typing import Awaitable, Callable
@@ -56,7 +69,7 @@ import asyncpg
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from . import machines, passport
-from .transport import Channel, Link, LinkError
+from .transport import Channel, Gone, Link, LinkError
 
 log = logging.getLogger("tterm.agents")
 
@@ -100,6 +113,17 @@ OUTBOX_MAX = 32 * 1024 * 1024
 INPUT_PIECE = 64 * 1024
 #: The oldest agent protocol tTerm Web works with.
 WEB_PROTOCOL = 1
+#: The one whose shells outlive the connection (agent 0.12.0).
+KEEPS_SHELLS = 2
+#: How long a computer's terminals wait for its agent to come back. A laptop
+#: asleep all night comes back in the morning; one that does not by then
+#: is not coming back for them. Its agent keeps the shells while asleep, and
+#: an hour while awake without the link.
+AWAY_MAX = 12 * 3600
+#: Shells a hello may say it kept, at most: the agent has 16 at most.
+KEPT_MAX = 64
+#: Output an agent may say it skipped at once, at most: its ring is 1 MiB.
+GAP_MAX = 1 << 40
 #: Reading the passport of a computer that just joined, at most.
 PASSPORT_TIMEOUT = 20
 #: Fields of the hello kept, and how long each may be.
@@ -119,17 +143,37 @@ TOO_MANY = ("Too many failed attempts from this address. Try again in a few "
             "minutes.")
 LEFT_WHILE_JOINING = ("The agent disconnected while the computer was being "
                       "added. Run the command again.")
+#: Why a terminal that waited for its agent ends; {name} is the computer.
+AWAY_TOO_LONG = "{name} did not come back within 12 hours: this terminal has ended."
+CAME_BACK_WITHOUT = ("{name} came back without this terminal: its agent was "
+                     "restarted, or the computer was awake and offline for "
+                     "over an hour.")
+STOPPED = "The agent on {name} was stopped: this terminal has ended."
 
 
 class AgentChannel(Channel):
-    """A terminal's shell on the computer, as the terminal sees it."""
+    """A terminal's shell on the computer, as the terminal sees it.
 
-    def __init__(self, link: "AgentLink", ch: int) -> None:
+    With agent 0.12.0 it outlives the connection: when the agent goes, the
+    channel waits, away, and when it is back goes on over the new connection
+    from the byte it had, nothing lost and nothing twice. An older agent's
+    shells end with the connection."""
+
+    def __init__(self, link: "AgentLink", ch: int, cols: int, rows: int) -> None:
         self.link = link
         self.ch = ch
+        #: The size the shell is to have, sent again when it is taken back.
+        self.size = (cols, rows)
+        #: Output bytes taken in, counted from the shell's first: the agent
+        #: goes on from here after a reconnect.
+        self.received = 0
+        self.on_change: Callable[[], None] | None = None
         self._out: asyncio.Queue[bytes | None] = asyncio.Queue()
         self._exit: asyncio.Future = asyncio.get_running_loop().create_future()
         self._lost: str | None = None
+        self._whole = False
+        self._agents: "Agents | None" = None
+        self._expiry: asyncio.TimerHandle | None = None
         self.closed = False
 
     @property
@@ -137,7 +181,9 @@ class AgentChannel(Channel):
         return self.closed or self._exit.done()
 
     def write(self, data: bytes) -> None:
-        if not self.over:
+        # Keys typed while away would go nowhere: the agent does not take
+        # them for a shell it keeps.
+        if not self.over and not self.away:
             self.link.send_frame(INPUT, self.ch, data)
 
     async def read(self) -> bytes:
@@ -145,12 +191,13 @@ class AgentChannel(Channel):
         if item is None:
             self._out.put_nowait(None)          # every later read ends too
             if self._lost:
-                raise ConnectionError(self._lost)
+                raise (Gone if self._whole else ConnectionError)(self._lost)
             return b""
         return item
 
     def resize(self, cols: int, rows: int) -> None:
-        if not self.over:
+        self.size = (cols, rows)
+        if not self.over and not self.away:
             self.link.send_json({"t": "size", "ch": self.ch, "cols": cols,
                                  "rows": rows})
 
@@ -158,6 +205,9 @@ class AgentChannel(Channel):
         if self.closed:
             return
         self.closed = True
+        # Closed while away: no longer waited for. The agent hears it when
+        # it is back, as a shell nobody takes.
+        self._stop_waiting()
         if not self._exit.done():
             self.link.send_json({"t": "close", "ch": self.ch})
             self._exit.set_result(None)
@@ -173,7 +223,9 @@ class AgentChannel(Channel):
     # -------------------------------------------------- from the link
 
     def output(self, data: bytes) -> None:
-        if not self.closed:
+        # Nothing at all is not the end: that is said with exit.
+        if data and not self.closed:
+            self.received += len(data)
             self._out.put_nowait(data)
 
     def ended(self, code: int | None) -> None:
@@ -182,10 +234,53 @@ class AgentChannel(Channel):
         self._out.put_nowait(None)
 
     def lost(self, reason: str) -> None:
+        self._stop_waiting()
         self._lost = reason
         if not self._exit.done():
             self._exit.set_result(None)
         self._out.put_nowait(None)
+
+    def give_up(self, why: str) -> None:
+        """It ends, and `why` is the whole sentence the terminal says."""
+        self._whole = True
+        self.lost(why)
+
+    # ------------------------------------------------- away and back
+
+    def went_away(self, agents: "Agents") -> None:
+        """Its agent is gone: it waits for it, AWAY_MAX at most."""
+        self._agents = agents
+        self.away = True
+        self.since = time.time()
+        self._expiry = asyncio.get_running_loop().call_later(
+            AWAY_MAX, lambda: self.give_up(
+                AWAY_TOO_LONG.format(name=self.link.machine_name)))
+        self._changed()
+
+    def back(self, link: "AgentLink") -> None:
+        """Its agent is back: it goes on over `link`, from the byte it has,
+        at the size it is to have now."""
+        self.link = link
+        link.send_json({"t": "resume", "ch": self.ch, "from": self.received})
+        cols, rows = self.size
+        link.send_json({"t": "size", "ch": self.ch, "cols": cols, "rows": rows})
+        self._stop_waiting()
+
+    def _stop_waiting(self) -> None:
+        if self._expiry is not None:
+            self._expiry.cancel()
+            self._expiry = None
+        if self._agents is not None:
+            self._agents.unpark(self)
+            self._agents = None
+        if self.away:
+            self.away = False
+            self.since = None
+            self._changed()
+
+    def _changed(self) -> None:
+        if self.on_change is not None:
+            self.on_change()
 
 
 Sender = Callable[[str | bytes], Awaitable[None]]
@@ -203,13 +298,21 @@ class AgentLink(Link):
     def __init__(self, send: Sender, close: Closer, hello: dict) -> None:
         self.machine_id: uuid.UUID | None = None
         self.name = hello.get("name") or "computer"
+        #: The computer's name in tTerm Web, once it is known.
+        self.machine_name = self.name
         self.user = hello.get("user") or ""
         self.os = hello.get("os") or ""
         self.version = hello.get("agent") or ""
         self.shell = hello.get("shell") or ""
+        #: What the agent can do for tTerm Web; from KEEPS_SHELLS its
+        #: shells outlive the connection, and these are the ones it kept.
+        self.web = hello.get("web") or 0
+        self.kept: list[int] = list(hello.get("kept") or [])
         self.connected_at = time.time()
         #: Why the connection is gone, once it is.
         self.gone: str | None = None
+        #: Where its terminals wait when it goes; set when it is attached.
+        self.agents: "Agents | None" = None
         self._send = send
         self._close = close
         self._closing: asyncio.Task | None = None
@@ -254,6 +357,9 @@ class AgentLink(Link):
                 await self._send(item)
             except Exception as exc:        # noqa: BLE001 - the link is gone
                 self.lost(f"the connection to the agent broke ({type(exc).__name__})")
+                # Its socket may not know yet: the agent is to hear it now,
+                # and come back at once, not when it misses our answers.
+                self.hang_up()
                 return
 
     def hang_up(self) -> None:
@@ -300,12 +406,24 @@ class AgentLink(Link):
                    echo: bool) -> Channel:
         if self.gone:
             raise ConnectionError(self.gone)
-        ch = next(self._numbers)
-        channel = AgentChannel(self, ch)
+        ch = self._new_channel()
+        channel = AgentChannel(self, ch, cols, rows)
         self._channels[ch] = channel
         self.send_json({"t": "open", "ch": ch, "cmd": command, "cols": cols,
                         "rows": rows, "echo": echo})
         return channel
+
+    def _new_channel(self) -> int:
+        """A channel number the agent does not have, nor will be asked to
+        take back: numbers outlive a connection now, so a counter starting
+        over with each one would not do."""
+        taken = set(self._channels) | set(self.kept)
+        if self.agents is not None and self.machine_id is not None:
+            taken |= self.agents.parked(self.machine_id)
+        while True:
+            ch = random.randrange(1, 2 ** 31)
+            if ch not in taken:
+                return ch
 
     def release(self) -> None:
         """Nothing to do: the connection is the computer's, not the
@@ -314,6 +432,11 @@ class AgentLink(Link):
     def forget(self, ch: int) -> None:
         self._channels.pop(ch, None)
 
+    def adopt(self, channel: AgentChannel) -> None:
+        """A terminal that waited for this agent goes on over this link."""
+        self._channels[channel.ch] = channel
+        channel.back(self)
+
     # ------------------------------------------------------------ in
 
     def heard(self) -> None:
@@ -321,7 +444,7 @@ class AgentLink(Link):
         self._heard.set()
 
     def take_bytes(self, frame: bytes) -> None:
-        if len(frame) < 5 or frame[0] != OUTPUT:
+        if len(frame) <= 5 or frame[0] != OUTPUT:
             return
         channel = self._channels.get(int.from_bytes(frame[1:5], "big"))
         if channel is not None:
@@ -335,12 +458,29 @@ class AgentLink(Link):
             if channel is not None:
                 code = message.get("code")
                 error = message.get("error")
-                if isinstance(error, str) and error:
+                if message.get("gone") is True:
+                    # Taken back, and the agent no longer had it.
+                    channel.give_up(CAME_BACK_WITHOUT.format(
+                        name=self.machine_name))
+                elif isinstance(error, str) and error:
                     # The shell never started: the terminal says why.
                     channel.lost(f"the agent could not start the shell "
                                  f"({error[:200]})")
                 else:
                     channel.ended(code if _whole(code) else None)
+        elif kind == "gap":
+            # Taken back, but the start of what it missed was no longer
+            # kept: the agent goes on after it, and so does the count.
+            ch, lost = message.get("ch"), message.get("lost")
+            channel = self._channels.get(ch) if _whole(ch) else None
+            if channel is not None and _whole(lost) and 0 < lost <= GAP_MAX:
+                channel.received += lost
+                log.info("terminal %s on %s: %d bytes of output were no "
+                         "longer kept", ch, self.machine_name, lost)
+        elif kind == "bye":
+            # Stopped on purpose: its shells end with it, nothing waits.
+            self.lost("the agent was stopped",
+                      ending=STOPPED.format(name=self.machine_name))
         elif kind == "ran":
             number = message.get("id")
             answer = self._scripts.get(number) if _whole(number) else None
@@ -356,15 +496,26 @@ class AgentLink(Link):
                 self._hb_waiting = True
                 self._put(HB)
 
-    def lost(self, reason: str) -> None:
-        """The connection is gone: every terminal on it ends, every script
-        asked fails, nothing more is sent."""
+    def lost(self, reason: str, *, ending: str | None = None,
+             wait: bool = True) -> None:
+        """The connection is gone: every script asked fails, nothing more
+        is sent. Its terminals wait for the agent to come back, if it keeps
+        their shells and `wait` allows; otherwise they end, saying `ending`
+        if given, or that the connection was lost and why."""
         if self.gone:
             return
         self.gone = reason
-        for channel in list(self._channels.values()):
-            channel.lost(reason)
+        channels = [c for c in self._channels.values() if not c.over]
         self._channels.clear()
+        if (wait and ending is None and self.web >= KEEPS_SHELLS
+                and self.agents is not None and self.machine_id is not None):
+            self.agents.park(self.machine_id, channels)
+        else:
+            for channel in channels:
+                if ending is not None:
+                    channel.give_up(ending)
+                else:
+                    channel.lost(reason)
         for answer in self._scripts.values():
             if not answer.done():
                 answer.set_exception(LinkError(reason))
@@ -389,10 +540,13 @@ def _b64(value) -> bytes:
 
 
 class Agents:
-    """The computers whose agent is connected right now."""
+    """The computers whose agent is connected right now, and the terminals
+    waiting for the agent of one that went away."""
 
     def __init__(self) -> None:
         self._links: dict[uuid.UUID, AgentLink] = {}
+        #: Terminals whose agent went away, by computer and channel.
+        self._parked: dict[uuid.UUID, dict[int, AgentChannel]] = {}
         #: Connections that have not said who they are yet, oldest first,
         #: each with its address.
         self._waiting: dict[object, tuple[str, WebSocket]] = {}
@@ -403,6 +557,7 @@ class Agents:
 
     def attach(self, link: AgentLink) -> None:
         assert link.machine_id is not None
+        link.agents = self
         old = self._links.get(link.machine_id)
         self._links[link.machine_id] = link
         if old is not None and old is not link:
@@ -410,6 +565,57 @@ class Agents:
             # one stays, the other hears it is over.
             old.lost("the agent connected again")
             old.hang_up()
+        self._take_back(link)
+
+    def _take_back(self, link: AgentLink) -> None:
+        """The agent is back: each terminal that waited for it goes on, if
+        it still has the shell; a shell no terminal waits for any more is
+        closed."""
+        assert link.machine_id is not None
+        parked = self._parked.pop(link.machine_id, {})
+        kept = set(link.kept) if link.web >= KEEPS_SHELLS else set()
+        back = 0
+        for ch, channel in parked.items():
+            if ch in kept:
+                try:
+                    link.adopt(channel)
+                except Exception:           # noqa: BLE001 - never left between
+                    log.exception("terminal %s on %s could not be taken back",
+                                  ch, link.machine_name)
+                    link.forget(ch)
+                    channel.lost("it could not be taken back")
+                    continue
+                back += 1
+            else:
+                channel.give_up(CAME_BACK_WITHOUT.format(name=link.machine_name))
+        for ch in sorted(kept - parked.keys()):
+            link.send_json({"t": "close", "ch": ch})
+        if parked or kept:
+            log.info("agent back: %s, %d of %d terminal(s) taken back, %d "
+                     "shell(s) nobody waited for closed", link.machine_name,
+                     back, len(parked), len(kept - parked.keys()))
+
+    def park(self, machine_id: uuid.UUID, channels: list[AgentChannel]) -> None:
+        """The agent went away: these terminals wait for it."""
+        if not channels:
+            return
+        spot = self._parked.setdefault(machine_id, {})
+        for channel in channels:
+            spot[channel.ch] = channel
+            channel.went_away(self)
+        log.info("agent gone: %d terminal(s) of %s wait for it", len(channels),
+                 channels[0].link.machine_name)
+
+    def unpark(self, channel: AgentChannel) -> None:
+        machine_id = channel.link.machine_id
+        spot = self._parked.get(machine_id) if machine_id is not None else None
+        if spot is not None and spot.get(channel.ch) is channel:
+            del spot[channel.ch]
+            if not spot:
+                del self._parked[machine_id]
+
+    def parked(self, machine_id: uuid.UUID) -> set[int]:
+        return set(self._parked.get(machine_id, ()))
 
     def detach(self, link: AgentLink) -> bool:
         """Forgets a link that went away, but only if it is still current:
@@ -445,9 +651,13 @@ class Agents:
 
     def close_all(self, reason: str) -> None:
         for link in list(self._links.values()):
-            link.lost(reason)
+            link.lost(reason, wait=False)
             link.hang_up()
         self._links.clear()
+        for spot in list(self._parked.values()):
+            for channel in list(spot.values()):
+                channel.lost(reason)
+        self._parked.clear()
 
     @property
     def pending(self) -> int:
@@ -547,6 +757,12 @@ def parse_hello(raw: str) -> dict | None:
             if isinstance(value, str) else ""
     web = message.get("web")
     hello["web"] = web if _whole(web) else 0
+    # The shells it kept from a connection before: channel numbers, and
+    # only so many.
+    kept = message.get("kept")
+    hello["kept"] = sorted({ch for ch in kept[:KEPT_MAX]
+                            if _whole(ch) and 0 < ch < 2 ** 32}) \
+        if isinstance(kept, list) else []
     return hello
 
 
@@ -585,6 +801,7 @@ async def session(ws: WebSocket, pool: asyncpg.Pool, agents: Agents,
     try:
         if known is not None:
             link.machine_id = known["id"]
+            link.machine_name = known["name"]
             agents.attach(link)
             await _seen(pool, known["id"], link)
             log.info("agent online: %s/%s (agent %s)", known["code"],
@@ -609,13 +826,16 @@ async def session(ws: WebSocket, pool: asyncpg.Pool, agents: Agents,
                     await ws.close()
                 return
             link.machine_id = machine_id
+            link.machine_name = name
             agents.attach(link)
         await reader
     finally:
         reader.cancel()
         link.lost("the agent disconnected")
         if agents.detach(link):
-            log.info("agent offline: %s", link.name)
+            # The machine's name in tTerm Web, as in the other lines about it,
+            # not the one the agent gave in its hello.
+            log.info("agent offline: %s", link.machine_name)
 
 
 async def _meet(ws: WebSocket, pool: asyncpg.Pool, agents: Agents,

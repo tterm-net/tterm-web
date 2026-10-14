@@ -8,12 +8,15 @@ asks the machine small sh scripts on the side: the shell scripts going into
 
 A server gets an SSH connection of its own for each terminal. A computer
 has one agent connection for all of them (see agents.py); ending a terminal
-there ends its shell, never the connection.
+there ends its shell, never the connection. From 0.0.7 a computer's
+terminals outlive that connection too: they wait, away, for the agent to
+come back, and go on over its next one.
 """
 from __future__ import annotations
 
 import asyncio
 import contextlib
+from typing import Callable
 
 import asyncssh
 
@@ -25,8 +28,23 @@ class LinkError(Exception):
     """A script could not run on the machine, or its connection is gone."""
 
 
+class Gone(ConnectionError):
+    """The shell is gone, and the message says why as a whole sentence."""
+
+
 class Channel:
     """A running shell in a terminal, as the terminal uses it."""
+
+    #: The way to the machine, when the channel can move from one to the
+    #: next: a computer's terminal follows its agent's connections. None
+    #: when it has one for good.
+    link: "Link | None" = None
+    #: Out of reach for now, since when (time.time()): the machine went away
+    #: and the shell waits for it there, as this does here.
+    away: bool = False
+    since: float | None = None
+    #: Called when it goes away or comes back.
+    on_change: "Callable[[], None] | None" = None
 
     def write(self, data: bytes) -> None:
         raise NotImplementedError

@@ -67,6 +67,8 @@ interface Props {
   terminalId: string;
   shownTheme: Shown;
   ended: boolean;
+  /** Its tab is in front: only then does it take the keys. */
+  active: boolean;
   machine: string;
   /** The home directory as tTerm Web knows it, for a terminal whose shell
    * has not said it here (one that ended in an earlier run). */
@@ -151,6 +153,8 @@ export function FeedTerminal(props: Props) {
   notify.current = props.notify;
   const ended = useRef(props.ended);
   ended.current = props.ended;
+  const active = useRef(props.active);
+  active.current = props.active;
   const restoreN = useRef(0);
   // What the stream handlers share; none of it is drawn directly.
   const s = useRef({
@@ -542,7 +546,7 @@ export function FeedTerminal(props: Props) {
       });
 
       cleanups.push(keepKeys(() => {
-        if (disposed || ended.current) return null;
+        if (disposed || ended.current || !active.current) return null;
         const p = phaseRef.current;
         const live = { element: t.textarea ?? null, type: (d: string) => t.input(d) };
         if (isFull.current || p === "input") return live;
@@ -595,7 +599,7 @@ export function FeedTerminal(props: Props) {
   // being typed in the line already. Back at the prompt, back to the line.
   useEffect(() => {
     const t = term.current;
-    if (!t || props.ended) return;
+    if (!t || props.ended || !props.active) return;
     const line = homeRef.current?.element;
     const here = () => {
       const active = document.activeElement;
@@ -618,7 +622,22 @@ export function FeedTerminal(props: Props) {
         line?.focus();
       }
     }
-  }, [phase, fullscreen, props.ended]);
+  }, [phase, fullscreen, props.ended, props.active]);
+
+  // Its tab brought to the front: the keys come here, where they belong.
+  // Sent behind: it no longer claims them.
+  useEffect(() => {
+    const t = term.current;
+    if (!props.active) chan.current?.unfocus();
+    if (!props.active || props.ended || !t) return;
+    const p = phaseRef.current;
+    const line = homeRef.current?.element as HTMLTextAreaElement | undefined;
+    if (isFull.current || p === "input" || (p === "running" && !line?.value)) {
+      t.focus();
+    } else if (p === "prompt" || p === "running") {
+      line?.focus();
+    }
+  }, [props.active, props.ended]);
 
   // The feed sticks to its bottom while you are there.
   useLayoutEffect(() => {
@@ -629,11 +648,11 @@ export function FeedTerminal(props: Props) {
   // A link to a block: there, and lit up for a moment. On opening the page,
   // and when the address changes to another block of it.
   useEffect(() => {
-    if (!loaded) return;
+    if (!loaded || !props.active) return;
     let timer = 0;
     const show = () => {
       const m = /^#b(\d+)$/.exec(location.hash);
-      const el = m && document.getElementById(`b${m[1]}`);
+      const el = m && feedRef.current?.querySelector<HTMLElement>(`#b${m[1]}`);
       if (!m || !el) return;
       stick.current = false;
       el.scrollIntoView({ block: "center" });
@@ -647,7 +666,7 @@ export function FeedTerminal(props: Props) {
       window.removeEventListener("hashchange", show);
       window.clearTimeout(timer);
     };
-  }, [loaded]);
+  }, [loaded, props.active]);
 
   // ------------------------------------------------------------ actions
   const run = useCallback((command: string, confirmed = false) => {

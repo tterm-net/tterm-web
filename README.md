@@ -4,16 +4,19 @@ tTerm in the browser: a real terminal with command blocks, for people who work
 with servers and for their teams. Projects, roles, a journal of who ran what,
 and watching a colleague's terminal, always with them knowing.
 
-**Status:** early development. Version 0.0.6 adds computers: a laptop
-without a public address connects through
-[tterm-agent](https://github.com/tterm-net/tterm-agent) 0.11.0 and gets the
-same terminals as a server. Since 0.0.5 a terminal is a feed of blocks, one
-per command, typed into tTerm's own input line: history from all your
-devices, Tab that asks the machine, the directory and the git branch as
-buttons, and a question before a command that would destroy something. The
-classic terminal is one click away. The first stage ends with version 0.1, a
-real terminal to your own servers and computers in the browser on your
-laptop. Then come accounts and a server, then teams, then a public launch.
+**Status:** early development. Version 0.0.7 brings the page of the
+mockups: tabs of open terminals from any project, "+" for a terminal on any
+machine, a palette on Cmd+K. And a computer's terminals now live through
+its sleep: with [tterm-agent](https://github.com/tterm-net/tterm-agent)
+0.12.0 they wait while it is away and go on where they were. Since 0.0.6 a
+laptop without a public address gets the same terminals as a server, and
+since 0.0.5 a terminal is a feed of blocks, one per command, typed into
+tTerm's own input line: history from all your devices, Tab that asks the
+machine, the directory and the git branch as buttons, and a question before
+a command that would destroy something. The classic terminal is one click
+away. The first stage ends with version 0.1, a real terminal to your own
+servers and computers in the browser on your laptop. Then come accounts and
+a server, then teams, then a public launch.
 
 Related:
 
@@ -138,17 +141,39 @@ the computer's key, and only its hash is kept. Through that connection the
 agent starts the shell a terminal asks for, in a terminal of the page's size,
 and passes the bytes both ways untouched; it also runs the small sh scripts
 behind Tab and the lists, and the one that puts the shell scripts in
-`~/.tterm`. A computer is online while its agent runs: the page shows it, and
-terminals there end, saying why, when the agent goes. The agent is still a
-pipe: markers, blocks and the rest stay here, as for a server. A computer
+`~/.tterm`. A computer is online while its agent runs, and the page shows
+it. The agent is still a pipe: markers, blocks and the rest stay here, as
+for a server. A computer
 added again is a new machine, even under the same name: a name is whatever
 a computer calls itself. A second agent with a key already connected is
 turned away while the first one answers.
+
+**A computer that sleeps.** When its agent's connection goes (the lid is
+closed, the network blinks), the agent keeps the shells running and the
+last megabyte each of them printed, and tTerm Web keeps the terminals,
+away: they say they wait for the computer and take no keys. When the agent
+is back, each terminal is taken back from the byte tTerm Web has of it:
+nothing lost, nothing twice, and a full-screen program goes on as it was.
+Terminals wait up to 12 hours; the agent keeps its shells for an hour of the
+computer being awake without the link, and time asleep does not count. A
+terminal the agent no longer has (it was restarted) ends and says why; one
+stopped with Ctrl+C says goodbye, and its terminals end at once.
 
 The machines' side is open to the internet, so `/agent` keeps strangers
 short: the hello is small and comes at once, only a few connections from
 one address may wait to say it, an address whose unknown tokens keep failing
 waits a while, and no message is larger than a script's answer.
+
+**The page** keeps tabs of the terminals you work with, from any project,
+in this browser. Every tab's terminal is on the page at once, the others
+hidden behind the one in front, so switching is instant and none of them is
+told of a new size. Closing a tab leaves its terminal running, in the
+sidebar under its machine, where a click brings the tab back. "+" opens a
+terminal on any machine, and Cmd+K on a Mac, Ctrl+Shift+K elsewhere, jumps
+to any terminal or machine or does what the page can; plain Ctrl stays the
+terminal's. A tab's dot is its machine: green on line, a turning ring while
+a command runs, a hollow ring while the computer is away. When the page
+loses tTerm Web, a strip says so until it is back.
 
 **The signer** holds the CA keys and nothing else, in a process of its own.
 For every connection the core makes a throwaway key pair and asks the

@@ -2,12 +2,16 @@
 // Projects with their machines and terminals, a new project, the account and
 // the theme. It slides over the page and does not push it, so that opening it
 // never changes the terminal's width; pinned, it narrows the page once.
+//
+// A machine opens a new terminal on it; a terminal goes to its tab, opening
+// the tab again if it was closed.
 
 import { useState } from "react";
 import type { Me, Project, Role, TerminalInfo } from "./api";
 import {
   ChevronDown, Close, Computer, Dots, Logo, Moon, Pin, Plus, Server, Sun,
 } from "./icons";
+import type { Dot } from "./TabBar";
 import type { Shown } from "./theme";
 
 const ROLE_LABEL: Record<Role, string> = {
@@ -32,12 +36,15 @@ interface Props {
   currentTerminal?: string;
   onOpenTerminal: (machineId: string) => void;
   onGoTo: (terminalId: string) => void;
+  /** The machines page. */
+  onHome: () => void;
+  dotFor: (terminal: TerminalInfo) => Dot;
   notYet: (what: string) => void;
 }
 
 export function Sidebar(props: Props) {
   const { me, projects, pinned, shownTheme, notYet, onAddMachine } = props;
-  const { terminals, currentTerminal, onOpenTerminal, onGoTo } = props;
+  const { terminals, currentTerminal, onOpenTerminal, onGoTo, dotFor } = props;
   const [folded, setFolded] = useState<Record<string, boolean>>({});
   const themeLabel =
     shownTheme === "light" ? "Switch to dark theme" : "Switch to light theme";
@@ -46,8 +53,11 @@ export function Sidebar(props: Props) {
     <aside className="sidebar" aria-label="Sidebar"
       onMouseEnter={props.onMouseEnter} onMouseLeave={props.onMouseLeave}>
       <div className="sidebar-head">
-        <Logo size={22} />
-        <span className="brand">tTerm</span>
+        <button type="button" className="brand-button" onClick={props.onHome}
+          title="All machines">
+          <Logo size={22} />
+          <span className="brand">tTerm</span>
+        </button>
         <button type="button" className="icon-button small"
           aria-label="Keep sidebar open" aria-pressed={pinned}
           title={pinned ? "Let the sidebar slide away" : "Keep the sidebar open"}
@@ -131,9 +141,12 @@ export function Sidebar(props: Props) {
                                 <button type="button" className="tree-terminal"
                                   aria-current={t.id === currentTerminal
                                     ? "page" : undefined}
-                                  title={`Go to ${t.label}`}
+                                  title={dotFor(t) === "away"
+                                    ? `Go to ${t.label}: it waits for ${machine.name} to come back`
+                                    : `Go to ${t.label}`}
                                   onClick={() => onGoTo(t.id)}>
-                                  <span className="dot open" aria-hidden="true" />
+                                  <span className={`dot ${dotFor(t)}`}
+                                    aria-hidden="true" />
                                   terminal {t.name}
                                 </button>
                               </li>

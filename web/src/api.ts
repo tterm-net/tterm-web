@@ -77,6 +77,10 @@ export interface TerminalInfo {
   state: TerminalState;
   /** How it ended, in a sentence; null while it runs. */
   reason: string | null;
+  /** Open, and its computer asleep or offline: it waits for it, and goes
+   * on where it was when it is back. Since when, in milliseconds. */
+  away?: boolean;
+  awaySince?: number | null;
   shell?: string | null;
   /** Whether the shell prints our markers at its prompts. */
   markers?: boolean;
@@ -243,6 +247,14 @@ export async function openTerminal(machineId: string, cols: number,
 
 export async function terminalInfo(id: string): Promise<TerminalInfo | null> {
   const response = await fetch(`/api/terminals/${id}`, { cache: "no-store" });
+  if (response.status === 404) return null;
+  return (await check(response)).json();
+}
+
+/** Ends the terminal: its shell gets a hangup, as when a window closes. */
+export async function endTerminal(id: string): Promise<TerminalInfo | null> {
+  const response = await fetch(`/api/terminals/${id}`,
+    { method: "DELETE", headers: { "x-tterm": "1" } });
   if (response.status === 404) return null;
   return (await check(response)).json();
 }

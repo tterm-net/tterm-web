@@ -22,6 +22,10 @@ a word under Tab can become and which directories and branches there are.
 
 From 0.0.6 a terminal can be on a computer too, through its agent instead of
 SSH; the terminal does it all the same way over either (see transport.py).
+
+From 0.0.7 a computer's terminal waits for its agent when the agent goes
+(the laptop sleeps, the network blinks): it stays open, away, takes no keys
+meanwhile, and goes on where it was when the agent is back.
 """
 from __future__ import annotations
 
@@ -95,6 +99,9 @@ _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 #: never started: a quote or a heredoc left open, or a history expansion
 #: that failed (bash then shows its prompt again without a marker).
 TYPED_STALE = 3.0
+#: What a terminal whose computer is away answers to a command.
+AWAY = ("{name} is asleep or offline. This terminal waits for it and goes "
+        "on where it was when it is back.")
 
 
 def clean_command(command: str) -> str:
@@ -268,7 +275,14 @@ class Terminal:
         return (self.machine.label if self.name == "1"
                 else f"{self.machine.label} · {self.name}")
 
+    @property
+    def away(self) -> bool:
+        """Open, and its machine out of reach for now: a computer whose
+        agent went away. The shell waits there, and this for it."""
+        return self.state == "open" and self._chan is not None and self._chan.away
+
     def describe(self) -> dict:
+        since = self._chan.since if self.away and self._chan is not None else None
         return {
             "id": str(self.id),
             "machineId": str(self.machine.id),
@@ -277,6 +291,8 @@ class Terminal:
             "name": self.name,
             "state": self.state,
             "reason": self.reason,
+            "away": self.away,
+            "awaySince": int(since * 1000) if since else None,
             "shell": self.shell,
             "markers": self.markers,
             "blocks": self.blocks,
@@ -345,6 +361,7 @@ class Terminal:
             # back on as soon as it has read the key.
             self._chan = await self._link.open(how.command, self.cols,
                                                self.rows, echo=not how.markers)
+            self._chan.on_change = self._changed
         except asyncio.CancelledError:
             raise
         except Exception as exc:        # noqa: BLE001 - every reason is shown
@@ -400,6 +417,8 @@ class Terminal:
                 self._take(data)
         except asyncio.CancelledError:
             raise
+        except transport.Gone as exc:
+            reason = str(exc)
         except OSError as exc:
             reason = f"The connection to {self.machine.name} was lost: {exc}"
         held = self._parser.flush()
@@ -549,6 +568,8 @@ class Terminal:
         """
         if self.state != "open" or self._chan is None:
             return "The terminal is not open."
+        if self.away:
+            return AWAY.format(name=self.machine.name)
         if not self.blocks:
             return ("This shell does not mark where commands start, so it "
                     "runs in the classic mode only.")
@@ -593,9 +614,15 @@ class Terminal:
         the same SSH connection, or through the agent, and returns the lines
         it listed. The terminal itself never sees it. An empty list when it
         fails: Tab then simply finds nothing."""
-        link = self._link
+        # A computer's terminal follows its agent from one connection to
+        # the next: the way is the channel's, as it is now.
+        chan = self._chan
+        link = chan.link if chan is not None and chan.link is not None \
+            else self._link
         if self.state != "open" or link is None:
             raise NotOpen("The terminal is not open.")
+        if self.away:
+            raise NotOpen(AWAY.format(name=self.machine.name))
         async with self._side:
             try:
                 _, out, _ = await link.script(script, SIDE_TIMEOUT)
@@ -1154,7 +1181,7 @@ class Watcher:
 
     async def _state(self) -> None:
         t = self.terminal
-        now = (t.state, t.reason, t.markers, t.shell)
+        now = (t.state, t.reason, t.markers, t.shell, t.away)
         if now != self._state_sent:
             self._state_sent = now
             await self._json({"op": "state", "ch": self.channel,

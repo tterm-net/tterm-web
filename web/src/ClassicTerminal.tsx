@@ -39,6 +39,8 @@ interface Props {
   shownTheme: Shown;
   /** An ended terminal takes no keys, so it does not take them back. */
   ended: boolean;
+  /** Its tab is in front: only then does it take the keys. */
+  active: boolean;
   events: ViewEvents;
 }
 
@@ -46,10 +48,13 @@ export function ClassicTerminal(props: Props) {
   const { terminalId, shownTheme } = props;
   const box = useRef<HTMLDivElement>(null);
   const term = useRef<Terminal | null>(null);
+  const channelRef = useRef<Channel | null>(null);
   const events = useRef(props.events);
   events.current = props.events;
   const ended = useRef(props.ended);
   ended.current = props.ended;
+  const active = useRef(props.active);
+  active.current = props.active;
 
   useEffect(() => {
     const element = box.current;
@@ -109,7 +114,7 @@ export function ClassicTerminal(props: Props) {
         t.write("\x1b[?25l");
         t.blur();
       };
-      channel = socket.attach(terminalId, t.cols, t.rows, {
+      channel = channelRef.current = socket.attach(terminalId, t.cols, t.rows, {
         attached: (terminal, resumed) => {
           // Back after a moment away: what was missed is old news too, up
           // to `replayed`.
@@ -161,11 +166,12 @@ export function ClassicTerminal(props: Props) {
         });
       });
       observer.observe(element);
-      cleanups.push(keepKeys(() => disposed || ended.current ? null : {
+      cleanups.push(keepKeys(() => disposed || ended.current || !active.current
+        ? null : {
         element: t.textarea ?? null,
         type: (data) => t.input(data),
       }));
-      t.focus();
+      if (active.current) t.focus();
     };
     void start();
 
@@ -175,6 +181,7 @@ export function ClassicTerminal(props: Props) {
       cancelAnimationFrame(frame);
       observer?.disconnect();
       channel?.detach();
+      channelRef.current = null;
       xterm?.dispose();
       term.current = null;
     };
@@ -184,6 +191,13 @@ export function ClassicTerminal(props: Props) {
   useEffect(() => {
     if (term.current) term.current.options.theme = terminalTheme(shownTheme);
   }, [shownTheme]);
+
+  // Its tab brought to the front: the keys come here. Sent behind: it no
+  // longer claims them.
+  useEffect(() => {
+    if (!props.active) channelRef.current?.unfocus();
+    if (props.active && !props.ended) term.current?.focus();
+  }, [props.active, props.ended]);
 
   return (
     <div className="terminal-box classic-box" ref={box}

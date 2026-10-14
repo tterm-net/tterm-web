@@ -22,7 +22,9 @@ export function keepKeys(home: () => Home | null): () => void {
     !!el?.closest("input, textarea, select, [contenteditable='true']");
   const pressable = (el: Element | null) =>
     !!el?.closest("button, a[href], summary, [role='button']");
-  const dialogOpen = () => document.querySelector(".dialog, .picker") !== null;
+  // A picker left open in a tab behind does not count.
+  const dialogOpen = () => document.querySelector(
+    ".dialog, .finder, .terminal-view:not(.behind) .picker") !== null;
   const target = (): Home | null => {
     const h = home();
     if (!h?.element) return null;

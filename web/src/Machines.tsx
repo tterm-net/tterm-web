@@ -60,7 +60,7 @@ function MachineCard({ machine, code, terminals, onOpenTerminal, onGoTo }: {
           <span>
             {computer && (
               <span className="machine-state">
-                <span className={offline ? "dot ended" : "dot open"}
+                <span className={offline ? "dot away" : "dot open"}
                   aria-hidden="true" />
                 {offline ? "offline" : "online"}
               </span>

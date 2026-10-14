@@ -1,5 +1,7 @@
-"""Computers through the agent (0.0.6): the real tterm-agent, run from its
-own repository next to this one, against a core on free ports.
+"""Computers through the agent (0.0.6), and their terminals through a
+dropped connection (0.0.7): the real tterm-agent, run from its own
+repository next to this one, against a core on free ports, and agents
+spoken by hand for what a real one does rarely.
 
 The agent starts real shells here, as it would on a laptop: bash, or zsh on
 a Mac, in a throwaway home. Its usual entry refuses root, which a check run
@@ -12,7 +14,9 @@ import asyncio
 import base64
 import contextlib
 import json
+import logging
 import os
+import re
 import shutil
 import signal
 import sys
@@ -37,6 +41,18 @@ def _agent_here() -> bool:
         return True
     print(f"  · tterm-agent not found at {AGENT}: the agent checks are skipped")
     return False
+
+
+def _agent_version() -> str:
+    found = re.search(r'^__version__ = "([^"]+)"', AGENT.read_text(), re.M)
+    assert found, "the agent says its version"
+    return found.group(1)
+
+
+def _keeps_shells() -> bool:
+    """Whether the agent next door keeps its shells through a dropped
+    connection (0.12.0 and newer)."""
+    return tuple(int(n) for n in _agent_version().split(".")[:2]) >= (0, 12)
 
 
 class Agent:
@@ -71,6 +87,15 @@ class Agent:
             if not line:
                 return
             self.log += line
+
+    async def kill(self) -> None:
+        """Gone at once, saying nothing, its shells with it."""
+        assert self.proc is not None
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(self.proc.pid, signal.SIGKILL)
+        await self.proc.wait()
+        if self._reader:
+            await asyncio.wait_for(self._reader, 2)
 
     async def stop(self) -> None:
         """Ctrl+C, as a person stops it; the shells end with it."""
@@ -139,6 +164,16 @@ def test_the_hello_is_read_and_cleaned():
     old = agents.parse_hello(json.dumps({"t": "hello", "token": "x" * 32,
                                          "channels": 1}))
     assert old is not None and old["web"] == 0, "the bot's agent says no web"
+    assert old["kept"] == []
+    kept = agents.parse_hello(json.dumps({
+        "t": "hello", "token": "x" * 32, "web": 2,
+        "kept": [3, 3, -1, 0, 2 ** 32, "7", True, 1.5, None, 9]
+                + list(range(100, 200))}))
+    assert kept is not None and \
+        kept["kept"] == [3, 9] + list(range(100, 154)), \
+        "channel numbers only, each once, and only so many looked at"
+    assert agents.parse_hello(json.dumps({"t": "hello", "token": "x" * 32,
+                                          "kept": "1,2"}))["kept"] == []
 
 
 async def test_a_computer_joins_and_its_terminals_work(h):
@@ -158,9 +193,10 @@ async def test_a_computer_joins_and_its_terminals_work(h):
             assert machine["name"] == "test-mac" and machine["host"] is None
             state = (await request(core.page_port, "GET", "/api/state")).json()
             listed = _computer(state)
+            version = _agent_version()
             assert listed and listed["online"] and \
-                listed["agent"]["version"] == "0.11.0", listed
-            assert listed["passport"].get("agent") == "0.11.0"
+                listed["agent"]["version"] == version, listed
+            assert listed["passport"].get("agent") == version
             assert listed["passport"].get("os"), "the passport came through"
             machine_id = uuid.UUID(machine["id"])
 
@@ -204,10 +240,15 @@ async def test_a_computer_joins_and_its_terminals_work(h):
             assert os.path.realpath(b.cwd) == os.path.realpath(home), \
                 "b stayed where it was"
 
-            # The agent goes: its terminals end and say why; it is offline.
+            # The agent is stopped: its terminals end and say why, at once
+            # (0.11.0 only drops the connection); the computer is offline.
             await first.stop()
             await _until(lambda: b.state == "ended", what="the agent's end")
-            assert "was lost" in (b.reason or ""), b.reason
+            if _keeps_shells():
+                assert b.reason == ("The agent on test-mac was stopped: this "
+                                    "terminal has ended."), b.reason
+            else:
+                assert "was lost" in (b.reason or ""), b.reason
             state = (await request(core.page_port, "GET", "/api/state")).json()
             assert _computer(state)["online"] is False
             c = await core.terminals.open(machine_id, 80, 24)
@@ -227,6 +268,126 @@ async def test_a_computer_joins_and_its_terminals_work(h):
             journal = [r["kind"] for r in await core.pool.fetch(
                 "SELECT kind FROM journal ORDER BY id")]
             assert "machine.added" in journal
+    finally:
+        for agent in (first, second):
+            if agent is not None:
+                await agent.stop()
+        shutil.rmtree(home, ignore_errors=True)
+
+
+class Cut:
+    """The way from the agent to the core, as a network is: cut, both ends
+    see their connection end with no goodbye, as when a laptop's Wi-Fi
+    drops or it falls asleep. New connections go through again at once."""
+
+    def __init__(self, port: int) -> None:
+        self.port = port
+        self.pairs: list[tuple[asyncio.StreamWriter, asyncio.StreamWriter]] = []
+        self.server: asyncio.Server | None = None
+
+    async def start(self) -> str:
+        self.server = await asyncio.start_server(self._pair, "127.0.0.1", 0)
+        return f"ws://127.0.0.1:{self.server.sockets[0].getsockname()[1]}/agent"
+
+    async def _pair(self, reader: asyncio.StreamReader,
+                    writer: asyncio.StreamWriter) -> None:
+        try:
+            up_reader, up_writer = await asyncio.open_connection("127.0.0.1",
+                                                                 self.port)
+        except OSError:
+            writer.transport.abort()
+            return
+        self.pairs.append((writer, up_writer))
+        await asyncio.gather(_pipe(reader, up_writer), _pipe(up_reader, writer))
+
+    def cut(self) -> None:
+        for down, up in self.pairs:
+            down.transport.abort()
+            up.transport.abort()
+        self.pairs.clear()
+
+    async def stop(self) -> None:
+        self.cut()
+        if self.server is not None:
+            self.server.close()
+
+
+async def _pipe(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    try:
+        while data := await reader.read(65536):
+            writer.write(data)
+            await writer.drain()
+    except (OSError, ConnectionError):
+        pass
+    finally:
+        writer.transport.abort()
+
+
+async def test_a_terminal_waits_for_its_agent(h):
+    """The real agent (0.12.0) loses its connection in the middle of a
+    command: the terminal waits, away, and goes on where it was when the
+    agent is back, the output whole and nothing twice. An agent that comes
+    back restarted no longer has the shell: then the terminal says so."""
+    if not _agent_here():
+        return
+    if not _keeps_shells():
+        print(f"  · tterm-agent {_agent_version()} does not keep its shells: "
+              "skipped")
+        return
+    login, _ = _login_shell()
+    home = _home()
+    first = second = None
+    try:
+        async with h.core() as core:
+            cut = Cut(core.connect_port)
+            hub = await cut.start()
+            try:
+                install_id, token = await _computer_install(core)
+                first = await Agent(hub, token, home, login).start()
+                status = await _wait_status(core, install_id, "connected", first)
+                machine_id = uuid.UUID(status["machine"]["id"])
+                t = await core.terminals.open(machine_id, 80, 24)
+                await _until(lambda: _prompts(t) >= 1, what="the first prompt")
+                n = _prompts(t)
+                t.write(b"for i in $(seq 1 60); do echo L$i; sleep 0.05; done\n")
+                await _until(lambda: b"L10\r\n" in _screen(t), what="the first lines")
+
+                cut.cut()
+                await _until(lambda: t.away, what="the terminal away")
+                assert t.state == "open" and not core.agents.online(machine_id)
+                assert "asleep or offline" in (t.run("echo x") or "")
+                t.resize(100, 33)
+                # The agent comes back by itself, and the terminal with it.
+                await _until(lambda: not t.away, 20, what="the agent back")
+                await _until(lambda: _prompts(t) > n, 20, what="the loop's end")
+                # Each line as it shows: what follows the last \r in it.
+                lines = [ln.rsplit(b"\r", 1)[-1] for ln in _screen(t).split(b"\r\n")]
+                lines = [ln for ln in lines if re.fullmatch(rb"L\d+", ln)]
+                assert lines == [f"L{i}".encode() for i in range(1, 61)], lines
+                t.write(b"stty size\n")
+                await _until(lambda: _prompts(t) > n + 1, what="stty")
+                assert b"33 100" in _screen(t), "the size it got while away"
+                assert b"keeping 1 terminal(s)" in first.log
+                assert b"took terminal" in first.log, first.log.decode()[-600:]
+
+                # Killed while away: its shells went with it. A new one has
+                # none of them, and the terminal ends saying so.
+                u = await core.terminals.open(machine_id, 80, 24)
+                await _until(lambda: _prompts(u) >= 1, what="another prompt")
+                await first.kill()
+                await _until(lambda: t.away and u.away, what="both away")
+                second = await Agent(hub, token, home, login).start()
+                await _until(lambda: t.state == "ended" and u.state == "ended",
+                             20, what="both ended")
+                assert u.reason == ("test-mac came back without this terminal: "
+                                    "its agent was restarted, or the computer "
+                                    "was awake and offline for over an hour."), \
+                    u.reason
+                v = await core.terminals.open(machine_id, 80, 24)
+                await _until(lambda: _prompts(v) >= 1, what="a prompt again")
+                await v.close()
+            finally:
+                await cut.stop()
     finally:
         for agent in (first, second):
             if agent is not None:
@@ -292,17 +453,254 @@ async def test_tokens_and_agents_that_do_not_fit(h):
 # ------------------------------------------------- agents spoken by hand
 
 async def _hello(hub: str, token: str, name: str = "fake-mac",
-                 address: str | None = None):
+                 address: str | None = None, **extra):
     """A connection that says hello as the agent would; it and the answer.
-    The address is the one the tunnel would say it came from."""
+    The address is the one the tunnel would say it came from; `extra`
+    changes the hello (web 2 and the shells it kept, say)."""
     headers = {"cf-connecting-ip": address} if address else None
     ws = await websockets.connect(hub, proxy=None, max_size=None,
                                   additional_headers=headers)
     await ws.send(json.dumps({"t": "hello", "token": token, "name": name,
                               "user": "u", "os": "Darwin 24.1.0",
                               "agent": "0.11.0", "shell": "zsh",
-                              "channels": 1, "web": 1}))
+                              "channels": 1, "web": 1, **extra}))
     return ws, json.loads(await asyncio.wait_for(ws.recv(), 10))
+
+
+class FakeMac:
+    """An agent spoken by hand on one connection, past its hello: it answers
+    what the core asks, keeps what it is sent, and prints what it is told.
+    It has no shell scripts, so its terminals start without markers."""
+
+    def __init__(self, ws) -> None:
+        self.ws = ws
+        self.got: list[dict] = []
+        self.keys: dict[int, bytearray] = {}
+        self.task = asyncio.create_task(self._serve())
+
+    async def _serve(self) -> None:
+        with contextlib.suppress(websockets.ConnectionClosed):
+            async for raw in self.ws:
+                if isinstance(raw, bytes):
+                    ch = int.from_bytes(raw[1:5], "big")
+                    self.keys.setdefault(ch, bytearray()).extend(raw[5:])
+                    continue
+                msg = json.loads(raw)
+                if msg.get("t") == "run":
+                    await self.ws.send(json.dumps({"t": "ran", "id": msg["id"],
+                                                   "code": 1, "out": "",
+                                                   "err": ""}))
+                elif msg.get("t") == "ping":
+                    await self.ws.send(json.dumps({"t": "pong"}))
+                self.got.append(msg)
+
+    def sent(self, kind: str) -> list[dict]:
+        return [m for m in self.got if m.get("t") == kind]
+
+    async def say(self, **message) -> None:
+        await self.ws.send(json.dumps(message))
+
+    async def prints(self, ch: int, data: bytes) -> None:
+        await self.ws.send(bytes([agents.OUTPUT]) + ch.to_bytes(4, "big") + data)
+
+    async def opened(self, core, machine_id: uuid.UUID):
+        """A new terminal on it, open; it and its channel."""
+        t = await core.terminals.open(machine_id, 80, 24)
+        known = {m["ch"] for m in self.sent("open")}
+        await _until(lambda: t.state == "open", what="the terminal open")
+        ch = next(m["ch"] for m in self.sent("open") if m["ch"] not in known)
+        return t, ch
+
+    async def gone(self) -> None:
+        await self.ws.close()
+        with contextlib.suppress(BaseException):
+            await self.task
+
+
+async def _fake_mac(core, **hello) -> tuple[FakeMac, uuid.UUID, str]:
+    """A computer joined by an agent spoken by hand: it, the machine, and
+    its key, to come back with."""
+    install_id, token = await _computer_install(core)
+    ws, reply = await _hello(_hub(core), token, **hello)
+    assert reply["t"] == "welcome", reply
+    await _answer_passport(ws)
+    status = await _until_status(core, install_id, "connected")
+    return FakeMac(ws), uuid.UUID(status["machine"]["id"]), token
+
+
+async def _back(core, token: str, **hello) -> FakeMac:
+    ws, reply = await _hello(_hub(core), token, **hello)
+    assert reply["t"] == "welcome", reply
+    return FakeMac(ws)
+
+
+CAME_BACK_WITHOUT = ("fake-mac came back without this terminal: its agent was "
+                     "restarted, or the computer was awake and offline for "
+                     "over an hour.")
+
+
+async def test_terminals_wait_for_their_agent(h):
+    """An agent that keeps its shells (web 2) goes away: its terminals stay
+    open, away, take no keys, and go on from the byte they had when it is
+    back; one closed meanwhile, and one nobody knows, are closed there."""
+    async with h.core() as core:
+        mac, machine_id, token = await _fake_mac(core, web=2, agent="0.12.0")
+        t, ch = await mac.opened(core, machine_id)
+        u, cu = await mac.opened(core, machine_id)
+        assert ch != cu and 0 < ch < 2 ** 31 and 0 < cu < 2 ** 31
+        await mac.prints(ch, b"one\r\n")
+        await _until(lambda: b"one" in _screen(t), what="output")
+        assert t.describe()["away"] is False and t.describe()["awaySince"] is None
+
+        await mac.gone()
+        await _until(lambda: t.away and u.away, what="both away")
+        seen = t.describe()
+        assert seen["state"] == "open" and seen["away"] is True, seen
+        assert abs(seen["awaySince"] / 1000 - time.time()) < 10, seen
+        assert not core.agents.online(machine_id)
+        assert "fake-mac is asleep or offline" in (t.run("echo x") or "")
+        try:
+            await t.dirs()
+            raise AssertionError("no side scripts while away")
+        except terminals.NotOpen as exc:
+            assert "asleep or offline" in str(exc)
+        t.write(b"typed while away")
+        t.resize(90, 30)
+        # Ended from the page while away: it no longer waits.
+        r = await request(core.page_port, "DELETE", f"/api/terminals/{u.id}")
+        assert r.status == 403 and u.away, "a change needs the page's header"
+        r = await request(core.page_port, "DELETE", f"/api/terminals/{u.id}",
+                          headers=CHANGE)
+        assert r.status == 200 and r.json()["state"] == "ended", r.text
+        assert u.state == "ended" and u.reason == "Closed." and not u.away
+        r = await request(core.page_port, "DELETE", f"/api/terminals/{u.id}",
+                          headers=CHANGE)
+        assert r.status == 200, "an ended one stays in memory a while"
+
+        # Back with both shells and one more nobody knows.
+        mac = await _back(core, token, web=2, kept=[ch, cu, 77])
+        await _until(lambda: not t.away, what="t back")
+        await _until(lambda: len(mac.sent("close")) == 2, what="the closes")
+        assert mac.sent("resume") == [{"t": "resume", "ch": ch, "from": 5}]
+        assert {"t": "size", "ch": ch, "cols": 90, "rows": 30} in mac.sent("size")
+        assert sorted(m["ch"] for m in mac.sent("close")) == sorted([cu, 77])
+        assert core.agents.online(machine_id)
+        await mac.prints(ch, b"two\r\n")
+        t.write(b"k")
+        await _until(lambda: b"two" in _screen(t), what="more output")
+        await _until(lambda: mac.keys.get(ch) == bytearray(b"k"),
+                     what="keys again, and none typed while away")
+        assert _screen(t) == b"one\r\ntwo\r\n", _screen(t)
+        assert "asleep" not in (t.run("echo x") or ""), "no longer away"
+
+        # Output the agent no longer kept: the count goes on after it. A
+        # frame with nothing in it is not the end, and an absurd gap is not
+        # believed.
+        await mac.say(t="gap", ch=ch, lost=1000)
+        await mac.ws.send(bytes([agents.OUTPUT]) + ch.to_bytes(4, "big"))
+        await mac.say(t="gap", ch=ch, lost=10 ** 4000)
+        await mac.prints(ch, b"three\r\n")
+        await _until(lambda: b"three" in _screen(t), what="after the gap")
+        assert t.state == "open" and _screen(t) == b"one\r\ntwo\r\nthree\r\n"
+        await mac.gone()
+        await _until(lambda: t.away, what="away again")
+        mac = await _back(core, token, web=2, kept=[ch])
+        await _until(lambda: mac.sent("resume"), what="the second resume")
+        assert mac.sent("resume")[0]["from"] == 5 + 5 + 1000 + 7
+
+        # It had it, then not: ended, saying so.
+        await mac.say(t="exit", ch=ch, code=None, gone=True)
+        await _until(lambda: t.state == "ended", what="gone")
+        assert t.reason == CAME_BACK_WITHOUT, t.reason
+        await mac.gone()
+
+
+async def test_terminals_that_wait_in_vain(h):
+    async with h.core() as core:
+        mac, machine_id, token = await _fake_mac(core, web=2)
+
+        # Away longer than terminals wait (made short here).
+        away_max, agents.AWAY_MAX = agents.AWAY_MAX, 0.5
+        try:
+            t, _ = await mac.opened(core, machine_id)
+            await mac.gone()
+            await _until(lambda: t.away, what="away")
+            await _until(lambda: t.state == "ended", 5, what="the wait's end")
+        finally:
+            agents.AWAY_MAX = away_max
+        assert t.reason == ("fake-mac did not come back within 12 hours: this "
+                            "terminal has ended."), t.reason
+        assert not t.away and core.agents.parked(machine_id) == set()
+
+        # Back, but restarted: its shells are gone.
+        mac = await _back(core, token, web=2)
+        t, ch = await mac.opened(core, machine_id)
+        await mac.gone()
+        await _until(lambda: t.away, what="away")
+        mac = await _back(core, token, web=2, kept=[])
+        await _until(lambda: t.state == "ended", what="the end")
+        assert t.reason == CAME_BACK_WITHOUT, t.reason
+        assert mac.sent("resume") == [] and mac.sent("close") == []
+
+        # Stopped on purpose: nothing waits, and the terminal says so.
+        t, _ = await mac.opened(core, machine_id)
+        await mac.say(t="bye")
+        await _until(lambda: t.state == "ended", what="bye")
+        assert t.reason == ("The agent on fake-mac was stopped: this terminal "
+                            "has ended."), t.reason
+        assert not t.away and core.agents.parked(machine_id) == set()
+        await mac.gone()
+
+        # Back as an agent that does not keep shells: what waited ends, and
+        # the shells it says it kept are not its to take back.
+        mac = await _back(core, token, web=2)
+        t, ch = await mac.opened(core, machine_id)
+        await mac.gone()
+        await _until(lambda: t.away, what="away")
+        mac = await _back(core, token, web=1, kept=[ch])
+        await _until(lambda: t.state == "ended", what="the end")
+        assert t.reason == CAME_BACK_WITHOUT, t.reason
+        assert mac.sent("resume") == [] and mac.sent("close") == []
+
+        # Its own terminals end with its connection, as before 0.0.7.
+        t, _ = await mac.opened(core, machine_id)
+        await mac.gone()
+        await _until(lambda: t.state == "ended", what="the end")
+        assert t.reason == ("The connection to fake-mac was lost: the agent "
+                            "disconnected"), t.reason
+        assert core.agents.parked(machine_id) == set()
+
+        # tTerm Web stopping ends whatever waits.
+        mac = await _back(core, token, web=2)
+        t, _ = await mac.opened(core, machine_id)
+        await mac.gone()
+        await _until(lambda: t.away, what="away")
+    assert t.state == "ended" and t.reason == "tTerm Web stopped.", t.reason
+
+
+async def test_channel_numbers_are_not_used_twice():
+    """Numbers outlive a connection: a new one is never one the agent kept
+    or one a terminal waits with."""
+    async def nothing(*_):
+        pass
+
+    link = agents.AgentLink(nothing, nothing, {"kept": [5], "web": 2})
+    registry = agents.Agents()
+    link.machine_id = uuid.uuid4()
+    link.agents = registry
+    registry.park(link.machine_id, [agents.AgentChannel(link, 6, 80, 24)])
+    assert registry.parked(link.machine_id) == {6}
+    picks = iter([5, 6, 5, 7])
+    real = agents.random.randrange
+    agents.random.randrange = lambda *_: next(picks)
+    try:
+        channel = await link.open("sh", 80, 24, True)
+    finally:
+        agents.random.randrange = real
+    assert channel.ch == 7
+    link.lost("done", wait=False)
+    registry.close_all("done")
+    assert registry.parked(link.machine_id) == set()
 
 
 async def _next(ws, kind: str) -> dict:
@@ -409,8 +807,23 @@ async def test_computers_removed_or_alike(h):
         names = sorted(r["name"] for r in await core.pool.fetch(
             "SELECT name FROM machines WHERE kind = 'computer'"))
         assert names == ["MacBook-Pro", "MacBook-Pro-2"], names
-        await a.close()
-        await b.close()
+        # The log names a computer that goes offline as tTerm Web does, not
+        # by what its agent calls itself.
+        said: list[str] = []
+        catch = logging.Handler(logging.INFO)
+        catch.emit = lambda record: said.append(record.getMessage())  # type: ignore[method-assign]
+        agents_log = logging.getLogger("tterm.agents")
+        level = agents_log.level
+        agents_log.setLevel(logging.INFO)
+        agents_log.addHandler(catch)
+        try:
+            await a.close()
+            await b.close()
+            await _until(lambda: "agent offline: MacBook-Pro-2" in said, 5,
+                         f"the second one offline, said {said}")
+        finally:
+            agents_log.removeHandler(catch)
+            agents_log.setLevel(level)
         # A removed computer's agent is told to stop.
         await core.pool.execute(
             "UPDATE machines SET removed_at = now() WHERE name = 'MacBook-Pro'")

@@ -1,13 +1,19 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AddMachine } from "./AddMachine";
 import {
   loadState, openTerminal, saveTheme, type MachineKind, type State,
-  type Theme,
+  type TerminalInfo, type Theme,
 } from "./api";
-import { ChevronRight } from "./icons";
+import { Finder, type FinderGroup, type FinderItem } from "./Finder";
+import {
+  ChevronRight, Close, Computer, Moon, Pin, Plus, Server, Sun,
+} from "./icons";
 import { Machines } from "./Machines";
 import { Sidebar } from "./Sidebar";
-import { TerminalView } from "./TerminalView";
+import { socket } from "./socket";
+import { TabBar, type Dot, type TabView } from "./TabBar";
+import { rememberedTabs, rememberTabs, shortcut, TABS_MAX } from "./tabs";
+import { TerminalView, type TabStatus } from "./TerminalView";
 import {
   applyTheme, onSystemThemeChange, rememberedPin, rememberPin, shown,
   type Shown,
@@ -35,6 +41,28 @@ function guessSize(): { cols: number; rows: number } {
   };
 }
 
+function withTab(tabs: string[], id: string): string[] {
+  if (tabs.includes(id)) return tabs;
+  // Past the most there may be, the oldest tab goes; its terminal stays.
+  return [...tabs, id].slice(-TABS_MAX);
+}
+
+/** A tab's dot: what the page has heard of it, or else what the list says. */
+function dotOf(status: TabStatus | undefined, known: TerminalInfo | undefined,
+  missing: boolean): Dot {
+  const state = status?.state ?? known?.state ?? (missing ? "gone" : "connecting");
+  if (state === "ended" || state === "gone") return "ended";
+  if (status ? status.away : known?.away) return "away";
+  if (state === "connecting" || status?.running) return "busy";
+  return "open";
+}
+
+function sameStatus(a: TabStatus | undefined, b: TabStatus): boolean {
+  return !!a && a.label === b.label && a.machine === b.machine &&
+    a.where === b.where && a.state === b.state && a.away === b.away &&
+    a.running === b.running;
+}
+
 export function App() {
   const [state, setState] = useState<State | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -47,9 +75,15 @@ export function App() {
   const [adding, setAdding] =
     useState<{ projectId: string; kind: MachineKind } | null>(null);
   const [path, setPath] = useState(location.pathname);
+  const [tabs, setTabs] = useState<string[]>(rememberedTabs);
+  const [statuses, setStatuses] = useState<Record<string, TabStatus>>({});
+  const [picking, setPicking] = useState(false);
+  const [palette, setPalette] = useState(false);
+  const [online, setOnline] = useState(true);
   const openTimer = useRef<number | undefined>(undefined);
   const closeTimer = useRef<number | undefined>(undefined);
   const toastTimer = useRef<number | undefined>(undefined);
+  const pruned = useRef(false);
 
   const load = useCallback(() => {
     setProblem(null);
@@ -57,6 +91,13 @@ export function App() {
       .then((loaded) => {
         setState(loaded);
         setTheme(loaded.me.theme);
+        if (!pruned.current) {
+          // Tabs left from before: those of terminals still running stay.
+          pruned.current = true;
+          const live = new Set(loaded.terminals.map((t) => t.id));
+          const here = TERMINAL_PATH.exec(location.pathname)?.[1];
+          setTabs((ts) => ts.filter((id) => live.has(id) || id === here));
+        }
       })
       .catch(() =>
         setProblem("tTerm Web is not answering. Is python -m tterm.dev " +
@@ -87,9 +128,13 @@ export function App() {
   }, [computers, refresh]);
 
   // Addresses: back and forward move between the machines page and
-  // terminals the way they would between pages.
-  const navigate = useCallback((to: string) => {
-    if (to !== location.pathname) history.pushState(null, "", to);
+  // terminals the way they would between pages. In place, the address
+  // takes the current one's step in the history instead of adding one.
+  const navigate = useCallback((to: string, inPlace = false) => {
+    if (to !== location.pathname) {
+      if (inPlace) history.replaceState(null, "", to);
+      else history.pushState(null, "", to);
+    }
     setPath(to);
   }, []);
   useEffect(() => {
@@ -97,6 +142,22 @@ export function App() {
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
+
+  // A terminal opened by its address gets a tab; the tabs are remembered.
+  const terminalId = TERMINAL_PATH.exec(path)?.[1] ?? null;
+  useEffect(() => {
+    if (terminalId) setTabs((ts) => withTab(ts, terminalId));
+  }, [terminalId]);
+  useEffect(() => rememberTabs(tabs), [tabs]);
+  const shownTabs = terminalId ? withTab(tabs, terminalId) : tabs;
+
+  const onStatus = useCallback((id: string, status: TabStatus) => {
+    setStatuses((all) => (sameStatus(all[id], status) ? all
+      : { ...all, [id]: status }));
+  }, []);
+
+  // The page's connection to tTerm Web.
+  useEffect(() => socket.onConnection(setOnline), []);
 
   // The theme: apply the choice, and follow the system while it says so.
   useEffect(() => {
@@ -116,22 +177,51 @@ export function App() {
     toastTimer.current = window.setTimeout(() => setToast(null), TOAST_MS);
   }, []);
 
-  const startTerminal = useCallback((machineId: string) => {
+  /** A new terminal on the machine, in a new tab. Opened from an ended
+   * terminal (`instead`), it takes that one's tab and its address: Back
+   * does not bring the ended one back. */
+  const startTerminal = useCallback((machineId: string, instead?: string) => {
     const { cols, rows } = guessSize();
     openTerminal(machineId, cols, rows)
       .then((terminal) => {
-        navigate(`/t/${terminal.id}`);
+        setStatuses((all) => {
+          const next = { ...all, [terminal.id]: {
+            label: terminal.label, machine: terminal.machine, where: "",
+            state: terminal.state, away: false, running: false } };
+          if (instead) delete next[instead];
+          return next;
+        });
+        setTabs((ts) => (instead && ts.includes(instead)
+          ? ts.map((id) => (id === instead ? terminal.id : id))
+          : withTab(ts, terminal.id)));
+        navigate(`/t/${terminal.id}`,
+          !!instead && location.pathname === `/t/${instead}`);
         refresh();
       })
       .catch((e: Error) => notYet(`Could not open a terminal: ${e.message}`));
   }, [navigate, refresh, notYet]);
 
-  const toggleTheme = () => {
+  const closeTab = useCallback((id: string) => {
+    const at = shownTabs.indexOf(id);
+    const rest = shownTabs.filter((x) => x !== id);
+    setTabs(rest);
+    setStatuses((all) => {
+      const others = { ...all };
+      delete others[id];
+      return others;
+    });
+    if (id === terminalId) {
+      const next = rest[at] ?? rest[at - 1];
+      navigate(next ? `/t/${next}` : "/");
+    }
+  }, [shownTabs, terminalId, navigate]);
+
+  const toggleTheme = useCallback(() => {
     const next: Theme = shown(theme) === "light" ? "dark" : "light";
     setTheme(next);
     saveTheme(next).catch(() =>
       notYet("Could not save the theme: tTerm Web did not answer."));
-  };
+  }, [theme, notYet]);
 
   // The sidebar.
   const cancelTimers = () => {
@@ -170,10 +260,46 @@ export function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [pinned, adding]);
 
+  // The palette: Cmd+K on a Mac, Ctrl+Shift+K elsewhere, before the
+  // terminal hears it.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (!shortcut(event, "k")) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setPicking(false);
+      setPalette((was) => !was);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
+
   useEffect(() => () => {
     cancelTimers();
     window.clearTimeout(toastTimer.current);
   }, []);
+
+  // Each tab as the bar shows it.
+  const live = useMemo(() => state?.terminals ?? [], [state]);
+  const tabViews: TabView[] = shownTabs.map((id) => {
+    const status = statuses[id];
+    const known = live.find((t) => t.id === id);
+    const label = status?.label ?? known?.label ?? "Terminal";
+    const machine = status?.machine || known?.machine || "its machine";
+    const dot = dotOf(status, known, !!state && !known && !status);
+    const where = status?.where ? ` · ${status.where}` : "";
+    const title = dot === "away"
+      ? `${label}: ${machine} is asleep or offline, the terminal waits for it`
+      : dot === "ended" ? `${label}: ended`
+      : dot === "busy" && status?.running ? `${label}${where}: a command is running`
+      : `${label}${where}`;
+    return { id, label, dot, title };
+  });
+  const current = tabViews.find((t) => t.id === terminalId);
+  const title = current ? `${current.label} · tTerm` : "tTerm";
+  useEffect(() => {
+    document.title = title;
+  }, [title]);
 
   if (problem) {
     return (
@@ -195,16 +321,16 @@ export function App() {
 
   const sidebarShown = open || pinned;
   const personal = state.projects.find((p) => p.role === "owner");
+  const canAddTo = state.projects.find((p) =>
+    p.role === "owner" || p.role === "admin");
   const anyMachine = state.projects.some((p) => p.machines.length > 0);
   const startAdding = (projectId: string, kind: MachineKind = "server") => {
     if (!pinned) setOpen(false);
     setAdding({ projectId, kind });
   };
-  const leave = () => {
-    if (!pinned) setOpen(false);
-    navigate("/");
-  };
-  const terminalId = TERMINAL_PATH.exec(path)?.[1];
+  const goTo = (id: string) => navigate(`/t/${id}`);
+  const dotFor = (t: TerminalInfo): Dot =>
+    dotOf(statuses[t.id], t, false);
 
   const sidebarButton = !pinned && (
     <button type="button" className="icon-button"
@@ -216,27 +342,141 @@ export function App() {
     </button>
   );
 
+  // What "+" and the palette offer: a new terminal on any machine.
+  const machineGroups = (): FinderGroup[] => state.projects
+    .filter((p) => p.machines.length > 0)
+    .map((p) => ({
+      title: `${p.code} · ${p.name}`,
+      items: p.machines.map((m): FinderItem => {
+        const offline = m.kind === "computer" && !m.online;
+        return {
+          key: `m-${m.id}`,
+          label: `${p.code}/${m.name}`,
+          hint: offline ? "offline" : m.os ?? m.host ?? undefined,
+          icon: m.kind === "server" ? <Server size={15} /> : <Computer size={15} />,
+          muted: offline,
+          words: [m.name, m.host, m.os, m.kind].filter(Boolean).join(" "),
+          run: () => (offline
+            ? notYet(`${m.name} is offline: start its agent first.`)
+            : startTerminal(m.id)),
+        };
+      }),
+    }));
+  const addItem: FinderItem[] = canAddTo ? [{
+    key: "add-machine",
+    label: "Add a machine",
+    hint: "a server or a computer",
+    icon: <Plus size={15} />,
+    words: "new server computer connect",
+    run: () => startAdding(canAddTo.id),
+  }] : [];
+
+  const paletteGroups = (): FinderGroup[] => {
+    const listed = new Set(shownTabs);
+    const terminals: FinderItem[] = [
+      ...tabViews.map((t): FinderItem => ({
+        key: `t-${t.id}`,
+        label: t.label,
+        hint: t.dot === "away" ? "waits for its computer"
+          : t.dot === "ended" ? "ended" : t.id === terminalId ? "this tab" : "tab",
+        icon: <span className={`dot ${t.dot}`} aria-hidden="true" />,
+        words: "terminal tab go",
+        run: () => goTo(t.id),
+      })),
+      ...live.filter((t) => !listed.has(t.id)).map((t): FinderItem => ({
+        key: `t-${t.id}`,
+        label: t.label,
+        hint: t.away ? "waits for its computer" : "running, no tab",
+        icon: <span className={`dot ${dotFor(t)}`} aria-hidden="true" />,
+        words: "terminal go",
+        run: () => goTo(t.id),
+      })),
+    ];
+    const actions: FinderItem[] = [
+      ...addItem,
+      {
+        key: "machines",
+        label: "All machines",
+        icon: <Server size={15} />,
+        words: "machines home overview",
+        run: () => navigate("/"),
+      },
+      ...(terminalId ? [{
+        key: "close-tab",
+        label: "Close this tab",
+        hint: "the terminal keeps running",
+        icon: <Close size={15} />,
+        words: "tab close",
+        run: () => closeTab(terminalId),
+      }] : []),
+      {
+        key: "theme",
+        label: shownTheme === "light" ? "Switch to the dark theme"
+          : "Switch to the light theme",
+        icon: shownTheme === "light" ? <Moon size={15} /> : <Sun size={15} />,
+        words: "theme dark light colours colors",
+        run: toggleTheme,
+      },
+      {
+        key: "pin",
+        label: pinned ? "Let the sidebar slide away" : "Keep the sidebar open",
+        icon: <Pin size={15} />,
+        words: "sidebar panel pin",
+        run: togglePin,
+      },
+    ];
+    return [
+      { title: "Terminals", items: terminals },
+      { title: "New terminal", items: machineGroups().flatMap((g) => g.items) },
+      { title: "Actions", items: actions },
+    ];
+  };
+
   return (
     <div className={pinned ? "app pinned" : "app"}>
-      {terminalId ? (
-        <TerminalView key={terminalId} terminalId={terminalId}
-          shownTheme={shownTheme} sidebarButton={sidebarButton}
-          onLeave={leave} onOpenNew={startTerminal} onChanged={refresh}
-          notify={notYet} />
-      ) : (
-        <>
-          <header className="topbar">{sidebarButton}</header>
-          {anyMachine ? (
-            <Machines projects={state.projects} terminals={state.terminals}
-              onAdd={(projectId) => startAdding(projectId)}
-              onOpenTerminal={startTerminal}
-              onGoTo={(id) => navigate(`/t/${id}`)} />
-          ) : (
-            <Welcome me={state.me} personal={personal}
-              onAdd={(kind) => personal && startAdding(personal.id, kind)} />
-          )}
-        </>
-      )}
+      <TabBar sidebarButton={sidebarButton} tabs={tabViews}
+        current={terminalId} onSelect={goTo} onClose={closeTab}
+        picking={picking}
+        onPlus={() => {
+          setPalette(false);
+          setPicking((was) => !was);
+        }}
+        renderPicker={(around) => (
+          <Finder className="machine-picker" label="New terminal"
+            placeholder="A machine in any project" around={around}
+            groups={[...machineGroups(),
+              ...(addItem.length ? [{ title: "More", items: addItem }] : [])]}
+            onClose={() => setPicking(false)} />
+        )}
+        onJump={() => {
+          setPicking(false);
+          setPalette(true);
+        }} />
+
+      <div className="stage">
+        {shownTabs.map((id) => (
+          <TerminalView key={id} terminalId={id} active={id === terminalId}
+            shownTheme={shownTheme} onStatus={onStatus} onCloseTab={closeTab}
+            onOpenNew={startTerminal} onChanged={refresh} notify={notYet} />
+        ))}
+        {!terminalId && (
+          <div className="page-scroll">
+            {anyMachine ? (
+              <Machines projects={state.projects} terminals={state.terminals}
+                onAdd={(projectId) => startAdding(projectId)}
+                onOpenTerminal={startTerminal} onGoTo={goTo} />
+            ) : (
+              <Welcome me={state.me} personal={personal}
+                onAdd={(kind) => personal && startAdding(personal.id, kind)} />
+            )}
+          </div>
+        )}
+        {!online && shownTabs.length > 0 && (
+          <div className="lost-strip" role="status">
+            Connection lost. Reconnecting; your terminals keep running.
+          </div>
+        )}
+      </div>
 
       {sidebarShown && (
         <Sidebar
@@ -251,17 +491,30 @@ export function App() {
           onMouseLeave={hoverAway}
           onAddMachine={(projectId) => startAdding(projectId)}
           terminals={state.terminals}
-          currentTerminal={terminalId}
+          currentTerminal={terminalId ?? undefined}
           onOpenTerminal={(machineId) => {
             if (!pinned) setOpen(false);
             startTerminal(machineId);
           }}
           onGoTo={(id) => {
             if (!pinned) setOpen(false);
-            navigate(`/t/${id}`);
+            goTo(id);
           }}
+          onHome={() => {
+            if (!pinned) setOpen(false);
+            navigate("/");
+          }}
+          dotFor={dotFor}
           notYet={notYet}
         />
+      )}
+
+      {palette && (
+        <div className="palette-backdrop">
+          <Finder className="palette" label="Jump to"
+            placeholder="A terminal, a machine or something to do"
+            groups={paletteGroups()} onClose={() => setPalette(false)} />
+        </div>
       )}
 
       {adding && (

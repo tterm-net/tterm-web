@@ -55,9 +55,30 @@ code {
 
 /* ------------------------------------------------------------------ shell */
 
+/* The window, whole: the line of tabs on top, and under it the stage, where
+ * every open terminal is laid, the one in front over the others, and the
+ * machines page over them all when it is shown. Only what is inside scrolls. */
 .app {
   position: relative;
-  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--ground);
+}
+
+.stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.page-scroll {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   background: var(--ground);
@@ -329,11 +350,21 @@ code {
   border-bottom: 1px solid var(--raised);
 }
 
-.sidebar-head .brand {
+.brand-button {
   flex: 1 1 auto;
+  min-width: 0;
   height: 44px;
   display: flex;
   align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.sidebar-head .brand {
   padding-left: 4px;
   font: 800 15px var(--font-ui);
   letter-spacing: -0.01em;
@@ -1121,32 +1152,73 @@ code {
 
 /* --------------------------------------------------------------- terminal */
 
-/* One terminal over the whole window: the bar on top, the terminal below,
- * nothing scrolls but the terminal itself. */
+/* A terminal under its tab, laid over the stage. Those of the other tabs
+ * are there too, hidden but measured as if shown: a program in them is not
+ * told of a new size when its tab comes to the front. */
 .terminal-view {
-  height: 100vh;
-  height: 100dvh;
+  position: absolute;
+  inset: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
 
-.terminal-bar {
-  flex: none;
-  gap: 6px;
+.terminal-view.behind {
+  visibility: hidden;
 }
 
+/* --------------------------------------------------------------- the tabs */
+
+.tab-bar {
+  flex: none;
+  flex-wrap: wrap;
+}
+
+.tabs {
+  flex: 1 1 360px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+
+/* As in the mockup: no box, the one in front underlined in amber. */
 .tab {
   min-width: 0;
-  max-width: 340px;
-  height: 30px;
+  max-width: 320px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  padding-top: 2px;
+  border-bottom: 2px solid transparent;
+}
+
+.tab.current {
+  border-bottom-color: var(--amber);
+}
+
+.tab-main {
+  min-width: 0;
+  height: 100%;
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 0 4px 0 12px;
-  border-radius: 8px;
-  background: var(--surface);
-  font: 600 13px var(--font-ui);
+  border: 0;
+  background: transparent;
+  color: var(--dim);
+  font: 500 13px var(--font-ui);
+  cursor: pointer;
+}
+
+.tab-main:hover,
+.tab.current .tab-main {
+  color: var(--ink);
+}
+
+.tab.current .tab-main {
+  font-weight: 600;
 }
 
 .tab-label {
@@ -1160,6 +1232,7 @@ code {
   flex: none;
   width: 22px;
   height: 22px;
+  margin-right: 4px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1176,8 +1249,50 @@ code {
   background: var(--raised);
 }
 
+.plus-wrap {
+  position: relative;
+}
+
+.bar-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-left: auto;
+}
+
+.jump {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--dim);
+  font: 500 12px var(--font-ui);
+  cursor: pointer;
+}
+
+.jump:hover {
+  color: var(--ink);
+}
+
+.jump kbd {
+  font: 500 11px var(--font-mono);
+  color: var(--faint);
+}
+
+@media (max-width: 720px) {
+  .jump-text,
+  .jump kbd {
+    display: none;
+  }
+}
+
 /* Machine and terminal state as a dot: green on line, a turning ring while
- * a command runs or the terminal connects, a hollow ring once it ended. */
+ * a command runs or the terminal connects, a hollow ring while the computer
+ * is asleep or offline, grey once it ended. */
 .dot {
   flex: none;
   width: 8px;
@@ -1197,16 +1312,154 @@ code {
   animation: ttspin 0.9s linear infinite;
 }
 
-.dot.ended {
-  border: 2px solid var(--faint);
+.dot.away {
+  width: 9px;
+  height: 9px;
+  border: 2px solid var(--dim);
 }
 
+.dot.ended {
+  background: var(--sep);
+}
+
+/* Laid over the top of the stage, so that nothing under it changes size:
+ * every terminal would be told of a new one twice, as it came and went. */
 .lost-strip {
-  flex: none;
+  position: absolute;
+  z-index: 15;
+  top: 0;
+  left: 0;
+  right: 0;
   padding: 7px 16px;
   background: var(--amber-tint);
+  backdrop-filter: blur(6px);
+  border-bottom: 1px solid var(--amber-ring);
   color: var(--ink);
   font-size: 13px;
+}
+
+/* ------------------------------------------- "+" and the palette, Cmd+K */
+
+.finder {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.finder-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--line);
+  color: var(--faint);
+}
+
+.finder-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--ink);
+  font: 14px var(--font-ui);
+}
+
+.finder ul {
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  max-height: min(420px, 60vh);
+  overflow-y: auto;
+}
+
+.finder-group {
+  padding: 10px 10px 4px;
+  color: var(--faint);
+  font: 700 11px var(--font-ui);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.finder-group:first-child {
+  padding-top: 4px;
+}
+
+.finder li[role="option"] {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  color: var(--ink);
+  font: 500 13px var(--font-ui);
+  cursor: pointer;
+}
+
+.finder li[aria-selected="true"] {
+  background: var(--raised);
+}
+
+.finder li svg {
+  flex: none;
+  color: var(--faint);
+}
+
+.finder li.muted {
+  color: var(--faint);
+}
+
+.finder-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.finder-hint {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.finder-empty {
+  padding: 10px;
+  color: var(--faint);
+  font-size: 13px;
+}
+
+.machine-picker {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  left: 0;
+  width: 380px;
+  max-width: calc(100vw - 24px);
+}
+
+.palette-backdrop {
+  position: fixed;
+  z-index: 35;
+  inset: 0;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 12vh 16px 16px;
+  background: var(--scrim);
+}
+
+.palette {
+  width: 580px;
+  max-width: 100%;
 }
 
 /* Everything under the bar. Its notes, the full-screen program and the
@@ -1278,6 +1531,43 @@ code {
   gap: 10px;
   color: var(--dim);
   font-size: 13px;
+}
+
+/* A computer asleep or offline: the terminal waits for it. Laid over the
+ * top of the terminal, which keeps its size. */
+.away-note {
+  position: absolute;
+  z-index: 2;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(760px, calc(100% - 32px));
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.away-text {
+  flex: 1 1 260px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.away-text strong {
+  font: 700 14px var(--font-ui);
+}
+
+.away-text span {
+  font-size: 13px;
+  color: var(--dim);
 }
 
 .terminal-ended {

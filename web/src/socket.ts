@@ -52,6 +52,9 @@ export interface ChannelHandlers {
 export interface Channel {
   /** This page is the one typing into the terminal now. */
   focus: () => void;
+  /** Its tab went behind another: coming back from a dropped connection,
+   * it does not claim the terminal's keys from wherever it is used now. */
+  unfocus: () => void;
   input: (data: string) => void;
   inputBinary: (data: string) => void;
   /** A whole command, typed at the prompt by the core. */
@@ -108,6 +111,9 @@ class Socket {
       focus: () => {
         open.focused = true;
         this.json({ op: "focus", ch });
+      },
+      unfocus: () => {
+        open.focused = false;
       },
       input: (data) => this.sendInput(ch, encoder.encode(data)),
       inputBinary: (data) => {

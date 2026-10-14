@@ -189,6 +189,19 @@ def create_page_app(pool: asyncpg.Pool, owner: Person, dist: Path,
             return _json({"error": "no such terminal"}, 404)
         return _json(ended)
 
+    @app.delete("/api/terminals/{terminal_id}")
+    async def end_terminal(terminal_id: uuid.UUID) -> Response:
+        """Ends a terminal: its shell gets a hangup, as when a window
+        closes. One whose computer is away stops waiting for it, and the
+        shell there ends when the computer is back."""
+        if terminals is None:
+            return _json({"error": "terminals are not running"}, 503)
+        terminal = terminals.get(terminal_id)
+        if terminal is None:
+            return _json({"error": "no such terminal"}, 404)
+        await terminal.close()
+        return _json(terminal.describe())
+
     @app.get("/api/terminals/{terminal_id}/blocks")
     async def terminal_blocks(terminal_id: uuid.UUID, before: int | None = None,
                               limit: int = 60) -> Response:
