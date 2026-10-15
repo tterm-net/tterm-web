@@ -1,8 +1,11 @@
 """Connecting servers: tokens, the installer, registration over SSH."""
 import asyncio
 import json
+import os
 import re
 import socket
+import subprocess
+import tempfile
 import uuid
 from types import SimpleNamespace
 
@@ -34,6 +37,37 @@ def test_tokens_and_commands():
     # The key in the environment, out of the list of processes.
     assert machines.agent_command("https://c.test", key) == \
         f"TTERM_TOKEN={key} python3 agent.py --hub wss://c.test/agent"
+    # From 0.0.8 a computer's command is an installer, run as its person.
+    assert machines.computer_command("https://c.test", key) == \
+        f"curl -fsSL https://c.test/c/{key} | sh"
+    assert machines.KEY_RE.match(key) and not machines.KEY_RE.match(key[:31])
+
+
+def test_a_removed_server_gets_its_line_back():
+    """The command shown after a server is removed takes out tTerm Web's
+    line in tterm's authorized_keys and nothing else: not the bot's, not a
+    line of another tTerm Web."""
+    command = machines.server_cleanup("ca-20261012-ffcd")
+    assert command == ("sudo sed -i '/ tterm-web ca-20261012-ffcd$/d' "
+                       "~tterm/.ssh/authorized_keys"), command
+    assert machines.server_cleanup(None) is None
+    assert machines.server_cleanup("ca'; reboot; '") is None, \
+        "nothing odd goes into a command a person runs"
+    lines = ["cert-authority ssh-ed25519 AAAAbot tterm-bot",
+             "cert-authority ssh-ed25519 AAAAweb tterm-web ca-20261012-ffcd",
+             "cert-authority ssh-ed25519 AAAAnew tterm-web ca-20261012-ffcd2",
+             "ssh-ed25519 AAAAperson denis@mac"]
+    with tempfile.NamedTemporaryFile("w", suffix=".keys", delete=False) as f:
+        f.write("\n".join(lines) + "\n")
+    try:
+        # The script of the command, without -i: BSD sed (a Mac running the
+        # checks) reads -i differently; the servers have GNU sed.
+        script = command.split("'")[1]
+        out = subprocess.run(["sed", script, f.name], capture_output=True,
+                             text=True, check=True).stdout
+    finally:
+        os.unlink(f.name)
+    assert out.splitlines() == [lines[0], lines[2], lines[3]], out
 
 
 def test_machine_names():
@@ -99,6 +133,12 @@ def test_passport_is_read_from_the_script_output():
     assert pp["sudo"] is True and pp["systemd"] is True
     assert pp["shells"] == ["bash"] and pp["package_manager"] == "apt-get"
     assert pp["commands"] == ["apt", "git", "ls", "systemctl"]
+    assert pp["sudo_password"] is False
+    # sudo that asks for a password (a person's own Mac) is not no sudo.
+    asks = passport.parse(PASSPORT_OUTPUT.replace("sudo=yes", "sudo=password"))
+    assert asks["sudo"] is False and asks["sudo_password"] is True
+    none = passport.parse(PASSPORT_OUTPUT.replace("sudo=yes", "sudo=no"))
+    assert none["sudo"] is False and none["sudo_password"] is False
     summary = passport.summary(pp)
     assert "commands" not in summary and summary["commands_count"] == 4
     assert passport.parse("") == {"shells": [], "commands": []}
@@ -308,12 +348,30 @@ async def test_install_api_guards(h):
                                            "kind": "computer"}).encode())
         assert r.status == 201, r.text
         command = r.json()["command"]
-        m = re.fullmatch(r"TTERM_TOKEN=([A-Za-z0-9_-]{32}) python3 agent\.py "
-                         r"--hub wss://connect\.test/agent", command)
-        assert m, f"a computer starts its agent, with a long key: {command}"
-        r = await request(core.connect_port, "GET", f"/s/{m.group(1)}")
+        m = re.fullmatch(r"curl -fsSL https://connect\.test/c/"
+                         r"([A-Za-z0-9_-]{32}) \| sh", command)
+        assert m, f"a computer gets the installer, with a long token: {command}"
+        token = m.group(1)
+        assert r.json()["byHand"] == (f"TTERM_TOKEN={token} python3 agent.py "
+                                      "--hub wss://connect.test/agent"), r.json()
+        # The installer, with the token and where the agent connects.
+        r = await request(core.connect_port, "GET", f"/c/{token}")
+        assert r.status == 200 and "{{" not in r.text, r.text[:300]
+        assert f'TOKEN="{token}"' in r.text
+        assert 'HUB="${TTERM_HUB:-wss://connect.test/agent}"' in r.text
+        assert machines.AGENT_SOURCE in r.text
+        r = await request(core.connect_port, "GET", f"/s/{token}")
         assert "exit 1" in r.text and "for a computer" in r.text, \
             "a computer's token does not install a server"
+        _, server = await _install(core)
+        r = await request(core.connect_port, "GET", f"/c/{server}")
+        assert "exit 1" in r.text and "for a server" in r.text, \
+            "nor a server's an agent"
+        r = await request(core.connect_port, "GET", "/c/no-such-token-here")
+        assert "exit 1" in r.text and "not valid" in r.text, r.text
+        r = await request(core.connect_port, "GET", "/c/$(reboot)")
+        assert "exit 1" in r.text and "not valid" in r.text and \
+            "reboot" not in r.text, r.text
 
 
 async def test_cas_are_remembered_and_guarded(h):
@@ -340,14 +398,26 @@ def h_free_port() -> int:
 
 
 async def test_installer_script_shell_syntax_is_valid(h):
-    """sh -n reads the whole installer without running it."""
+    """sh -n reads the whole installer without running it, the computer's
+    one too."""
     ca = asyncssh.generate_private_key("ssh-ed25519")
     script = machines.render_installer(
         token="abcDEF123_-x", ca_key=ca.export_public_key().decode(),
         ca_id="ca-x", connect_url="https://connect.test")
-    proc = await asyncio.create_subprocess_exec(
-        "sh", "-n", stdin=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE)
-    _, err = await proc.communicate(script.encode())
-    assert proc.returncode == 0, err.decode()
+    computer = machines.render_computer_installer(
+        token="abcDEF123_-xabcDEF123_-xabcDEF12", connect_url="https://c.test")
+    for text in (script, computer):
+        proc = await asyncio.create_subprocess_exec(
+            "sh", "-n", stdin=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE)
+        _, err = await proc.communicate(text.encode())
+        assert proc.returncode == 0, err.decode()
     assert re.search(r"usermod -p '\*'", script), "no locked account"
+    assert "{{" not in computer and "set -eu" in computer
+    try:
+        machines.render_computer_installer(token="$(reboot)abcdefghijklmn",
+                                           connect_url="https://x")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("a token that is not a token was put in a script")

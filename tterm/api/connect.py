@@ -6,6 +6,7 @@ API is here: a person's browser has no business on this address.
 
     GET  /s/TOKEN   the installer for a server, with the token inside
     POST /enroll    the installer reports back; the core checks over SSH
+    GET  /c/TOKEN   the installer for a computer's agent (from 0.0.8)
     WS   /agent     a computer's agent dials in and stays (from 0.0.6)
     GET  /ca.pub    the active CA's public key, to compare by eye
     GET  /health
@@ -98,6 +99,19 @@ def create_connect_app(pool: asyncpg.Pool, signer: SignerClient,
         script = machines.render_installer(
             token=token, ca_key=ca["public_key"], ca_id=ca["id"],
             connect_url=connect_url)
+        return PlainTextResponse(script, headers=SCRIPT_HEADERS)
+
+    @app.get("/c/{token}")
+    async def computer_installer(token: str) -> Response:
+        """The agent's installer, for a person to run on their computer.
+        The token in it lets the computer join once; it does not become
+        its key."""
+        problem = await machines.check_token(pool, token, kind="computer")
+        if problem:
+            return PlainTextResponse(machines.refusal_script(problem),
+                                     headers=SCRIPT_HEADERS)
+        script = machines.render_computer_installer(token=token,
+                                                    connect_url=connect_url)
         return PlainTextResponse(script, headers=SCRIPT_HEADERS)
 
     @app.post("/enroll")

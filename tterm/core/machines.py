@@ -14,7 +14,10 @@ How a server joins:
 
 A computer joins through its agent instead (from 0.0.6): the command starts
 the agent with a token, and the agent's connection does the rest, see
-agents.py. The token then stays the computer's key, so it is longer.
+agents.py. Started by hand, the token then stays the computer's key, so it
+is longer. From 0.0.8 the command is an installer, `curl …/c/TOKEN | sh`: it
+puts the agent in ~/.tterm-web with autostart and makes the computer a key
+of its own, which never leaves it; the token only lets it join, once.
 """
 from __future__ import annotations
 
@@ -41,8 +44,19 @@ INSTALL_MINUTES = 10
 #: Twelve characters for a server's command, thirty-two for a computer's,
 #: whose token stays its key.
 TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{12,64}$")
+#: A key a computer made for itself (from tTerm Web's installer): as long as
+#: the ones tTerm Web hands out, never shorter.
+KEY_RE = re.compile(r"^[A-Za-z0-9_-]{32,64}$")
+#: A CA's name as the signer makes them, ca-20261012-ffcd: safe to put in a
+#: command for a person to run.
+CA_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 LOGIN = "tterm"
 TEMPLATE = Path(__file__).resolve().parent.parent / "templates" / "install.sh"
+COMPUTER_TEMPLATE = (Path(__file__).resolve().parent.parent / "templates"
+                     / "install_computer.sh")
+#: Where a computer's installer takes the agent from, unless TTERM_SRC says
+#: otherwise when it runs: the released one, as the bot's installer does.
+AGENT_SOURCE = "https://raw.githubusercontent.com/tterm-net/tterm-agent/main/agent.py"
 #: Everything the core may spend on checking a fresh server.
 CHECK_TIMEOUT = 40
 
@@ -78,15 +92,39 @@ def hub_url(connect_url: str) -> str:
 
 
 def agent_command(connect_url: str, token: str) -> str:
-    """What a computer runs, in the folder of tterm-agent 0.11.0 or newer.
-    Started by hand for now: an installer that keeps it running comes
-    later, and on a computer connected to the Telegram bot it would take
-    the bot's agent's place.
+    """The agent started by hand, in a copy of tterm-agent 0.11.0 or newer:
+    for trying a new agent before it is released. The token then stays the
+    computer's key.
 
     The token goes in the environment: on the command line any user of the
-    computer could read it in the list of processes, and it stays the
-    computer's key."""
+    computer could read it in the list of processes."""
     return f"TTERM_TOKEN={token} python3 agent.py --hub {hub_url(connect_url)}"
+
+
+def computer_command(connect_url: str, token: str) -> str:
+    """What a computer runs, as its person, not root: the installer puts the
+    agent in ~/.tterm-web with autostart, next to the bot's agent in
+    ~/.tterm if there is one and without touching it."""
+    return f"curl -fsSL {connect_url}/c/{token} | sh"
+
+
+def render_computer_installer(*, token: str, connect_url: str) -> str:
+    if not TOKEN_RE.match(token):
+        raise ValueError("bad token")
+    return (COMPUTER_TEMPLATE.read_text(encoding="utf-8")
+            .replace("{{HUB}}", hub_url(connect_url))
+            .replace("{{SRC}}", AGENT_SOURCE)
+            .replace("{{TOKEN}}", token))
+
+
+def server_cleanup(ca_id: str | None) -> str | None:
+    """The command that takes tTerm Web's access back on a server that was
+    removed: the line of its CA in tterm's authorized_keys. The user and
+    the sudo rule stay, the bot may use them; the installer's header says
+    how to remove those too."""
+    if not ca_id or not CA_ID_RE.match(ca_id):
+        return None
+    return f"sudo sed -i '/ tterm-web {ca_id}$/d' ~{LOGIN}/.ssh/authorized_keys"
 
 
 def machine_name(hostname: str, default: str = "server") -> str:
@@ -135,6 +173,8 @@ class Install:
     token: str
     command: str
     expires_at: dt.datetime
+    #: For a computer: the agent started by hand with the same token.
+    by_hand: str | None = None
 
 
 async def create_install(pool: asyncpg.Pool, *, project_id: uuid.UUID,
@@ -157,9 +197,11 @@ async def create_install(pool: asyncpg.Pool, *, project_id: uuid.UUID,
             project_id, kind, token_hash(token), user_id, INSTALL_MINUTES)
         await accounts.journal(conn, "install.command", project_id=project_id,
                                user_id=user_id, details={"kind": kind})
-    shown = (agent_command(connect_url, token) if kind == "computer"
-             else command(connect_url, token))
-    return Install(row["id"], token, shown, row["expires_at"])
+    if kind == "computer":
+        return Install(row["id"], token, computer_command(connect_url, token),
+                       row["expires_at"], agent_command(connect_url, token))
+    return Install(row["id"], token, command(connect_url, token),
+                   row["expires_at"])
 
 
 async def install_status(pool: asyncpg.Pool, install_id: uuid.UUID,
@@ -230,8 +272,10 @@ async def claim(pool: asyncpg.Pool, token: str) -> asyncpg.Record:
                              "minutes. Get a new one in tTerm Web.")
 
 
-async def check_token(pool: asyncpg.Pool, token: str) -> str | None:
-    """None if the command can still work; otherwise why not."""
+async def check_token(pool: asyncpg.Pool, token: str,
+                      kind: str = "server") -> str | None:
+    """None if the command can still work for this kind of machine;
+    otherwise why not."""
     if not TOKEN_RE.match(token):
         return "This command is not valid. Get a new one in tTerm Web."
     row = await pool.fetchrow(
@@ -239,9 +283,12 @@ async def check_token(pool: asyncpg.Pool, token: str) -> str | None:
         "WHERE token_hash = $1", token_hash(token))
     if row is None:
         return "This command is not valid. Get a new one in tTerm Web."
-    if row["kind"] != "server":
-        return ("This token is for a computer: it is used by the agent, not "
-                "by this installer.")
+    if row["kind"] != kind:
+        if kind == "server":
+            return ("This command is for a computer: run it there, as "
+                    "yourself, without sudo.")
+        return ("This command is for a server: it runs there with sudo. For "
+                "this computer, choose Computer under Add a machine.")
     if row["state"] == "connected":
         return ("This command was already used. For another machine, get a "
                 "new command in tTerm Web.")
@@ -260,15 +307,17 @@ async def fail_install(pool: asyncpg.Pool, install_id: uuid.UUID,
 
 
 async def add_computer(pool: asyncpg.Pool, claimed: asyncpg.Record,
-                       reported: str, details: dict) -> tuple[uuid.UUID, str]:
-    """Registers a computer whose agent came with a fresh token: its token
-    becomes the computer's key.
+                       reported: str, details: dict,
+                       key: str | None = None) -> tuple[uuid.UUID, str]:
+    """Registers a computer whose agent came with a fresh token. Its key is
+    the one it made for itself, if it brought one (tTerm Web's installer);
+    otherwise the token becomes its key, as with an agent started by hand.
 
     Always a new machine, even when one of the same name is there: a name
     is whatever the computer calls itself, and another computer could call
     itself the same and so take over that machine's place, its terminals
-    and its history. The old one, if it was this computer, is removed by
-    hand."""
+    and its history. The old one, if it was this computer, is removed with
+    Remove machine."""
     project_id = claimed["project_id"]
     owner_id = claimed["created_by"]
     token_id = claimed["id"]
@@ -276,7 +325,7 @@ async def add_computer(pool: asyncpg.Pool, claimed: asyncpg.Record,
     async with pool.acquire() as conn, conn.transaction():
         await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))",
                            str(project_id))
-        key = await conn.fetchval(
+        key = token_hash(key) if key else await conn.fetchval(
             "SELECT token_hash FROM install_tokens WHERE id = $1", token_id)
         taken = {r["name"] for r in await conn.fetch(
             "SELECT name FROM machines WHERE project_id = $1 AND "
@@ -300,6 +349,125 @@ async def add_computer(pool: asyncpg.Pool, claimed: asyncpg.Record,
                                         "agent": details.get("agent")})
     log.info("machine.added: computer %s", final)
     return machine_id, final
+
+
+async def confirm_install(pool: asyncpg.Pool, token: str,
+                          machine_id: uuid.UUID) -> bool:
+    """The command from Add a machine, run on a computer that is in tTerm Web
+    already: the installer kept the computer's key and updated its agent.
+    The command counts as used by this computer, so that the dialog says it
+    is connected. Only a live command of the same project; True if it was
+    one. A command of another project fails, saying where the computer is:
+    a computer is in one project at a time."""
+    if not TOKEN_RE.match(token):
+        return False
+    async with pool.acquire() as conn, conn.transaction():
+        elsewhere = await conn.fetchrow(
+            """
+            SELECT t.id
+            FROM install_tokens t, machines m
+            WHERE t.token_hash = $1 AND t.kind = 'computer'
+              AND t.expires_at > now() AND t.state IN ('waiting', 'failed')
+              AND m.id = $2 AND m.project_id <> t.project_id
+            """, token_hash(token), machine_id)
+        if elsewhere is not None:
+            await conn.execute(
+                "UPDATE install_tokens SET state = 'failed', error = $2, "
+                "updated_at = now() WHERE id = $1", elsewhere["id"],
+                "This computer is in tTerm Web already, in another project. "
+                "Remove it there first, or run ~/.tterm-web/uninstall.sh on it "
+                "and then this command.")
+            return False
+        row = await conn.fetchrow(
+            """
+            UPDATE install_tokens t
+            SET state = 'connected', used_at = now(), machine_id = $2,
+                error = NULL, updated_at = now()
+            FROM machines m
+            WHERE t.token_hash = $1 AND t.kind = 'computer'
+              AND t.expires_at > now() AND t.state IN ('waiting', 'failed')
+              AND m.id = $2 AND m.project_id = t.project_id
+              AND m.removed_at IS NULL
+            RETURNING t.project_id, t.created_by, m.name
+            """, token_hash(token), machine_id)
+        if row is None:
+            return False
+        await accounts.journal(conn, "machine.agent_installed",
+                               project_id=row["project_id"],
+                               user_id=row["created_by"], machine_id=machine_id,
+                               details={"name": row["name"]})
+    log.info("machine.agent_installed: %s", row["name"])
+    return True
+
+
+async def remove(pool: asyncpg.Pool, user_id: uuid.UUID,
+                 machine_id: uuid.UUID) -> dict | None:
+    """Takes a machine out of tTerm Web: it is no longer listed, and a
+    computer's key stops working for good. Its terminals' blocks stay, so
+    does the history. None if there is no such machine for this person;
+    only the owner and admins may remove one."""
+    async with pool.acquire() as conn, conn.transaction():
+        row = await conn.fetchrow(
+            """
+            SELECT m.id, m.name, m.kind, m.project_id, m.ca_id, m.host_keys,
+                   pm.role
+            FROM machines m
+            JOIN project_members pm ON pm.project_id = m.project_id
+             AND pm.user_id = $2 AND (pm.until IS NULL OR pm.until > now())
+            WHERE m.id = $1 AND m.removed_at IS NULL
+            FOR UPDATE OF m
+            """, machine_id, user_id)
+        if row is None:
+            return None
+        if row["role"] not in ("owner", "admin"):
+            raise PermissionError("only the owner and admins remove machines")
+        # A computer's key stays with the removed machine, so that it never
+        # works again: an agent that comes back with it is told the computer
+        # is not here any more, and stops; one that tries to join with it is
+        # refused (see key_retired).
+        await conn.execute(
+            "UPDATE machines SET removed_at = now() WHERE id = $1", machine_id)
+        # The same server in another project shares tTerm Web's line in its
+        # authorized_keys: then that line stays. Removals of such servers go
+        # one at a time, so that the last one gives the command.
+        if row["kind"] == "server" and row["ca_id"]:
+            await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))",
+                               f"server-ca:{row['ca_id']}")
+        shared = row["kind"] == "server" and await conn.fetchval(
+            "SELECT EXISTS (SELECT 1 FROM machines WHERE removed_at IS NULL "
+            "AND kind = 'server' AND ca_id = $1 AND host_keys && $2::text[])",
+            row["ca_id"], row["host_keys"])
+        await accounts.journal(conn, "machine.removed",
+                               project_id=row["project_id"], user_id=user_id,
+                               machine_id=machine_id,
+                               details={"name": row["name"], "kind": row["kind"]})
+    log.info("machine.removed: %s %s", row["kind"], row["name"])
+    out = {"id": str(machine_id), "name": row["name"], "kind": row["kind"]}
+    if row["kind"] == "server":
+        if shared:
+            out["shared"] = True
+        else:
+            out["cleanup"] = server_cleanup(row["ca_id"])
+    return out
+
+
+async def key_retired(pool: asyncpg.Pool, key: str) -> bool:
+    """Whether a computer's own key belonged to a computer that was removed:
+    such a key never works again, even if the removal was because it
+    leaked."""
+    return bool(await pool.fetchval(
+        "SELECT EXISTS (SELECT 1 FROM machines WHERE agent_token_hash = $1 "
+        "AND removed_at IS NOT NULL)", token_hash(key)))
+
+
+async def fail_token(pool: asyncpg.Pool, token: str, error: str) -> None:
+    """A computer's command that cannot work, so that its dialog says why:
+    by its token, while it is live."""
+    await pool.execute(
+        "UPDATE install_tokens SET state = 'failed', error = $2, "
+        "updated_at = now() WHERE token_hash = $1 AND kind = 'computer' "
+        "AND expires_at > now() AND state IN ('waiting', 'failed')",
+        token_hash(token), error[:500])
 
 
 def clean_host_keys(keys: list[str]) -> list[str]:

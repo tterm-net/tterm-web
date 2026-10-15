@@ -264,7 +264,8 @@ class Terminal:
         self._tick = asyncio.Event()
         self._task: asyncio.Task | None = None
         self._nudging = False
-        self._closing = False
+        #: Why it is being closed, once close() was asked; what it says then.
+        self._closing: str | None = None
         #: The page typing into this terminal; see Watcher.
         self.active: "Watcher | None" = None
 
@@ -426,7 +427,7 @@ class Terminal:
             self._output(held)
         code = await chan.exit_code()
         if self._closing:
-            reason = "Closed."
+            reason = self._closing
         elif reason is None:
             if code is None:
                 reason = f"The connection to {self.machine.name} was closed."
@@ -731,25 +732,26 @@ class Terminal:
 
     # ------------------------------------------------------------ end
 
-    async def close(self) -> None:
+    async def close(self, reason: str = "Closed.") -> None:
         """Ends the terminal: the shell gets a hangup, as when a window
-        closes."""
+        closes. `reason` is what the terminal then says."""
         if self.state == "ended":
             return
-        self._closing = True
+        self._closing = reason
         if self._chan is not None:
             self._chan.close()
         if self._task is not None and self.state == "connecting":
             self._task.cancel()
             with contextlib.suppress(BaseException):
                 await self._task
-            await self._end("Closed before it opened.")
+            await self._end("Closed before it opened." if reason == "Closed."
+                            else reason)
             return
         if self._task is not None:
             with contextlib.suppress(BaseException):
                 await asyncio.wait_for(asyncio.shield(self._task), 3)
         if self.state != "ended":
-            await self._end("Closed.")
+            await self._end(reason)
 
     async def stop(self, reason: str) -> None:
         """The core is stopping: the shell ends with it."""
@@ -1003,6 +1005,13 @@ class Terminals:
             """, self.owner.id, owned["machine_id"], owned["project_id"],
             HISTORY_MAX)
         return [{"command": r["command"], "here": r["here"]} for r in rows]
+
+    async def end_machine(self, machine_id: uuid.UUID, reason: str) -> None:
+        """Ends every terminal of a machine that was removed, saying why."""
+        await asyncio.gather(*(t.close(reason) for t in list(self._live.values())
+                               if t.machine.id == machine_id
+                               and t.state != "ended"),
+                             return_exceptions=True)
 
     async def stop(self) -> None:
         if self._sweeper is not None:

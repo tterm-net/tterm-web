@@ -1,7 +1,7 @@
-"""Computers through the agent (0.0.6), and their terminals through a
-dropped connection (0.0.7): the real tterm-agent, run from its own
-repository next to this one, against a core on free ports, and agents
-spoken by hand for what a real one does rarely.
+"""Computers through the agent (0.0.6), their terminals through a dropped
+connection (0.0.7), and their own keys and removal (0.0.8): the real
+tterm-agent, run from its own repository next to this one, against a core
+on free ports, and agents spoken by hand for what a real one does rarely.
 
 The agent starts real shells here, as it would on a laptop: bash, or zsh on
 a Mac, in a throwaway home. Its usual entry refuses root, which a check run
@@ -26,7 +26,7 @@ from pathlib import Path
 
 import websockets
 
-from ..core import agents, machines, terminals
+from ..core import accounts, agents, machines, terminals
 from .harness import PASSPORT_OUTPUT, request
 from .test_terminals import _home, _login_shell, _prompts, _screen, _until
 
@@ -49,20 +49,25 @@ def _agent_version() -> str:
     return found.group(1)
 
 
+def _at_least(major: int, minor: int) -> bool:
+    return tuple(int(n) for n in _agent_version().split(".")[:2]) >= (major, minor)
+
+
 def _keeps_shells() -> bool:
     """Whether the agent next door keeps its shells through a dropped
     connection (0.12.0 and newer)."""
-    return tuple(int(n) for n in _agent_version().split(".")[:2]) >= (0, 12)
+    return _at_least(0, 12)
 
 
 class Agent:
     """A real agent process, with what it logged."""
 
     def __init__(self, hub: str, token: str, home: Path, login: str,
-                 name: str = "test-mac") -> None:
+                 name: str = "test-mac", key: str = "") -> None:
+        # The key the installer would make (agent 0.13.0 and newer).
+        args = (hub, token, name, key) if key else (hub, token, name)
         code = ("import asyncio, sys; sys.path.insert(0, %r); import agent; "
-                "asyncio.run(agent.main_loop(%r, %r, %r))"
-                % (str(AGENT.parent), hub, token, name))
+                "asyncio.run(agent.main_loop(*%r))" % (str(AGENT.parent), args))
         env = {"HOME": str(home), "SHELL": login, "PATH": os.environ["PATH"],
                "USER": os.environ.get("USER", "tterm"),
                "LANG": "en_US.UTF-8" if sys.platform == "darwin" else "C.UTF-8",
@@ -114,13 +119,18 @@ class Agent:
 
 
 async def _computer_install(core) -> tuple[str, str]:
+    """Add a machine, Computer: the install and its token, as the installer
+    and the agent started by hand both have it."""
     state = (await request(core.page_port, "GET", "/api/state")).json()
     r = await request(core.page_port, "POST", "/api/installs", headers=CHANGE,
                       body=json.dumps({"projectId": state["projects"][0]["id"],
                                        "kind": "computer"}).encode())
     assert r.status == 201, r.text
-    # TTERM_TOKEN=KEY python3 agent.py --hub …
-    return r.json()["id"], r.json()["command"].split()[0].split("=", 1)[1]
+    # TTERM_TOKEN=TOKEN python3 agent.py --hub …
+    token = r.json()["byHand"].split()[0].split("=", 1)[1]
+    assert r.json()["command"] == \
+        f"curl -fsSL https://connect.test/c/{token} | sh", r.json()
+    return r.json()["id"], token
 
 
 def _hub(core) -> str:
@@ -174,6 +184,15 @@ def test_the_hello_is_read_and_cleaned():
         "channel numbers only, each once, and only so many looked at"
     assert agents.parse_hello(json.dumps({"t": "hello", "token": "x" * 32,
                                           "kept": "1,2"}))["kept"] == []
+    # The computer's own key, from the installer (0.0.8): one like the
+    # tokens tTerm Web makes, or the hello is not one.
+    assert old["key"] is None
+    keyed = agents.parse_hello(json.dumps({"t": "hello", "token": "x" * 32,
+                                           "key": "k" * 43, "web": 2}))
+    assert keyed is not None and keyed["key"] == "k" * 43
+    for bad in ("k" * 31, "k" * 65, "k" * 40 + "/", 5, ""):
+        assert agents.parse_hello(json.dumps({"t": "hello", "token": "x" * 32,
+                                              "key": bad})) is None, bad
 
 
 async def test_a_computer_joins_and_its_terminals_work(h):
@@ -410,6 +429,7 @@ async def test_tokens_and_agents_that_do_not_fit(h):
         reply = await hello(token="t" * 32, web=1)
         assert reply["t"] == "error" and reply["revoked"] is True, \
             "an unknown token tells the agent to stop"
+        assert "forget" not in reply, "but not to forget a key it may have"
         # A server's command, given to an agent.
         state = (await request(core.page_port, "GET", "/api/state")).json()
         r = await request(core.page_port, "POST", "/api/installs", headers=CHANGE,
@@ -710,11 +730,11 @@ async def _next(ws, kind: str) -> dict:
             return json.loads(raw)
 
 
-async def _answer_passport(ws) -> None:
+async def _answer_passport(ws, output: str = PASSPORT_OUTPUT) -> None:
     run = await _next(ws, "run")
     await ws.send(json.dumps({
         "t": "ran", "id": run["id"], "code": 0, "err": "",
-        "out": base64.b64encode(PASSPORT_OUTPUT.encode()).decode()}))
+        "out": base64.b64encode(output.encode()).decode()}))
 
 
 async def _answer_pings(ws) -> None:
@@ -831,6 +851,239 @@ async def test_computers_removed_or_alike(h):
         assert reply["t"] == "error" and reply["revoked"] is True and \
             "removed" in reply["error"], reply
         await ws.close()
+
+
+async def test_a_computer_keeps_its_own_key(h):
+    """From 0.0.8 the installer makes the computer a key of its own; the
+    token from Add a machine only lets it join, once. Run again with a new
+    command, it keeps the key: the computer stays the machine it was, and
+    the new command's dialog says it is connected."""
+    async with h.core() as core:
+        hub = _hub(core)
+        key = machines.new_token("computer")
+        mac, machine_id, token = await _fake_mac(core, web=2, agent="0.13.0",
+                                                 key=key)
+        assert await core.pool.fetchval(
+            "SELECT agent_token_hash FROM machines WHERE id = $1",
+            machine_id) == machines.token_hash(key), "known by its key"
+        await mac.gone()
+        await _until(lambda: not core.agents.online(machine_id), what="offline")
+        # The page says when it was last here.
+        state = (await request(core.page_port, "GET", "/api/state")).json()
+        seen = _computer(state)["lastSeen"]
+        assert seen and abs(seen / 1000 - time.time()) < 10, state
+
+        # The token is no key: an agent with it alone is not this computer.
+        ws, reply = await _hello(hub, token, web=2)
+        assert reply["t"] == "error" and reply["revoked"] is True, reply
+        await ws.close()
+
+        # Back with its key, the same agent: in, and its passport, read
+        # just now, is not read again.
+        mac = await _back(core, token, web=2, agent="0.13.0", key=key)
+        await _until(lambda: core.agents.online(machine_id), what="online")
+        await asyncio.sleep(0.3)
+        assert mac.sent("run") == [], mac.got
+        await mac.gone()
+
+        # The installer run again: a new command, the same key, a newer
+        # agent. The same machine, and the dialog hears it.
+        install_id, second = await _computer_install(core)
+        ws, reply = await _hello(hub, second, web=2, agent="0.13.1", key=key)
+        assert reply["t"] == "welcome", reply
+        status = await _until_status(core, install_id, "connected")
+        assert status["machine"]["id"] == str(machine_id), status
+        # Its passport is read again: tools come and go, sudo too.
+        await _answer_passport(ws, PASSPORT_OUTPUT.replace("sudo=yes",
+                                                           "sudo=password"))
+
+        async def read_again() -> bool:
+            pp = json.loads(await core.pool.fetchval(
+                "SELECT passport FROM machines WHERE id = $1", machine_id))
+            return pp.get("sudo_password") is True and pp["agent"] == "0.13.1"
+
+        end = time.monotonic() + 10
+        while not await read_again():
+            assert time.monotonic() < end, "the passport was not read again"
+            await asyncio.sleep(0.05)
+        assert await core.pool.fetchval(
+            "SELECT count(*) FROM machines WHERE kind = 'computer'") == 1
+        journal = [r["kind"] for r in await core.pool.fetch(
+            "SELECT kind FROM journal WHERE kind LIKE 'machine.%' ORDER BY id")]
+        assert journal == ["machine.added", "machine.agent_installed"], journal
+        r = await request(core.connect_port, "GET", f"/c/{second}")
+        assert "already used" in r.text and "exit 1" in r.text, r.text
+        await ws.close()
+
+
+async def test_a_computer_is_removed(h):
+    """Remove machine (0.0.8): the agent hears it and stops, the computer's
+    terminals end and say why, those waiting for it too, and its key no
+    longer works."""
+    async with h.core() as core:
+        hub = _hub(core)
+        key = machines.new_token("computer")
+        mac, machine_id, token = await _fake_mac(core, web=2, agent="0.13.0",
+                                                 key=key)
+        t, _ = await mac.opened(core, machine_id)
+        r = await request(core.page_port, "DELETE", f"/api/machines/{machine_id}")
+        assert r.status == 403 and core.agents.online(machine_id), \
+            "a change needs the page's header"
+        r = await request(core.page_port, "DELETE", f"/api/machines/{machine_id}",
+                          headers=CHANGE)
+        assert r.status == 200, r.text
+        assert r.json() == {"id": str(machine_id), "name": "fake-mac",
+                            "kind": "computer"}, r.json()
+        await _until(lambda: t.state == "ended", what="its terminal's end")
+        assert t.reason == "fake-mac was removed from tTerm Web.", t.reason
+        await asyncio.wait_for(mac.task, 10)
+        assert mac.sent("error") == [{"t": "error", "error": agents.REMOVED,
+                                      "revoked": True, "forget": True}], mac.got
+        assert not core.agents.online(machine_id)
+        state = (await request(core.page_port, "GET", "/api/state")).json()
+        assert _computer(state) is None and state["terminals"] == [], state
+        r = await request(core.page_port, "DELETE", f"/api/machines/{machine_id}",
+                          headers=CHANGE)
+        assert r.status == 404, "removed once"
+        # The terminal's record and the journal stay.
+        assert await core.pool.fetchval(
+            "SELECT end_reason FROM terminals WHERE id = $1", t.id) == t.reason
+        details = await core.pool.fetchval(
+            "SELECT details FROM journal WHERE kind = 'machine.removed'")
+        assert json.loads(details) == {"name": "fake-mac", "kind": "computer"}
+        # Its key works no more: an agent back with it stops for good, and
+        # forgets it.
+        ws, reply = await _hello(hub, token, web=2, agent="0.13.0", key=key)
+        assert reply["t"] == "error" and reply["revoked"] is True and \
+            "removed" in reply["error"] and reply.get("forget") is True, reply
+        await ws.close()
+        # Nor with a new command: the installer run again before the agent
+        # heard of the removal kept the key. The dialog says what to do.
+        install_id, again = await _computer_install(core)
+        ws, reply = await _hello(hub, again, web=2, agent="0.13.0", key=key)
+        assert reply["t"] == "error" and reply["revoked"] is True and \
+            reply["error"] == agents.KEY_RETIRED and reply["forget"] is True, reply
+        await ws.close()
+        status = await _status(core, install_id)
+        assert status["state"] == "failed" and \
+            status["error"] == agents.KEY_RETIRED, status
+        # A new key with the same command: in, a new machine.
+        ws, reply = await _hello(hub, again, web=2, agent="0.13.0",
+                                 key=machines.new_token("computer"))
+        assert reply["t"] == "welcome", reply
+        await _answer_passport(ws)
+        status = await _until_status(core, install_id, "connected")
+        assert status["machine"]["id"] != str(machine_id)
+        await ws.close()
+
+        # A computer that is away: what waits for it ends as well.
+        mac, other_id, _ = await _fake_mac(core, web=2, agent="0.13.0",
+                                           key=machines.new_token("computer"),
+                                           name="fake-mac")
+        u, _ = await mac.opened(core, other_id)
+        await mac.gone()
+        await _until(lambda: u.away, what="away")
+        r = await request(core.page_port, "DELETE", f"/api/machines/{other_id}",
+                          headers=CHANGE)
+        assert r.status == 200, r.text
+        await _until(lambda: u.state == "ended", what="the wait's end")
+        assert u.reason == f"{u.machine.name} was removed from tTerm Web." \
+            and not u.away, u.reason
+        assert core.agents.parked(other_id) == set()
+
+
+async def test_a_computer_is_in_one_project(h):
+    """The installer run on a computer that is in another project already:
+    the new command's dialog says where it is, rather than wait."""
+    async with h.core() as core:
+        key = machines.new_token("computer")
+        mac, machine_id, _ = await _fake_mac(core, web=2, agent="0.13.0", key=key)
+        await mac.gone()
+        async with core.pool.acquire() as conn:
+            other = await accounts.create_project(conn, core.owner.id, "Work", "W")
+        r = await request(core.page_port, "POST", "/api/installs", headers=CHANGE,
+                          body=json.dumps({"projectId": str(other),
+                                           "kind": "computer"}).encode())
+        token = r.json()["byHand"].split()[0].split("=", 1)[1]
+        mac = await _back(core, token, web=2, agent="0.13.0", key=key)
+        status = await _until_status(core, r.json()["id"], "failed")
+        assert status["error"] == (
+            "This computer is in tTerm Web already, in another project. Remove "
+            "it there first, or run ~/.tterm-web/uninstall.sh on it and then "
+            "this command."), status
+        assert core.agents.online(machine_id), "it stays where it was"
+        await mac.gone()
+
+
+async def test_removed_while_it_says_hello(h):
+    """Removed between the agent's hello and its being attached: Remove
+    machine did not find it connected, so it hears it right after."""
+    async with h.core() as core:
+        key = machines.new_token("computer")
+        mac, machine_id, token = await _fake_mac(core, web=2, agent="0.13.0",
+                                                 key=key)
+        await mac.gone()
+        await _until(lambda: not core.agents.online(machine_id), what="offline")
+        known = await agents._known(core.pool, key)
+        await core.pool.execute(
+            "UPDATE machines SET removed_at = now() WHERE id = $1", machine_id)
+        real = agents._known
+
+        async def as_it_was(pool, token):
+            return known
+
+        agents._known = as_it_was
+        try:
+            ws, reply = await _hello(_hub(core), token, web=2, agent="0.13.0",
+                                     key=key)
+        finally:
+            agents._known = real
+        assert reply["t"] == "welcome", reply
+        assert await _next(ws, "error") == {"t": "error", "error": agents.REMOVED,
+                                            "revoked": True, "forget": True}
+        await asyncio.wait_for(ws.wait_closed(), 10)
+        await _until(lambda: not core.agents.online(machine_id), what="gone")
+
+
+async def test_the_agent_with_a_key_of_its_own(h):
+    """The real agent (0.13.0) as the installer starts it, with a key of its
+    own. Removed in tTerm Web, it hears so, ends its shells and stops."""
+    if not _agent_here():
+        return
+    if not _at_least(0, 13):
+        print(f"  · tterm-agent {_agent_version()} brings no key of its own: "
+              "skipped")
+        return
+    login, _ = _login_shell()
+    home = _home()
+    agent = None
+    try:
+        async with h.core() as core:
+            install_id, token = await _computer_install(core)
+            key = machines.new_token("computer")
+            agent = await Agent(_hub(core), token, home, login, key=key).start()
+            status = await _wait_status(core, install_id, "connected", agent)
+            machine_id = uuid.UUID(status["machine"]["id"])
+            assert await core.pool.fetchval(
+                "SELECT agent_token_hash FROM machines WHERE id = $1",
+                machine_id) == machines.token_hash(key)
+            t = await core.terminals.open(machine_id, 80, 24)
+            await _until(lambda: _prompts(t) >= 1, what="the first prompt")
+            r = await request(core.page_port, "DELETE",
+                              f"/api/machines/{machine_id}", headers=CHANGE)
+            assert r.status == 200, r.text
+            assert agent.proc is not None
+            await asyncio.wait_for(agent.proc.wait(), 15)
+            await asyncio.wait_for(agent._reader, 2)  # type: ignore[arg-type]
+            assert agent.proc.returncode == 0, "stopped, not failed: no restart"
+            assert b"access revoked: This computer was removed" in agent.log, \
+                agent.log.decode()[-600:]
+            await _until(lambda: t.state == "ended", what="the end")
+            assert t.reason == "test-mac was removed from tTerm Web.", t.reason
+    finally:
+        if agent is not None:
+            await agent.stop()
+        shutil.rmtree(home, ignore_errors=True)
 
 
 async def test_strangers_are_kept_short(h):

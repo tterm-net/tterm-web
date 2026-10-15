@@ -19,6 +19,7 @@ import { ClassicTerminal, type ViewEvents } from "./ClassicTerminal";
 import { FeedTerminal } from "./FeedTerminal";
 import { ModeToggle } from "./InputLine";
 import type { Shown } from "./theme";
+import { since } from "./time";
 
 type Mode = "line" | "classic";
 const MODE_KEY = "tterm.mode";
@@ -61,15 +62,9 @@ interface Props {
   onOpenNew: (machineId: string, instead: string) => void;
   onChanged: () => void;
   notify: (text: string) => void;
-}
-
-function since(ms: number | null | undefined): string {
-  if (!ms) return "";
-  const minutes = Math.floor((Date.now() - ms) / 60000);
-  if (minutes < 1) return "less than a minute";
-  if (minutes < 60) return minutes === 1 ? "a minute" : `${minutes} minutes`;
-  const hours = Math.floor(minutes / 60);
-  return hours === 1 ? "an hour" : `${hours} hours`;
+  /** Whether the machine is still in tTerm Web: one removed gets no new
+   * terminal. */
+  machineThere: (machineId: string) => boolean;
 }
 
 export function TerminalView(props: Props) {
@@ -238,7 +233,7 @@ export function TerminalView(props: Props) {
               <span>{info?.reason ?? "It is no longer running."}</span>
             </div>
             <div className="button-row">
-              {info && (
+              {info && props.machineThere(info.machineId) && (
                 <button type="button" className="button-accent big"
                   onClick={() => props.onOpenNew(info.machineId, terminalId)}>
                   Open a new terminal on {info.machine}

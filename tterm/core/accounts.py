@@ -176,7 +176,7 @@ async def projects_of(pool: asyncpg.Pool, user_id: uuid.UUID) -> list[dict]:
         """, user_id)
     machines = await pool.fetch(
         """
-        SELECT id, project_id, kind, name, host,
+        SELECT id, project_id, kind, name, host, last_seen_at,
                passport - 'commands' AS passport,
                jsonb_array_length(COALESCE(passport->'commands', '[]')) AS commands
         FROM machines
@@ -187,9 +187,13 @@ async def projects_of(pool: asyncpg.Pool, user_id: uuid.UUID) -> list[dict]:
     for m in machines:
         pp = json.loads(m["passport"]) if m["passport"] else {}
         pp["commands_count"] = m["commands"]
+        seen = m["last_seen_at"]
         by_project.setdefault(m["project_id"], []).append({
             "id": str(m["id"]), "kind": m["kind"], "name": m["name"],
-            "host": m["host"], "os": pp.get("os"), "passport": pp})
+            "host": m["host"], "os": pp.get("os"), "passport": pp,
+            # When its agent was last connected, for a computer: "last seen
+            # 14 minutes ago" says more than offline alone.
+            "lastSeen": int(seen.timestamp() * 1000) if seen else None})
     return [{
         "id": str(r["id"]),
         "name": r["name"],

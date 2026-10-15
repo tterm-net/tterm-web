@@ -4,7 +4,7 @@
 
 import { useEffect, useState, type RefObject } from "react";
 import {
-  Branch, Collapse, Copy, Cross, Expand, Link, Rerun, Stop,
+  Branch, Collapse, Copy, CopyText, Cross, Expand, Link, Rerun, Stop,
 } from "./icons";
 import type { Rendered } from "./render";
 
@@ -44,6 +44,8 @@ interface Props {
   clipRef?: RefObject<HTMLDivElement | null>;
   clipHeight?: number;
   flash: boolean;
+  /** The command with its prompt, and the output under it. */
+  onCopyBlock: (block: FeedBlock) => void;
   onCopyOutput: (block: FeedBlock) => void;
   onRunAgain: (block: FeedBlock) => void;
   onCopyLink: (block: FeedBlock) => void;
@@ -101,8 +103,11 @@ export function BlockView(props: Props) {
   const lines = block.rendered?.lines ?? [];
   const shown = block.expanded ? lines : lines.slice(-SHOW_LINES);
   const hidden = lines.length - shown.length;
-  const more = hidden > 0 || ((block.partial || block.cut ||
-    block.rendered?.limited) && block.stored && !block.expanded);
+  // A full-screen program (top, vim) drew on the second screen and left
+  // nothing on the main one: the whole output would show nothing either.
+  const screenOnly = !!block.rendered?.alt && lines.length === 0;
+  const more = !screenOnly && (hidden > 0 || ((block.partial || block.cut ||
+    block.rendered?.limited) && block.stored && !block.expanded));
   const what = block.state === "input" ? "not started by the shell"
     : running ? "running"
     : failed ? `failed with exit code ${block.exitCode}`
@@ -153,9 +158,14 @@ export function BlockView(props: Props) {
           </button>
         ) : (
           <div role="group" aria-label="Block actions" className="block-actions">
-            <button type="button" aria-label="Copy output" title="Copy output"
-              onClick={() => props.onCopyOutput(block)}>
+            <button type="button" aria-label="Copy the command and its output"
+              title="Copy the command and its output"
+              onClick={() => props.onCopyBlock(block)}>
               <Copy size={15} />
+            </button>
+            <button type="button" aria-label="Copy output" title="Copy output only"
+              onClick={() => props.onCopyOutput(block)}>
+              <CopyText size={15} />
             </button>
             <button type="button" aria-label="Run again" title="Run again"
               onClick={() => props.onRunAgain(block)}>

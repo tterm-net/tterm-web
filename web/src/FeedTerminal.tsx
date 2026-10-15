@@ -23,7 +23,7 @@ import {
 import {
   blockOutput, loadFeed, loadHistory, type StoredBlock, type TerminalInfo,
 } from "./api";
-import { BlockView, type FeedBlock } from "./BlockView";
+import { BlockView, shortPath, type FeedBlock } from "./BlockView";
 import { FONT, FONT_SIZE, HIGH, LOW, type ViewEvents } from "./ClassicTerminal";
 import { Warning } from "./icons";
 import { InputLine, type Phase, type Prompt } from "./InputLine";
@@ -48,6 +48,74 @@ const FOCUS_DELAY_MS = 400;
 /** `clear` and its kin empty the feed, as they would a screen. */
 const CLEARS = /^\s*(clear|reset|tput\s+(clear|reset))\s*$/;
 
+// What this browser remembers of a feed, so that Classic and back or a
+// reload leave it as it was: the blocks folded, and how far Ctrl+L cleared
+// it from view (a `clear` the feed finds by itself). A convenience: without
+// it a feed opens unfolded and whole.
+const FOLDED_KEY = "tterm.folded";
+const FOLDED_MAX = 2000;
+const CLEARED_KEY = "tterm.cleared";
+const CLEARED_MAX = 200;
+
+/** Up to which block (its number) the feed is cleared from view, and the
+ * cut the person chose to see past again. */
+interface ClearMark {
+  at?: number;
+  shown?: number;
+}
+
+function readJson<T>(key: string, fallback: T): T {
+  try {
+    const raw: unknown = JSON.parse(localStorage.getItem(key) ?? "null");
+    return (raw ?? fallback) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeJson(key: string, value: unknown): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Not kept, then: the feed works the same.
+  }
+}
+
+function foldedBlocks(): Set<string> {
+  const list = readJson<unknown>(FOLDED_KEY, []);
+  return new Set(Array.isArray(list)
+    ? list.filter((x): x is string => typeof x === "string") : []);
+}
+
+function rememberFolded(id: string, folded: boolean): void {
+  const list = [...foldedBlocks()].filter((x) => x !== id);
+  if (folded) list.push(id);
+  writeJson(FOLDED_KEY, list.slice(-FOLDED_MAX));
+}
+
+function clearMarks(): Record<string, ClearMark> {
+  const all = readJson<unknown>(CLEARED_KEY, {});
+  return all && typeof all === "object" && !Array.isArray(all)
+    ? all as Record<string, ClearMark> : {};
+}
+
+function rememberClear(terminalId: string, mark: ClearMark): void {
+  const all = clearMarks();
+  delete all[terminalId];
+  all[terminalId] = mark;
+  // The latest terminals only; the oldest go first.
+  const keys = Object.keys(all);
+  for (const k of keys.slice(0, Math.max(0, keys.length - CLEARED_MAX))) {
+    delete all[k];
+  }
+  writeJson(CLEARED_KEY, all);
+}
+
+/** The block's number from its key, s123; null for one not in the stream. */
+function seqOf(key: string | null): number | null {
+  return key && /^s\d+$/.test(key) ? Number(key.slice(1)) : null;
+}
+
 interface Live {
   key: string;
   cols: number;
@@ -55,6 +123,8 @@ interface Live {
   size: number;
   dropped: boolean;
   command: string;
+  /** It went to the second screen: a full-screen program. */
+  alt: boolean;
 }
 
 interface Pending {
@@ -78,7 +148,7 @@ interface Props {
   notify: (text: string) => void;
 }
 
-function fromStored(b: StoredBlock, cols: number): FeedBlock {
+function fromStored(b: StoredBlock, cols: number, folded = false): FeedBlock {
   return {
     key: `s${b.seqStart}`,
     seqStart: b.seqStart,
@@ -96,7 +166,7 @@ function fromStored(b: StoredBlock, cols: number): FeedBlock {
     cut: b.cut,
     stored: true,
     expanded: false,
-    collapsed: false,
+    collapsed: folded,
   };
 }
 
@@ -298,7 +368,7 @@ export function FeedTerminal(props: Props) {
 
       const startLive = (block: FeedBlock) => {
         st.live = { key: block.key, cols: block.cols, chunks: [], size: 0,
-          dropped: false, command: block.command };
+          dropped: false, command: block.command, alt: false };
         // A clean screen for it, after whatever is still queued before it.
         t.write(EMPTY, () => {
           t.reset();
@@ -330,8 +400,8 @@ export function FeedTerminal(props: Props) {
         // Read its screen back once everything before the end is drawn.
         t.write(EMPTY, () => {
           const buffer = t.buffer.normal;
-          const rendered = readBuffer(buffer,
-            buffer.length >= KEEP_LINES + t.rows);
+          const rendered = { ...readBuffer(buffer,
+            buffer.length >= KEEP_LINES + t.rows), alt: live.alt };
           // A full-screen program that never switched back (killed, or its
           // ssh connection gone) must not keep the screen.
           if (t.buffer.active.type === "alternate") t.reset();
@@ -392,7 +462,17 @@ export function FeedTerminal(props: Props) {
       const stored = feed?.blocks ?? [];
       st.knownSeq = stored.reduce((m, b) => Math.max(m, b.seqEnd ?? b.seqStart),
         -1);
-      setBlocks(stored.map((b) => fromStored(b, t.cols)));
+      const folded = foldedBlocks();
+      setBlocks(stored.map((b) => fromStored(b, t.cols,
+        folded.has(`${terminalId}:${b.seqStart}`))));
+      // Cleared from view as it was: the last `clear` that worked, or
+      // Ctrl+L, whichever came later, unless that cut was opened again.
+      const lastClear = [...stored].reverse().find((b) =>
+        CLEARS.test(b.command) && b.exitCode === 0);
+      const mark = clearMarks()[terminalId] ?? {};
+      const cut = Math.max(lastClear?.seqStart ?? -1,
+        typeof mark.at === "number" ? mark.at : -1);
+      if (cut >= 0 && cut !== mark.shown) setClearedAt(`s${cut}`);
       setMore(!!feed?.more);
       setLoaded(true);
       void (async () => {
@@ -540,6 +620,7 @@ export function FeedTerminal(props: Props) {
       t.onResize(({ cols, rows }) => channel.resize(cols, rows));
       t.buffer.onBufferChange((buffer) => {
         const full = buffer.type === "alternate";
+        if (full && st.live) st.live.alt = true;
         if (full === isFull.current) return;
         isFull.current = full;
         setFullscreen(full);
@@ -766,7 +847,9 @@ export function FeedTerminal(props: Props) {
       const cols = term.current?.cols ?? 80;
       setBlocks((bs) => {
         const have = new Set(bs.map((b) => b.key));
-        return [...feed.blocks.map((b) => fromStored(b, cols))
+        const folded = foldedBlocks();
+        return [...feed.blocks.map((b) => fromStored(b, cols,
+          folded.has(`${terminalId}:${b.seqStart}`)))
           .filter((b) => !have.has(b.key)), ...bs];
       });
       setMore(feed.more);
@@ -780,17 +863,37 @@ export function FeedTerminal(props: Props) {
     }
   };
 
+  const home = prompt.home || s.current.info?.home || props.home;
+
   // `clear`, or Ctrl+L: what came before goes out of view, not away. The
   // cut is at a finished block, and a block still running stays in view.
   const clearFeed = () => {
     const last = [...blocks].reverse().find((b) => b.state === "done");
-    if (last) setClearedAt(last.key);
+    if (!last) return;
+    setClearedAt(last.key);
+    // Remembered at the last block of the stream, for after a reload.
+    const anchor = [...blocks].reverse().find((b) =>
+      b.state === "done" && b.seqStart >= 0);
+    if (anchor) rememberClear(terminalId, { at: anchor.seqStart });
+  };
+  const showCleared = () => {
+    const at = seqOf(clearedAt);
+    if (at !== null) {
+      rememberClear(terminalId, { ...clearMarks()[terminalId], shown: at });
+    }
+    setClearedAt(null);
+  };
+  const blockText = (b: FeedBlock): string => {
+    const where = [b.cwd ? shortPath(b.cwd, home) : "",
+      b.branch ? `(${b.branch})` : ""].filter(Boolean).join(" ");
+    const head = `${where ? `${where} ` : ""}$ ${b.command}`;
+    const out = b.rendered ? plainText(b.rendered) : "";
+    return out ? `${head}\n${out}` : head;
   };
   const cut = clearedAt ? blocks.findIndex((b) => b.key === clearedAt) : -1;
   const shown = cut >= 0
     ? blocks.filter((b, i) => i > cut || b.state !== "done") : blocks;
   const hiddenCount = blocks.length - shown.length;
-  const home = prompt.home || s.current.info?.home || props.home;
 
   return (
     <>
@@ -806,7 +909,7 @@ export function FeedTerminal(props: Props) {
           )}
           {hiddenCount > 0 && (
             <button type="button" className="feed-earlier"
-              onClick={() => setClearedAt(null)}>
+              onClick={showCleared}>
               {hiddenCount === 1 ? "1 block" : `${hiddenCount} blocks`} cleared
               from view: show
             </button>
@@ -823,13 +926,19 @@ export function FeedTerminal(props: Props) {
               clipRef={b.key === liveKey ? clipRef : undefined}
               clipHeight={Math.ceil(clipRows * cellHeight)}
               flash={flash === b.key}
+              onCopyBlock={(x) => copy(blockText(x), "Command and output copied")}
               onCopyOutput={(x) => copy(x.rendered ? plainText(x.rendered) : "",
                 "Output copied")}
               onRunAgain={(x) => run(x.command)}
               onCopyLink={(x) => copy(
                 `${location.origin}/t/${terminalId}#b${x.seqStart}`,
                 "Link to the block copied")}
-              onToggle={(x) => update(x.key, { collapsed: !x.collapsed })}
+              onToggle={(x) => {
+                update(x.key, { collapsed: !x.collapsed });
+                if (x.seqStart >= 0) {
+                  rememberFolded(`${terminalId}:${x.seqStart}`, !x.collapsed);
+                }
+              }}
               onShowAll={(x) => void showAll(x)}
               onStop={() => chan.current?.input("\x03")} />
           ))}

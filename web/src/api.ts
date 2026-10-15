@@ -21,6 +21,8 @@ export interface Passport {
   disk_total_kb?: number;
   disk_free_kb?: number;
   sudo?: boolean;
+  /** sudo is there but asks for a password, as on a person's own Mac. */
+  sudo_password?: boolean;
   systemd?: boolean;
   commands_count?: number;
   checked_at?: string;
@@ -46,6 +48,20 @@ export interface Machine {
   /** A computer is online while its agent is connected. */
   online?: boolean;
   agent?: AgentInfo | null;
+  /** When its agent was last connected, in milliseconds. */
+  lastSeen?: number | null;
+}
+
+/** A machine taken out of tTerm Web. For a server, the command that takes
+ * tTerm Web's access back on the server itself. */
+export interface Removed {
+  id: string;
+  name: string;
+  kind: MachineKind;
+  /** For a server: the command that takes tTerm Web's access back there. */
+  cleanup?: string | null;
+  /** The same server is in another project too: its access stays. */
+  shared?: boolean;
 }
 
 export interface Project {
@@ -176,6 +192,9 @@ export interface State {
 export interface Install {
   id: string;
   command: string;
+  /** For a computer: the agent started by hand, for trying one not yet
+   * released. */
+  byHand?: string | null;
   expiresAt: string;
   minutes: number;
 }
@@ -256,6 +275,14 @@ export async function endTerminal(id: string): Promise<TerminalInfo | null> {
   const response = await fetch(`/api/terminals/${id}`,
     { method: "DELETE", headers: { "x-tterm": "1" } });
   if (response.status === 404) return null;
+  return (await check(response)).json();
+}
+
+/** Takes a machine out of tTerm Web: its terminals end, a computer's agent
+ * stops, the history stays. */
+export async function removeMachine(id: string): Promise<Removed> {
+  const response = await fetch(`/api/machines/${id}`,
+    { method: "DELETE", headers: { "x-tterm": "1" } });
   return (await check(response)).json();
 }
 

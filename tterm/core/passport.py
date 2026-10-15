@@ -43,7 +43,9 @@ memory=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null)
 [ -n "$memory" ] || memory=$(sysctl -n hw.memsize 2>/dev/null | awk '{printf "%d", $1 / 1024}')
 printf 'memory_kb=%s\n' "$memory"
 df -Pk / 2>/dev/null | awk 'NR==2 {print "disk_total_kb=" $2; print "disk_free_kb=" $4}'
-if sudo -n true 2>/dev/null; then echo sudo=yes; else echo sudo=no; fi
+if sudo -n true 2>/dev/null; then echo sudo=yes
+elif command -v sudo >/dev/null 2>&1 && id -Gn 2>/dev/null | tr ' ' '\n' | grep -qxE 'sudo|wheel|admin'; then echo sudo=password
+else echo sudo=no; fi
 if [ -d /run/systemd/system ]; then echo systemd=yes; else echo systemd=no; fi
 echo '--commands--'
 if command -v bash >/dev/null 2>&1; then
@@ -78,6 +80,10 @@ def parse(output: str) -> dict:
                 passport[key] = int(value)
         elif key in _FLAGS:
             passport[key] = value == "yes"
+            if key == "sudo":
+                # There, but it asks for a password: a person's own Mac. Not
+                # the same as no sudo at all.
+                passport["sudo_password"] = value == "password"
         elif key == "shells" and value and value not in passport["shells"]:
             passport["shells"].append(value)
     passport["commands"] = sorted({

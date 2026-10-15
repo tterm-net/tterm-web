@@ -1,10 +1,12 @@
 // The machines page: each machine with its passport, what tTerm Web learned
 // about it when it connected (over SSH from a server, through the agent from
 // a computer), a button for a new terminal, and the terminals already
-// running on it. A computer is online only while its agent runs.
+// running on it. A computer is online only while its agent runs. The owner
+// and admins can remove a machine here (from 0.0.8).
 
-import type { Machine, Passport, Project, TerminalInfo } from "./api";
-import { Computer, Plus, Server, TerminalIcon } from "./icons";
+import type { Machine, Passport, Project, Role, TerminalInfo } from "./api";
+import { Computer, Plus, Server, TerminalIcon, Trash } from "./icons";
+import { lastSeen } from "./time";
 
 interface Props {
   projects: Project[];
@@ -12,6 +14,19 @@ interface Props {
   onAdd: (projectId: string) => void;
   onOpenTerminal: (machineId: string) => void;
   onGoTo: (terminalId: string) => void;
+  onRemove: (machine: Machine) => void;
+}
+
+/** Whether this role may add and remove machines. */
+export function canManage(role: Role): boolean {
+  return role === "owner" || role === "admin";
+}
+
+/** What sudo is like there: works, asks for a password, or is not there. */
+export function sudoText(p: Passport): string | null {
+  if (p.sudo === undefined) return null;
+  if (p.sudo) return "works";
+  return p.sudo_password ? "asks for a password" : "not available";
 }
 
 function gb(kb?: number): string | null {
@@ -31,7 +46,7 @@ function facts(p: Passport): [string, string][] {
     ["Packages", p.package_manager ?? null],
     ["Shell", p.shell ? `${p.shell}${p.shells?.length
       ? ` (has ${p.shells.join(", ")})` : ""}` : null],
-    ["sudo", p.sudo === undefined ? null : p.sudo ? "works" : "not available"],
+    ["sudo", sudoText(p)],
     ["Commands", p.commands_count ? `${p.commands_count} known` : null],
     ["Agent", p.agent ? `tterm-agent ${p.agent}` : null],
     ["Account", p.user ?? null],
@@ -39,12 +54,15 @@ function facts(p: Passport): [string, string][] {
   return rows.filter((row): row is [string, string] => row[1] !== null);
 }
 
-function MachineCard({ machine, code, terminals, onOpenTerminal, onGoTo }: {
+function MachineCard({ machine, code, terminals, manage, onOpenTerminal, onGoTo,
+  onRemove }: {
   machine: Machine;
   code: string;
   terminals: TerminalInfo[];
+  manage: boolean;
   onOpenTerminal: (machineId: string) => void;
   onGoTo: (terminalId: string) => void;
+  onRemove: (machine: Machine) => void;
 }) {
   const passport = machine.passport ?? {};
   const computer = machine.kind === "computer";
@@ -63,6 +81,7 @@ function MachineCard({ machine, code, terminals, onOpenTerminal, onGoTo }: {
                 <span className={offline ? "dot away" : "dot open"}
                   aria-hidden="true" />
                 {offline ? "offline" : "online"}
+                {offline && machine.lastSeen ? `, ${lastSeen(machine.lastSeen)}` : ""}
               </span>
             )}
             {[machine.os, machine.host].filter(Boolean).join(" · ")}
@@ -72,8 +91,9 @@ function MachineCard({ machine, code, terminals, onOpenTerminal, onGoTo }: {
       </div>
       {offline && (
         <p className="machine-note">
-          Its agent is not running. Start it on the computer with the same
-          command as when you added it; this page notices within ten seconds.
+          The computer is asleep or offline, or its agent is not running. It
+          comes back by itself when its agent can connect; this page notices
+          within ten seconds.
         </p>
       )}
       <dl className="facts">
@@ -86,7 +106,7 @@ function MachineCard({ machine, code, terminals, onOpenTerminal, onGoTo }: {
       </dl>
       <div className="button-row">
         <button type="button" className="button-accent" disabled={offline}
-          title={offline ? "Start its agent first" : undefined}
+          title={offline ? "It is offline: asleep, or its agent is not running" : undefined}
           onClick={() => onOpenTerminal(machine.id)}>
           Open a terminal
         </button>
@@ -98,13 +118,21 @@ function MachineCard({ machine, code, terminals, onOpenTerminal, onGoTo }: {
             {t.label}
           </button>
         ))}
+        {manage && (
+          <button type="button" className="button-plain quiet push-right"
+            title={`Take ${machine.name} out of tTerm Web`}
+            onClick={() => onRemove(machine)}>
+            <Trash size={14} />
+            Remove
+          </button>
+        )}
       </div>
     </article>
   );
 }
 
 export function Machines(props: Props) {
-  const { projects, terminals, onAdd, onOpenTerminal, onGoTo } = props;
+  const { projects, terminals, onAdd, onOpenTerminal, onGoTo, onRemove } = props;
   const withMachines = projects.filter((p) => p.machines.length > 0);
   const first = projects.find((p) => p.role === "owner") ?? projects[0];
   return (
@@ -133,7 +161,8 @@ export function Machines(props: Props) {
             {project.machines.map((machine) => (
               <MachineCard key={machine.id} machine={machine}
                 code={project.code} onOpenTerminal={onOpenTerminal}
-                onGoTo={onGoTo}
+                onGoTo={onGoTo} onRemove={onRemove}
+                manage={canManage(project.role)}
                 terminals={terminals.filter((t) => t.machineId === machine.id)} />
             ))}
           </div>

@@ -40,6 +40,20 @@ shells it kept, and the core takes each back from the byte it has:
                          exit {ch, gone: true}: no such shell any more;
                          bye: stopped on purpose, its shells end with it
 
+From 0.0.8 a computer is added with an installer (agent 0.13.0 or newer),
+which makes the computer a key of its own and keeps it in ~/.tterm-web:
+
+    agent → core  text   hello {…, token, key}: the token from Add a
+                         machine lets it join, once; the key is what the
+                         computer is known by from then on. Run again, the
+                         installer keeps the key: the computer is the same
+                         one, and the new token only tells the dialog so.
+
+A computer removed in tTerm Web hears it on the spot:
+
+    core → agent  text   error {error, revoked: true}, then the connection
+                         closes; the agent stops and does not come back.
+
 The Telegram bot speaks an older form of it to the same agent; the agent
 tells the two apart by what it is sent.
 
@@ -135,6 +149,9 @@ TOO_OLD = ("This agent is too old for tTerm Web: it needs version 0.11.0 or "
            "newer, from github.com/tterm-net/tterm-agent.")
 NOT_KNOWN = ("This computer is not in tTerm Web, or it was removed. Add it "
              "again: Add a machine, then Computer.")
+KEY_RETIRED = ("This computer's key stopped working when the computer was "
+               "removed from tTerm Web. Run the command again: the agent has "
+               "forgotten that key, and the installer makes a new one.")
 FOR_A_SERVER = ("This token is for a server: its command runs on the server. "
                 "For this computer, choose Computer under Add a machine.")
 TWICE = ("This computer is already connected to tTerm Web: its key is in use "
@@ -149,6 +166,12 @@ CAME_BACK_WITHOUT = ("{name} came back without this terminal: its agent was "
                      "restarted, or the computer was awake and offline for "
                      "over an hour.")
 STOPPED = "The agent on {name} was stopped: this terminal has ended."
+#: What the agent of a computer that was removed hears, and then stops.
+REMOVED = ("This computer was removed from tTerm Web. To connect it again: Add "
+           "a machine, then Computer.")
+#: A computer's passport is read again when its agent changed, at most this
+#: long after it connected: reading it is a script on the computer.
+PASSPORT_AGAIN = 24 * 3600
 
 
 class AgentChannel(Channel):
@@ -304,6 +327,8 @@ class AgentLink(Link):
         self.os = hello.get("os") or ""
         self.version = hello.get("agent") or ""
         self.shell = hello.get("shell") or ""
+        #: The key the computer made for itself, if it came with one.
+        self.key: str | None = hello.get("key")
         #: What the agent can do for tTerm Web; from KEEPS_SHELLS its
         #: shells outlive the connection, and these are the ones it kept.
         self.web = hello.get("web") or 0
@@ -496,6 +521,27 @@ class AgentLink(Link):
                 self._hb_waiting = True
                 self._put(HB)
 
+    def finish(self, message: dict, ending: str) -> None:
+        """Ends the connection from this side, with a last word to the agent:
+        the computer was removed. Its terminals end now, saying `ending`;
+        the message goes out after everything before it, then the
+        connection closes."""
+        if self.gone:
+            return
+        self.lost("the computer was removed", ending=ending)
+        text = json.dumps(message, separators=(",", ":"))
+
+        async def last() -> None:
+            # The sender stops at the end lost() put in its queue: then the
+            # socket is free for this one.
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(asyncio.shield(self._sender), 5)
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(self._send(text), 5)
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(self._close(), 5)
+        self._closing = asyncio.create_task(last())
+
     def lost(self, reason: str, *, ending: str | None = None,
              wait: bool = True) -> None:
         """The connection is gone: every script asked fails, nothing more
@@ -616,6 +662,16 @@ class Agents:
 
     def parked(self, machine_id: uuid.UUID) -> set[int]:
         return set(self._parked.get(machine_id, ()))
+
+    def revoke(self, machine_id: uuid.UUID, ending: str) -> None:
+        """The computer was removed: its agent hears so and stops, and its
+        terminals end saying `ending`, those that waited for it too."""
+        link = self._links.pop(machine_id, None)
+        if link is not None:
+            link.finish({"t": "error", "error": REMOVED, "revoked": True,
+                         "forget": True}, ending)
+        for channel in list(self._parked.pop(machine_id, {}).values()):
+            channel.give_up(ending)
 
     def detach(self, link: AgentLink) -> bool:
         """Forgets a link that went away, but only if it is still current:
@@ -749,7 +805,14 @@ def parse_hello(raw: str) -> dict | None:
     token = message.get("token")
     if not isinstance(token, str) or not token:
         return None
-    hello: dict = {"token": token}
+    hello: dict = {"token": token, "key": None}
+    # The computer's own key, from tTerm Web's installer: one that is not
+    # one makes the hello not one either.
+    key = message.get("key")
+    if key is not None:
+        if not isinstance(key, str) or not machines.KEY_RE.match(key):
+            return None
+        hello["key"] = key
     for key, limit in HELLO_TEXT.items():
         value = message.get(key)
         hello[key] = "".join(ch for ch in value[:limit * 2]
@@ -803,9 +866,21 @@ async def session(ws: WebSocket, pool: asyncpg.Pool, agents: Agents,
             link.machine_id = known["id"]
             link.machine_name = known["name"]
             agents.attach(link)
-            await _seen(pool, known["id"], link)
+            if not await _seen(pool, known["id"], link):
+                # Removed between its hello and now: Remove machine did not
+                # find it connected yet, so it hears it here.
+                agents.revoke(known["id"],
+                              f"{known['name']} was removed from tTerm Web.")
+                await reader
+                return
             log.info("agent online: %s/%s (agent %s)", known["code"],
                      known["name"], link.version or "?")
+            # The installer run again on a computer already here: the
+            # dialog it came from hears that this one is connected.
+            confirmed = bool(hello["key"]) and await machines.confirm_install(
+                pool, hello["token"], known["id"])
+            if confirmed or _passport_stale(known, link):
+                _later(_read_passport_again(pool, known["id"], link))
         else:
             assert claimed is not None
             try:
@@ -836,6 +911,13 @@ async def session(ws: WebSocket, pool: asyncpg.Pool, agents: Agents,
             # The machine's name in tTerm Web, as in the other lines about it,
             # not the one the agent gave in its hello.
             log.info("agent offline: %s", link.machine_name)
+        # From now on the page says when it was last here, unless it is back
+        # already on a newer connection. tTerm Web stopping counts too.
+        if link.machine_id is not None and agents.get(link.machine_id) is None:
+            with contextlib.suppress(Exception):
+                await pool.execute(
+                    "UPDATE machines SET last_seen_at = now() WHERE id = $1",
+                    link.machine_id)
 
 
 async def _meet(ws: WebSocket, pool: asyncpg.Pool, agents: Agents,
@@ -865,7 +947,9 @@ async def _meet(ws: WebSocket, pool: asyncpg.Pool, agents: Agents,
         await _refuse(ws, TOO_OLD, revoked=True)
         return None
 
-    known = await _known(pool, hello["token"])
+    # By its own key, if it brought one (tTerm Web's installer); an agent
+    # started by hand has its token for a key.
+    known = await _known(pool, hello["key"] or hello["token"])
     if known is not None:
         current = agents.get(known["id"])
         if current is not None:
@@ -887,7 +971,7 @@ async def _meet(ws: WebSocket, pool: asyncpg.Pool, agents: Agents,
     if agents.struck_out(address):
         await _refuse(ws, TOO_MANY)
         return None
-    problem = await _install_problem(pool, hello["token"])
+    problem = await _install_problem(pool, hello["token"], hello["key"])
     if problem is not None:
         agents.strike(address)
         await _refuse(ws, *problem)
@@ -935,10 +1019,16 @@ async def _read(ws: WebSocket, link: AgentLink) -> None:
         link.lost("the agent disconnected")
 
 
-async def _refuse(ws: WebSocket, error: str, revoked: bool = False) -> None:
+async def _refuse(ws: WebSocket, error: str, revoked: bool = False,
+                  forget: bool = False) -> None:
+    """The agent hears why not. `forget` (agent 0.13.0 and newer): its key
+    is dead for good, and it drops it from its settings; only for a key that
+    stopped working when its computer was removed."""
+    message: dict = {"t": "error", "error": error, "revoked": revoked}
+    if forget:
+        message["forget"] = True
     with contextlib.suppress(Exception):
-        await ws.send_text(json.dumps({"t": "error", "error": error,
-                                       "revoked": revoked}))
+        await ws.send_text(json.dumps(message))
         await ws.close()
 
 
@@ -947,41 +1037,108 @@ async def _known(pool: asyncpg.Pool, token: str) -> asyncpg.Record | None:
         return None
     return await pool.fetchrow(
         """
-        SELECT m.id, m.name, p.code
+        SELECT m.id, m.name, p.code, m.passport->>'agent' AS agent,
+               m.passport->>'checked_at' AS checked_at
         FROM machines m JOIN projects p ON p.id = m.project_id
         WHERE m.agent_token_hash = $1 AND m.kind = 'computer'
           AND m.removed_at IS NULL
         """, machines.token_hash(token))
 
 
-async def _install_problem(pool: asyncpg.Pool,
-                           token: str) -> tuple[str, bool] | None:
-    """For a token that is no computer's key: why it cannot join, and
-    whether the agent is to stop for good; None if it may try."""
+async def _install_problem(pool: asyncpg.Pool, token: str,
+                           key: str | None = None
+                           ) -> tuple[str, bool, bool] | None:
+    """For a token that is no computer's key: why it cannot join, whether
+    the agent is to stop for good, and whether it is to forget its key (a
+    key that stopped working when its computer was removed); None if it may
+    try."""
     if not machines.TOKEN_RE.match(token):
-        return NOT_KNOWN, True
+        return NOT_KNOWN, True, False
+    if key and await machines.key_retired(pool, key):
+        # A removed computer's installer, run again before its agent heard
+        # of the removal: its key stays dead, and the dialog says what to do.
+        await machines.fail_token(pool, token, KEY_RETIRED)
+        return KEY_RETIRED, True, True
     row = await pool.fetchrow(
         "SELECT kind, state FROM install_tokens WHERE token_hash = $1",
         machines.token_hash(token))
     if row is None:
-        return NOT_KNOWN, True
+        return NOT_KNOWN, True, False
     if row["kind"] != "computer":
         # A server's command, given to an agent: it stays as it was, for
         # the server it was made for.
-        return FOR_A_SERVER, True
+        return FOR_A_SERVER, True, False
     if row["state"] == "connected":
         # It became a computer's key, and that computer was removed.
-        return NOT_KNOWN, True
+        return NOT_KNOWN, True, False
     return None
 
 
 async def _seen(pool: asyncpg.Pool, machine_id: uuid.UUID,
-                link: AgentLink) -> None:
+                link: AgentLink) -> bool:
+    """Notes the computer as seen now, with its agent's version. False if
+    it was removed meanwhile; a database that does not answer is not that."""
+    try:
+        found = await pool.fetchval(
+            "UPDATE machines SET last_seen_at = now(), passport = passport || "
+            "jsonb_build_object('agent', $2::text) "
+            "WHERE id = $1 AND removed_at IS NULL RETURNING id",
+            machine_id, link.version)
+    except Exception:               # noqa: BLE001 - only a note
+        return True
+    return found is not None
+
+
+def _passport_stale(known: asyncpg.Record, link: AgentLink) -> bool:
+    """Whether a computer's passport is to be read again: its agent is
+    another version than when it was read, or it was read long ago."""
+    if link.version and link.version != (known["agent"] or ""):
+        return True
+    try:
+        checked = dt.datetime.fromisoformat(known["checked_at"] or "")
+    except ValueError:
+        return True
+    if checked.tzinfo is None:
+        checked = checked.replace(tzinfo=dt.UTC)
+    return (dt.datetime.now(dt.UTC) - checked).total_seconds() > PASSPORT_AGAIN
+
+
+#: Work started for a link that nobody waits for; kept so it is not lost.
+_BACKGROUND: set[asyncio.Task] = set()
+
+
+def _later(work: Awaitable[None]) -> None:
+    task = asyncio.ensure_future(work)
+    _BACKGROUND.add(task)
+    task.add_done_callback(_BACKGROUND.discard)
+
+
+async def _read_passport_again(pool: asyncpg.Pool, machine_id: uuid.UUID,
+                               link: AgentLink) -> None:
+    """Reads a known computer's passport anew: tools come and go, sudo
+    changes, and an older tTerm Web read less of it."""
+    try:
+        code, out, _ = await link.script(passport.SCRIPT, PASSPORT_TIMEOUT)
+    except LinkError as exc:
+        log.info("could not read the passport of %s again: %s",
+                 link.machine_name, exc)
+        return
+    details = passport.parse(out.decode("utf-8", "replace"))
+    if code != 0 or not details.get("os"):
+        log.info("the passport of %s did not come whole (code %s): kept as it "
+                 "was", link.machine_name, code)
+        return
+    details["checked_at"] = dt.datetime.now(dt.UTC).isoformat(timespec="seconds")
+    details["agent"] = link.version
+    if link.user:
+        details["user"] = link.user
     with contextlib.suppress(Exception):
         await pool.execute(
-            "UPDATE machines SET last_seen_at = now(), passport = passport || "
-            "jsonb_build_object('agent', $2::text) WHERE id = $1",
-            machine_id, link.version)
+            "UPDATE machines SET passport = $2::jsonb "
+            "WHERE id = $1 AND removed_at IS NULL",
+            machine_id, json.dumps(details))
+        log.info("passport of %s read again (agent %s)", link.machine_name,
+                 link.version or "?")
 
 
 async def _join(pool: asyncpg.Pool, claimed: asyncpg.Record,
@@ -1007,4 +1164,5 @@ async def _join(pool: asyncpg.Pool, claimed: asyncpg.Record,
         details["os"] = link.os
     if link.user:
         details["user"] = link.user
-    return await machines.add_computer(pool, claimed, link.name, details)
+    return await machines.add_computer(pool, claimed, link.name, details,
+                                       key=link.key)

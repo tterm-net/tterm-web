@@ -4,11 +4,13 @@ tTerm in the browser: a real terminal with command blocks, for people who work
 with servers and for their teams. Projects, roles, a journal of who ran what,
 and watching a colleague's terminal, always with them knowing.
 
-**Status:** early development. Version 0.0.7 brings the page of the
-mockups: tabs of open terminals from any project, "+" for a terminal on any
-machine, a palette on Cmd+K. And a computer's terminals now live through
-its sleep: with [tterm-agent](https://github.com/tterm-net/tterm-agent)
-0.12.0 they wait while it is away and go on where they were. Since 0.0.6 a
+**Status:** early development. Version 0.0.8 adds a computer with one
+command that installs [tterm-agent](https://github.com/tterm-net/tterm-agent)
+and starts it whenever you log in, removes machines and ends terminals, and
+remembers folded blocks and a cleared feed. Since 0.0.7 the page is the one
+of the mockups: tabs of open terminals from any project, "+" for a terminal
+on any machine, a palette on Cmd+K, and a computer's terminals live through
+its sleep, waiting while it is away and going on where they were. Since 0.0.6 a
 laptop without a public address gets the same terminals as a server, and
 since 0.0.5 a terminal is a feed of blocks, one per command, typed into
 tTerm's own input line: history from all your devices, Tab that asks the
@@ -53,8 +55,12 @@ To connect a server, the server must reach your machines' address: set
 `TTERM_CONNECT_URL` to an address that leads to port 8091 on this computer,
 for instance through a Cloudflare tunnel. Then "Add a machine" gives the
 command to run on the server, and "Open a terminal" opens a shell on it. A
-computer gets a command that starts the agent instead, from a checkout of
-[tterm-agent](https://github.com/tterm-net/tterm-agent).
+computer gets a command that installs the agent instead. To try an agent
+that is not released yet, the same dialog has the command that starts it by
+hand from a checkout of
+[tterm-agent](https://github.com/tterm-net/tterm-agent), or point the
+installer at it: `export TTERM_SRC=file://$HOME/tterm-agent/agent.py` before
+running the command.
 
 The checks need the same PostgreSQL. They create throwaway databases there
 and drop them at the end. With tterm-agent checked out next to this
@@ -76,8 +82,8 @@ tterm/
   api/connect.py where machines talk to us: installer, registration, and
                  the agents of computers, which stay connected
   signer/        the signer: CA keys and short certificates, its own process
-  templates/     the installer for servers, and the shell scripts terminals
-                 put on them
+  templates/     the installers for servers and computers, and the shell
+                 scripts terminals put on them
   server.py      runs both apps, on two ports
   dev.py         python -m tterm.dev: the signer, then the core
   tests/         python -m tterm.tests
@@ -135,18 +141,26 @@ only the classic mode works.
 
 **A computer** has no address to reach, so its agent reaches us: it opens a
 WebSocket to the machines' side and keeps it, and every terminal on that
-computer goes through it. "Add a machine", then "Computer", gives a token
-that connects the agent once within ten minutes; from then on that token is
-the computer's key, and only its hash is kept. Through that connection the
+computer goes through it. "Add a machine", then "Computer", gives a command
+to run there as yourself: `curl -fsSL …/c/TOKEN | sh`. It puts the agent in
+`~/.tterm-web` with a Python environment of its own, makes the computer a
+key of its own (in `~/.tterm-web/env`, readable by you only; tTerm Web keeps
+only its hash), and starts the agent whenever you log in: launchd on macOS,
+systemd on Linux, or in the background until the next restart where there
+is neither. The token in the command lets the computer join once within ten
+minutes. The same command run there again, with a new token, updates the
+agent and keeps the key, so the computer stays the machine it was; its open
+terminals end, as the agent restarts. `~/.tterm-web/uninstall.sh` removes
+it all; the tTerm bot's agent in `~/.tterm` is never touched. Through that connection the
 agent starts the shell a terminal asks for, in a terminal of the page's size,
 and passes the bytes both ways untouched; it also runs the small sh scripts
 behind Tab and the lists, and the one that puts the shell scripts in
 `~/.tterm`. A computer is online while its agent runs, and the page shows
-it. The agent is still a pipe: markers, blocks and the rest stay here, as
-for a server. A computer
-added again is a new machine, even under the same name: a name is whatever
-a computer calls itself. A second agent with a key already connected is
-turned away while the first one answers.
+it, or when it was last seen. The agent is still a pipe: markers, blocks
+and the rest stay here, as for a server. A computer installed afresh (its
+`~/.tterm-web` gone) is a new machine, even under the same name: a name is
+whatever a computer calls itself. A second agent with a key already
+connected is turned away while the first one answers.
 
 **A computer that sleeps.** When its agent's connection goes (the lid is
 closed, the network blinks), the agent keeps the shells running and the
@@ -158,6 +172,16 @@ Terminals wait up to 12 hours; the agent keeps its shells for an hour of the
 computer being awake without the link, and time asleep does not count. A
 terminal the agent no longer has (it was restarted) ends and says why; one
 stopped with Ctrl+C says goodbye, and its terminals end at once.
+
+**Removing.** The owner and admins of a project can remove a machine, from
+its card or from the sidebar, after a question. Its terminals end and say
+why, and it leaves the lists; the journal keeps what happened. A computer's
+agent is told, forgets its key and stops; that key never works again, so a
+key that leaked is dead once its computer is removed. A server
+stops being signed in to, and the page gives the command that takes tTerm
+Web's certificate authority out of its `authorized_keys`, unless the same
+server is in another project too. Ending a terminal
+from the sidebar or the palette ends its shell, after a question too.
 
 The machines' side is open to the internet, so `/agent` keeps strangers
 short: the hello is small and comes at once, only a few connections from
@@ -171,7 +195,8 @@ told of a new size. Closing a tab leaves its terminal running, in the
 sidebar under its machine, where a click brings the tab back. "+" opens a
 terminal on any machine, and Cmd+K on a Mac, Ctrl+Shift+K elsewhere, jumps
 to any terminal or machine or does what the page can; plain Ctrl stays the
-terminal's. A tab's dot is its machine: green on line, a turning ring while
+terminal's. Folded blocks, and a feed cleared with `clear` or Ctrl+L, stay
+so after Classic and back or a reload, in this browser. A tab's dot is its machine: green on line, a turning ring while
 a command runs, a hollow ring while the computer is away. When the page
 loses tTerm Web, a strip says so until it is back.
 

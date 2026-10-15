@@ -25,7 +25,7 @@ from pathlib import Path
 import asyncssh
 import websockets
 
-from ..core import shell, terminals
+from ..core import machines, shell, terminals
 from ..core.machines import remember_cas
 from .harness import request, shell_server
 
@@ -421,6 +421,94 @@ async def test_a_terminal_runs_over_ssh_and_keeps_blocks(h):
                 t.id)]
             assert kinds == ["terminal.opened", "terminal.closed"], kinds
             assert second.reason == "Closed."
+    finally:
+        shutil.rmtree(home, ignore_errors=True)
+
+
+async def test_a_server_is_removed(h):
+    """Remove machine (0.0.8), a server: its terminals end and say why, it is
+    no longer listed nor signed in to, its commands stay in the history,
+    and the answer has the command that takes tTerm Web's line out of the
+    server. Only the owner and admins may remove it."""
+    login, full = _login_shell()
+    home = _home()
+    try:
+        async with h.core() as core, \
+                shell_server(await _ca_public(core), home, login) \
+                as (port, host_key):
+            machine_id = await _machine(core, port, host_key)
+            t = await core.terminals.open(machine_id, 80, 24)
+            await _until(lambda: _prompts(t) >= 1, what="the first prompt")
+            if full:
+                t.write(b"echo before-the-removal\n")
+                await _until(lambda: _prompts(t) >= 2, what="echo")
+            project = await core.pool.fetchval(
+                "SELECT project_id FROM machines WHERE id = $1", machine_id)
+            member, stranger = [await core.pool.fetchval(
+                "INSERT INTO users (name) VALUES ($1) RETURNING id", name)
+                for name in ("Member", "Stranger")]
+            await core.pool.execute(
+                "INSERT INTO project_members (project_id, user_id, role) "
+                "VALUES ($1, $2, 'member')", project, member)
+            try:
+                await machines.remove(core.pool, member, machine_id)
+            except PermissionError:
+                pass
+            else:
+                raise AssertionError("a member removed a machine")
+            assert await machines.remove(core.pool, stranger, machine_id) is None, \
+                "not even seen by someone outside the project"
+
+            r = await request(core.page_port, "DELETE",
+                              f"/api/machines/{machine_id}", headers=CHANGE)
+            assert r.status == 200, r.text
+            ca_id = await core.pool.fetchval(
+                "SELECT ca_id FROM machines WHERE id = $1", machine_id)
+            assert r.json() == {"id": str(machine_id), "name": "lab",
+                                "kind": "server",
+                                "cleanup": machines.server_cleanup(ca_id)}, r.json()
+            assert ca_id in r.json()["cleanup"]
+            # The same server in two projects: removed from one, it keeps
+            # tTerm Web's line for the other, and no command says otherwise.
+            async with core.pool.acquire() as conn:
+                other = await conn.fetchval(
+                    "INSERT INTO projects (owner_id, name, code) VALUES ($1, "
+                    "'Work', 'W') RETURNING id", core.owner.id)
+                await conn.execute(
+                    "INSERT INTO project_members (project_id, user_id, role) "
+                    "VALUES ($1, $2, 'owner')", other, core.owner.id)
+            keys = [host_key.export_public_key().decode().strip()]
+            pair = [await core.pool.fetchval(
+                "INSERT INTO machines (project_id, kind, name, host, port, login, "
+                "host_keys, ca_id) VALUES ($1, 'server', 'lab', '127.0.0.1', $2, "
+                "'tterm', $3, $4) RETURNING id", where, port, keys, ca_id)
+                for where in (project, other)]
+            r = await request(core.page_port, "DELETE",
+                              f"/api/machines/{pair[0]}", headers=CHANGE)
+            assert r.status == 200 and "cleanup" not in r.json() and \
+                r.json()["shared"] is True, r.json()
+            r = await request(core.page_port, "DELETE",
+                              f"/api/machines/{pair[1]}", headers=CHANGE)
+            assert r.status == 200 and r.json()["cleanup"], \
+                "the last one gives the command"
+            await _until(lambda: t.state == "ended", what="its end")
+            assert t.reason == "lab was removed from tTerm Web.", t.reason
+            state = (await request(core.page_port, "GET", "/api/state")).json()
+            assert [m for p in state["projects"] for m in p["machines"]] == [] \
+                and state["terminals"] == [], state
+            try:
+                await core.terminals.open(machine_id, 80, 24)
+            except terminals.NotAllowed:
+                pass
+            else:
+                raise AssertionError("a terminal on a removed server")
+            # Its tab still says why it ended.
+            r = await request(core.page_port, "GET", f"/api/terminals/{t.id}")
+            assert r.json()["reason"] == t.reason, r.json()
+            if full:
+                history = await core.terminals.history(t.id)
+                assert {"command": "echo before-the-removal", "here": True} \
+                    in (history or []), history
     finally:
         shutil.rmtree(home, ignore_errors=True)
 

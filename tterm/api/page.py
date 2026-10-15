@@ -147,6 +147,7 @@ def create_page_app(pool: asyncpg.Pool, owner: Person, dist: Path,
         except ValueError as exc:
             return _json({"error": str(exc)}, 422)
         return _json({"id": str(install.id), "command": install.command,
+                      "byHand": install.by_hand,
                       "expiresAt": install.expires_at.isoformat(),
                       "minutes": machines.INSTALL_MINUTES}, 201)
 
@@ -163,6 +164,25 @@ def create_page_app(pool: asyncpg.Pool, owner: Person, dist: Path,
         if details is None:
             return _json({"error": "no such machine"}, 404)
         return _json(with_agents(details))
+
+    @app.delete("/api/machines/{machine_id}")
+    async def remove_machine(machine_id: uuid.UUID) -> Response:
+        """Takes the machine out of tTerm Web. Its terminals end, a
+        computer's agent hears it is removed and stops; the history stays.
+        For a server, the answer carries the command that takes tTerm
+        Web's access back on the server itself."""
+        try:
+            removed = await machines.remove(pool, owner.id, machine_id)
+        except PermissionError as exc:
+            return _json({"error": str(exc)}, 403)
+        if removed is None:
+            return _json({"error": "no such machine"}, 404)
+        ending = f"{removed['name']} was removed from tTerm Web."
+        if agents is not None and removed["kind"] == "computer":
+            agents.revoke(machine_id, ending)
+        if terminals is not None:
+            await terminals.end_machine(machine_id, ending)
+        return _json(removed)
 
     @app.post("/api/terminals")
     async def open_terminal(request: TerminalRequest) -> Response:

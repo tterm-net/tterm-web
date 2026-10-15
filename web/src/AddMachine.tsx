@@ -1,7 +1,9 @@
 // "Add a machine", from the approved mockup: pick the project, run one
 // command on the server, keep the window open, see it connect. A computer
-// (from 0.0.6) runs its agent with a token instead; the agent connects out
-// and the window sees the computer come in the same way.
+// (from 0.0.6) runs its agent instead; the agent connects out and the window
+// sees the computer come in the same way. From 0.0.8 a computer's command is
+// an installer too, with autostart; starting the agent by hand stays, for
+// trying one that is not released yet.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -35,6 +37,7 @@ export function AddMachine(props: Props) {
   const [status, setStatus] = useState<InstallStatus | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [copiedHand, setCopiedHand] = useState(false);
   const [now, setNow] = useState(Date.now());
   const dialog = useRef<HTMLElement>(null);
   const announced = useRef(false);
@@ -53,6 +56,7 @@ export function AddMachine(props: Props) {
     setStatus(null);
     setProblem(null);
     setCopied(false);
+    setCopiedHand(false);
     announced.current = false;
     newInstall(projectId, kind)
       .then(setInstall)
@@ -106,11 +110,11 @@ export function AddMachine(props: Props) {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const copy = async () => {
-    if (!install) return;
+  const copy = async (text: string | null | undefined, done: () => void) => {
+    if (!text) return;
     try {
-      await navigator.clipboard.writeText(install.command);
-      setCopied(true);
+      await navigator.clipboard.writeText(text);
+      done();
     } catch {
       notYet("Could not copy: select the command and copy it by hand.");
     }
@@ -161,22 +165,44 @@ export function AddMachine(props: Props) {
               <li>
                 <span className="step-number" aria-hidden="true">1</span>
                 <div className="dialog-step">
-                  <strong>Start the agent on the computer</strong>
+                  <strong>Run this on the computer</strong>
                   <div className="command-box">
                     <code>{install ? install.command : "…"}</code>
                     <button type="button" className="button-accent"
-                      onClick={copy} disabled={!install}>
+                      onClick={() => copy(install?.command, () => setCopied(true))}
+                      disabled={!install}>
                       <Copy size={14} />
                       {copied ? "Copied" : "Copy"}
                     </button>
                   </div>
                   <span className="hint">
-                    In the folder of tterm-agent 0.11.0 or newer, as yourself,
-                    not root. It needs Python 3.11+ with the websockets
-                    package. The token connects it within the next {left}{" "}
-                    minute{left === 1 ? "" : "s"}, and from then on it is this
-                    computer's key.
+                    In a terminal on that computer, as yourself, not with sudo.
+                    It needs Python 3.11 or newer. Works once, for the next{" "}
+                    {left} minute{left === 1 ? "" : "s"}. Run a new one later
+                    to update the agent: the computer stays as it is, its open
+                    terminals end.
                   </span>
+                  {install?.byHand && (
+                    <details className="by-hand">
+                      <summary>Or start the agent by hand</summary>
+                      <span className="hint">
+                        From a copy of tterm-agent 0.11.0 or newer, with Python
+                        that has the websockets package. For trying an agent
+                        that is not released yet: it runs while its terminal
+                        window is open, and the token becomes the computer's
+                        key.
+                      </span>
+                      <div className="command-box">
+                        <code>{install.byHand}</code>
+                        <button type="button" className="button-plain"
+                          onClick={() => copy(install.byHand,
+                            () => setCopiedHand(true))}>
+                          <Copy size={14} />
+                          {copiedHand ? "Copied" : "Copy"}
+                        </button>
+                      </div>
+                    </details>
+                  )}
                 </div>
               </li>
               <li>
@@ -190,17 +216,19 @@ export function AddMachine(props: Props) {
               </li>
             </ol>
             <details className="explain">
-              <summary>What the agent does</summary>
+              <summary>What the command does</summary>
               <ul>
-                <li>Runs as you, never as root, and opens no ports: it
-                  connects out to tTerm Web and keeps that one connection.</li>
-                <li>Each terminal here is a shell of yours on that computer,
-                  as in any terminal app.</li>
-                <li>Tab and the lists of directories and branches come from
-                  small scripts it runs when asked, outside the terminal.</li>
-                <li>The computer is online while the agent runs: Ctrl+C in its
-                  window disconnects it. An installer that keeps it running
-                  comes later.</li>
+                <li>Puts tTerm's agent in ~/.tterm-web, with a Python
+                  environment of its own, and starts it whenever you log in
+                  (launchd on macOS, systemd on Linux). The tTerm bot's agent
+                  in ~/.tterm, if there is one, stays as it is.</li>
+                <li>Makes this computer a key of its own and keeps it there,
+                  readable by you only. The token in the command only lets it
+                  join, once.</li>
+                <li>The agent runs as you, never as root, and opens no ports:
+                  it connects out to tTerm Web and keeps that one
+                  connection. Each terminal here is a shell of yours there.</li>
+                <li>~/.tterm-web/uninstall.sh removes it all.</li>
               </ul>
             </details>
           </>
@@ -216,7 +244,8 @@ export function AddMachine(props: Props) {
                   <div className="command-box">
                     <code>{install ? install.command : "…"}</code>
                     <button type="button" className="button-accent"
-                      onClick={copy} disabled={!install}>
+                      onClick={() => copy(install?.command, () => setCopied(true))}
+                      disabled={!install}>
                       <Copy size={14} />
                       {copied ? "Copied" : "Copy"}
                     </button>
@@ -334,7 +363,7 @@ function Progress({ state, problem, error, onAgain, project, kind }: {
       </span>
       <span className="hint">
         {computer
-          ? `It appears in ${project} a moment after the agent starts.`
+          ? `It appears in ${project} a few seconds after the command finishes.`
           : `It appears in ${project} as soon as the script finishes, usually
             within a minute.`}
       </span>

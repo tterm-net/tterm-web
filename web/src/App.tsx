@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AddMachine } from "./AddMachine";
 import {
-  loadState, openTerminal, saveTheme, type MachineKind, type State,
-  type TerminalInfo, type Theme,
+  endTerminal, loadState, openTerminal, removeMachine, saveTheme,
+  type Machine, type MachineKind, type State, type TerminalInfo, type Theme,
 } from "./api";
+import { Confirm, Removed } from "./Confirm";
 import { Finder, type FinderGroup, type FinderItem } from "./Finder";
 import {
   ChevronRight, Close, Computer, Moon, Pin, Plus, Server, Sun,
@@ -18,6 +19,7 @@ import {
   applyTheme, onSystemThemeChange, rememberedPin, rememberPin, shown,
   type Shown,
 } from "./theme";
+import { lastSeen } from "./time";
 import { Welcome } from "./Welcome";
 
 /** Hovering the ⟩ opens the sidebar after this pause, so that a mouse merely
@@ -57,6 +59,11 @@ function dotOf(status: TabStatus | undefined, known: TerminalInfo | undefined,
   return "open";
 }
 
+/** What waits for a yes before it is done. */
+type Asking =
+  | { kind: "remove"; machine: Machine }
+  | { kind: "end"; terminal: TerminalInfo };
+
 function sameStatus(a: TabStatus | undefined, b: TabStatus): boolean {
   return !!a && a.label === b.label && a.machine === b.machine &&
     a.where === b.where && a.state === b.state && a.away === b.away &&
@@ -80,6 +87,8 @@ export function App() {
   const [picking, setPicking] = useState(false);
   const [palette, setPalette] = useState(false);
   const [online, setOnline] = useState(true);
+  const [asking, setAsking] = useState<Asking | null>(null);
+  const [removed, setRemoved] = useState<{ name: string; cleanup: string } | null>(null);
   const openTimer = useRef<number | undefined>(undefined);
   const closeTimer = useRef<number | undefined>(undefined);
   const toastTimer = useRef<number | undefined>(undefined);
@@ -216,6 +225,34 @@ export function App() {
     }
   }, [shownTabs, terminalId, navigate]);
 
+  // Removing a machine and ending a terminal ask first (Confirm).
+  const askRemove = useCallback((machine: Machine) => {
+    setPicking(false);
+    setPalette(false);
+    setAsking({ kind: "remove", machine });
+  }, []);
+  const askEnd = useCallback((terminal: TerminalInfo) => {
+    setPicking(false);
+    setPalette(false);
+    setAsking({ kind: "end", terminal });
+  }, []);
+  const remove = useCallback(async (machine: Machine) => {
+    // A refusal comes back as an error, which the dialog shows.
+    const result = await removeMachine(machine.id);
+    setAsking(null);
+    refresh();
+    if (result.cleanup) setRemoved({ name: result.name, cleanup: result.cleanup });
+    else if (result.shared) {
+      notYet(`${result.name} is removed from tTerm Web. The same server is in ` +
+        "another project too, so tTerm Web's access on it stays.");
+    } else notYet(`${result.name} is removed from tTerm Web.`);
+  }, [refresh, notYet]);
+  const end = useCallback(async (terminal: TerminalInfo) => {
+    await endTerminal(terminal.id);
+    setAsking(null);
+    refresh();
+  }, [refresh]);
+
   const toggleTheme = useCallback(() => {
     const next: Theme = shown(theme) === "light" ? "dark" : "light";
     setTheme(next);
@@ -329,6 +366,8 @@ export function App() {
     setAdding({ projectId, kind });
   };
   const goTo = (id: string) => navigate(`/t/${id}`);
+  const runningHere = terminalId ? live.find((t) => t.id === terminalId) : undefined;
+  const machineIds = new Set(state.projects.flatMap((p) => p.machines.map((m) => m.id)));
   const dotFor = (t: TerminalInfo): Dot =>
     dotOf(statuses[t.id], t, false);
 
@@ -352,12 +391,13 @@ export function App() {
         return {
           key: `m-${m.id}`,
           label: `${p.code}/${m.name}`,
-          hint: offline ? "offline" : m.os ?? m.host ?? undefined,
+          hint: offline ? ["offline", lastSeen(m.lastSeen)].filter(Boolean).join(", ")
+            : m.os ?? m.host ?? undefined,
           icon: m.kind === "server" ? <Server size={15} /> : <Computer size={15} />,
           muted: offline,
           words: [m.name, m.host, m.os, m.kind].filter(Boolean).join(" "),
           run: () => (offline
-            ? notYet(`${m.name} is offline: start its agent first.`)
+            ? notYet(`${m.name} is offline: it comes back when its agent connects.`)
             : startTerminal(m.id)),
         };
       }),
@@ -409,6 +449,14 @@ export function App() {
         words: "tab close",
         run: () => closeTab(terminalId),
       }] : []),
+      ...(runningHere ? [{
+        key: "end-terminal",
+        label: "End this terminal",
+        hint: "its shell ends",
+        icon: <Close size={15} />,
+        words: "terminal end stop kill exit shell",
+        run: () => askEnd(runningHere),
+      }] : []),
       {
         key: "theme",
         label: shownTheme === "light" ? "Switch to the dark theme"
@@ -457,14 +505,16 @@ export function App() {
         {shownTabs.map((id) => (
           <TerminalView key={id} terminalId={id} active={id === terminalId}
             shownTheme={shownTheme} onStatus={onStatus} onCloseTab={closeTab}
-            onOpenNew={startTerminal} onChanged={refresh} notify={notYet} />
+            onOpenNew={startTerminal} onChanged={refresh} notify={notYet}
+            machineThere={(machineId) => machineIds.has(machineId)} />
         ))}
         {!terminalId && (
           <div className="page-scroll">
             {anyMachine ? (
               <Machines projects={state.projects} terminals={state.terminals}
                 onAdd={(projectId) => startAdding(projectId)}
-                onOpenTerminal={startTerminal} onGoTo={goTo} />
+                onOpenTerminal={startTerminal} onGoTo={goTo}
+                onRemove={askRemove} />
             ) : (
               <Welcome me={state.me} personal={personal}
                 onAdd={(kind) => personal && startAdding(personal.id, kind)} />
@@ -500,6 +550,8 @@ export function App() {
             if (!pinned) setOpen(false);
             goTo(id);
           }}
+          onRemoveMachine={askRemove}
+          onEndTerminal={askEnd}
           onHome={() => {
             if (!pinned) setOpen(false);
             navigate("/");
@@ -525,6 +577,46 @@ export function App() {
             setAdding(null);
             startTerminal(machineId);
           }} />
+      )}
+
+      {asking?.kind === "remove" && (
+        <Confirm title={`Remove ${asking.machine.name}?`}
+          confirm={`Remove ${asking.machine.name}`}
+          onConfirm={() => remove(asking.machine)}
+          onCancel={() => setAsking(null)}>
+          <p>
+            It disappears from tTerm Web, and its terminals end. The commands
+            typed there stay in the history.
+          </p>
+          {asking.machine.kind === "computer" ? (
+            <p className="hint">
+              Its agent hears that the computer is removed and stops. To
+              connect the computer again: Add a machine, then Computer.
+            </p>
+          ) : (
+            <p className="hint">
+              tTerm Web stops signing in to it. On the server itself, tTerm
+              Web's access stays until you take it back there: the command for
+              that comes next, unless the server is in another project too.
+            </p>
+          )}
+        </Confirm>
+      )}
+
+      {asking?.kind === "end" && (
+        <Confirm title={`End ${asking.terminal.label}?`} confirm="End the terminal"
+          onConfirm={() => end(asking.terminal)}
+          onCancel={() => setAsking(null)}>
+          <p>
+            Its shell ends, and whatever runs in it stops, as when a terminal
+            window is closed. What it ran stays in its tab and in the history.
+          </p>
+        </Confirm>
+      )}
+
+      {removed && (
+        <Removed name={removed.name} cleanup={removed.cleanup}
+          onClose={() => setRemoved(null)} notify={notYet} />
       )}
 
       {toast && <div className="toast" role="status">{toast}</div>}

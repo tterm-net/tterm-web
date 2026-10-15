@@ -4,15 +4,17 @@
 // never changes the terminal's width; pinned, it narrows the page once.
 //
 // A machine opens a new terminal on it; a terminal goes to its tab, opening
-// the tab again if it was closed.
+// the tab again if it was closed. Pointed at, a machine offers Remove and a
+// terminal End (from 0.0.8); both ask first.
 
 import { useState } from "react";
-import type { Me, Project, Role, TerminalInfo } from "./api";
+import type { Machine, Me, Project, Role, TerminalInfo } from "./api";
 import {
-  ChevronDown, Close, Computer, Dots, Logo, Moon, Pin, Plus, Server, Sun,
+  ChevronDown, Close, Computer, Dots, Logo, Moon, Pin, Plus, Server, Sun, Trash,
 } from "./icons";
 import type { Dot } from "./TabBar";
 import type { Shown } from "./theme";
+import { lastSeen } from "./time";
 
 const ROLE_LABEL: Record<Role, string> = {
   owner: "Owner",
@@ -36,6 +38,8 @@ interface Props {
   currentTerminal?: string;
   onOpenTerminal: (machineId: string) => void;
   onGoTo: (terminalId: string) => void;
+  onRemoveMachine: (machine: Machine) => void;
+  onEndTerminal: (terminal: TerminalInfo) => void;
   /** The machines page. */
   onHome: () => void;
   dotFor: (terminal: TerminalInfo) => Dot;
@@ -120,35 +124,55 @@ export function Sidebar(props: Props) {
                 <ul className="tree">
                   {project.machines.map((machine) => {
                     const offline = machine.kind === "computer" && !machine.online;
+                    const seen = offline ? lastSeen(machine.lastSeen) : "";
                     return (
                     <li key={machine.id}>
-                      <button type="button"
-                        className={offline ? "tree-machine offline" : "tree-machine"}
-                        title={offline ? `${machine.name} is offline: its agent is not running`
-                          : `Open a new terminal on ${machine.name}`}
-                        onClick={() => offline
-                          ? notYet(`${machine.name} is offline: start its agent first.`)
-                          : onOpenTerminal(machine.id)}>
-                        {machine.kind === "server" ? <Server size={15} />
-                          : <Computer size={15} />}
-                        <span>{machine.name}</span>
-                      </button>
+                      <div className="tree-row">
+                        <button type="button"
+                          className={offline ? "tree-machine offline" : "tree-machine"}
+                          title={offline
+                            ? `${machine.name} is offline: asleep, or its agent is not running${seen ? ` (${seen})` : ""}`
+                            : `Open a new terminal on ${machine.name}`}
+                          onClick={() => offline
+                            ? notYet(`${machine.name} is offline${seen ? `, ${seen}` : ""}: it comes back when its agent connects.`)
+                            : onOpenTerminal(machine.id)}>
+                          {machine.kind === "server" ? <Server size={15} />
+                            : <Computer size={15} />}
+                          <span>{machine.name}</span>
+                        </button>
+                        {canAdd && (
+                          <button type="button" className="tree-action"
+                            aria-label={`Remove ${machine.name}`}
+                            title={`Remove ${machine.name} from tTerm Web`}
+                            onClick={() => props.onRemoveMachine(machine)}>
+                            <Trash size={14} />
+                          </button>
+                        )}
+                      </div>
                       {terminals.some((t) => t.machineId === machine.id) && (
                         <ul className="tree-terminals">
                           {terminals.filter((t) => t.machineId === machine.id)
                             .map((t) => (
                               <li key={t.id}>
-                                <button type="button" className="tree-terminal"
-                                  aria-current={t.id === currentTerminal
-                                    ? "page" : undefined}
-                                  title={dotFor(t) === "away"
-                                    ? `Go to ${t.label}: it waits for ${machine.name} to come back`
-                                    : `Go to ${t.label}`}
-                                  onClick={() => onGoTo(t.id)}>
-                                  <span className={`dot ${dotFor(t)}`}
-                                    aria-hidden="true" />
-                                  terminal {t.name}
-                                </button>
+                                <div className="tree-row">
+                                  <button type="button" className="tree-terminal"
+                                    aria-current={t.id === currentTerminal
+                                      ? "page" : undefined}
+                                    title={dotFor(t) === "away"
+                                      ? `Go to ${t.label}: it waits for ${machine.name} to come back`
+                                      : `Go to ${t.label}`}
+                                    onClick={() => onGoTo(t.id)}>
+                                    <span className={`dot ${dotFor(t)}`}
+                                      aria-hidden="true" />
+                                    terminal {t.name}
+                                  </button>
+                                  <button type="button" className="tree-action"
+                                    aria-label={`End ${t.label}`}
+                                    title={`End ${t.label}: its shell ends`}
+                                    onClick={() => props.onEndTerminal(t)}>
+                                    <Close size={13} />
+                                  </button>
+                                </div>
                               </li>
                             ))}
                         </ul>

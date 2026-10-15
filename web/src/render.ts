@@ -25,6 +25,9 @@ export interface Rendered {
   lines: Line[];
   /** The output was longer than a block keeps: earlier lines are gone. */
   limited: boolean;
+  /** It drew on the second screen at some point: a full-screen program
+   * (top, vim, less). What it drew there is not in the lines. */
+  alt?: boolean;
 }
 
 /** Lines a frozen block keeps, at most. */
@@ -196,12 +199,18 @@ export function renderOutput(data: Uint8Array, cols: number,
   });
   t.loadAddon(new Unicode11Addon());
   t.unicode.activeVersion = "11";
+  let alt = false;
+  const watch = t.buffer.onBufferChange((b) => {
+    if (b.type === "alternate") alt = true;
+  });
   return new Promise((resolve) => {
     t.write(data, () => {
       const buffer = t.buffer.normal;
       const rendered = readBuffer(buffer, buffer.length >= keep + ROWS);
+      const stillThere = t.buffer.active.type === "alternate";
+      watch.dispose();
       t.dispose();
-      resolve(rendered);
+      resolve({ ...rendered, alt: alt || stillThere });
     });
   });
 }

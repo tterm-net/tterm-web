@@ -679,6 +679,60 @@ code {
   background: var(--raised);
 }
 
+/* A machine or a terminal with its one action, shown when pointed at:
+ * Remove for a machine, End for a terminal. It covers the end of the name
+ * rather than moving it. */
+.tree-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.tree-row > .tree-machine,
+.tree-row > .tree-terminal {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.tree-action {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--raised);
+  color: var(--faint);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.tree-row:hover .tree-action,
+.tree-action:focus-visible {
+  opacity: 1;
+}
+
+.tree-action:hover {
+  background: var(--line);
+  color: var(--red-ink);
+}
+
+/* No pointer to hover with: the action is always there, after the name. */
+@media (hover: none) {
+  .tree-action {
+    position: static;
+    transform: none;
+    flex: none;
+    background: transparent;
+    opacity: 1;
+  }
+}
+
 /* ------------------------------------------------------------------ dialog */
 
 .scrim {
@@ -908,6 +962,34 @@ code {
   gap: 6px;
   font-size: 13px;
   color: var(--dim);
+}
+
+/* Starting the agent by hand, folded under the installer. */
+.by-hand summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dim);
+}
+
+.by-hand > .hint {
+  display: block;
+  margin-top: 8px;
+}
+
+.by-hand > .command-box {
+  margin-top: 8px;
+}
+
+.command-box .button-plain {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 8px;
+  font-size: 12px;
 }
 
 .note-box {
@@ -1606,7 +1688,8 @@ code {
 }
 
 /* Beside "Open a terminal", so of its size. */
-.button-plain.running {
+.button-plain.running,
+.button-plain.quiet {
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -1614,6 +1697,20 @@ code {
   padding: 0 12px;
   border-radius: 8px;
   font-size: 12px;
+}
+
+/* Remove, at the end of a machine's buttons: there, not loud. */
+.button-plain.quiet {
+  color: var(--dim);
+}
+
+.button-plain.quiet:hover {
+  border-color: var(--red-line);
+  color: var(--red-ink);
+}
+
+.push-right {
+  margin-left: auto;
 }
 
 /* ------------------------------------------------------------------- feed */
@@ -2284,6 +2381,42 @@ code {
 
 .button-danger:hover {
   filter: brightness(1.06);
+}
+
+.button-danger:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.button-danger.big {
+  height: 40px;
+  padding: 0 16px;
+  border-radius: 9px;
+  font-size: 13px;
+}
+
+/* Asking before removing a machine or ending a terminal, and what is left
+ * to do on a removed server. */
+.confirm-dialog {
+  max-width: 480px;
+  gap: 16px;
+}
+
+.confirm-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--dim);
+}
+
+.confirm-body p {
+  margin: 0;
+}
+
+.confirm-body strong {
+  color: var(--ink);
 }
 
 .confirm-bar .button-plain {
