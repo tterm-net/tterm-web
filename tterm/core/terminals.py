@@ -70,7 +70,8 @@ BLOCK_TAIL = 512 * 1024
 KEEP_ENDED = 15 * 60
 #: Typed before the shell is up, kept until it is.
 PENDING_MAX = 64 * 1024
-#: Roles that may open terminals; observers only watch.
+#: Roles that may open terminals; observers only watch. How many one person
+#: may have open at once is their plan's ("terminals" in its limits).
 CAN_OPEN = ("owner", "admin", "member")
 
 #: What deploying the shell scripts may take, at most.
@@ -849,17 +850,23 @@ def _block_json(row: asyncpg.Record) -> dict:
 
 
 class Terminals:
-    """The live terminals of this core."""
+    """The live terminals of this core, everyone's. Each belongs to whoever
+    opened it, and only they see it: every way in takes the person asking."""
 
     def __init__(self, pool: asyncpg.Pool, signer: SignerClient,
-                 owner: Person, agents=None) -> None:
+                 agents=None) -> None:
         self.pool = pool
         self.signer = signer
-        self.owner = owner
         #: The connected agents (agents.Agents), for terminals on computers.
         self.agents = agents
         self._live: dict[uuid.UUID, Terminal] = {}
+        #: One opening at a time per person, so that their count holds.
+        self._opening: dict[uuid.UUID, asyncio.Lock] = {}
         self._sweeper: asyncio.Task | None = None
+        #: The most terminals open at once since the last look (peaks), in
+        #: all and for one person: the usage counts take them hourly.
+        self._peak = 0
+        self._peak_one = 0
 
     async def start(self) -> None:
         """Terminals do not outlive the core: any left open by the last run
@@ -869,23 +876,57 @@ class Terminals:
             "WHERE closed_at IS NULL", "tTerm Web stopped.")
         self._sweeper = asyncio.create_task(self._sweep())
 
-    async def open(self, machine_id: uuid.UUID, cols: int, rows: int) -> Terminal:
-        machine = await self._machine(machine_id)
-        used = {t.name for t in self._live.values()
-                if t.machine.id == machine.id and t.state != "ended"}
-        name = str(next(n for n in itertools.count(1) if str(n) not in used))
-        terminal = Terminal(pool=self.pool, signer=self.signer,
-                            owner=self.owner, machine=machine, name=name,
-                            cols=cols, rows=rows, agents=self.agents)
-        await self.pool.execute(
-            "INSERT INTO terminals (id, machine_id, owner_id, name, kind) "
-            "VALUES ($1, $2, $3, $4, 'term')",
-            terminal.id, machine.id, self.owner.id, name)
-        self._live[terminal.id] = terminal
+    async def open(self, person: Person, machine_id: uuid.UUID, cols: int,
+                   rows: int) -> Terminal:
+        lock = self._opening.setdefault(person.id, asyncio.Lock())
+        async with lock:
+            machine = await self._machine(machine_id, person.id)
+            plan, most = await accounts.limit(self.pool, person.id, "terminals")
+            count = len(self.live(person.id))
+            if most is not None and count >= most:
+                raise NotAllowed(f"You have {count} terminals open, and the "
+                                 f"{plan} plan allows {most}. End one to open "
+                                 "another.")
+            used = {t.name for t in self._live.values()
+                    if t.machine.id == machine.id and t.state != "ended"}
+            name = str(next(n for n in itertools.count(1)
+                            if str(n) not in used))
+            terminal = Terminal(pool=self.pool, signer=self.signer,
+                                owner=person, machine=machine, name=name,
+                                cols=cols, rows=rows, agents=self.agents)
+            await self.pool.execute(
+                "INSERT INTO terminals (id, machine_id, owner_id, name, kind) "
+                "VALUES ($1, $2, $3, $4, 'term')",
+                terminal.id, machine.id, person.id, name)
+            self._live[terminal.id] = terminal
+            self._peak = max(self._peak, self.open_count())
+            self._peak_one = max(self._peak_one, len(self.live(person.id)))
         terminal.start()
         return terminal
 
-    async def _machine(self, machine_id: uuid.UUID) -> Machine:
+    def open_count(self) -> int:
+        """Terminals that have not ended, everyone's."""
+        return sum(1 for t in self._live.values() if t.state != "ended")
+
+    def _now(self) -> tuple[int, int]:
+        """Terminals open now, in all and the most for one person."""
+        one = max((len(self.live(owner)) for owner in
+                   {t.owner.id for t in self._live.values()}), default=0)
+        return self.open_count(), one
+
+    def peaks(self) -> tuple[int, int]:
+        """The most terminals open at once since the peaks started again,
+        in all and for one person."""
+        now, one = self._now()
+        return max(self._peak, now), max(self._peak_one, one)
+
+    def restart_peaks(self) -> None:
+        """The peaks count again from what is open now: once they are
+        written down."""
+        self._peak, self._peak_one = self._now()
+
+    async def _machine(self, machine_id: uuid.UUID,
+                       user_id: uuid.UUID) -> Machine:
         row = await self.pool.fetchrow(
             """
             SELECT m.id, m.project_id, p.code, m.name, m.host, m.port, m.login,
@@ -896,24 +937,27 @@ class Terminals:
             WHERE m.id = $1 AND m.removed_at IS NULL
               AND pm.role = ANY($3::text[])
               AND (pm.until IS NULL OR pm.until > now())
-            """, machine_id, self.owner.id, list(CAN_OPEN))
+            """, machine_id, user_id, list(CAN_OPEN))
         if row is None:
             raise NotAllowed("No such machine.")
         return Machine(row["id"], row["project_id"], row["code"], row["name"],
                        row["host"], row["port"], row["login"],
                        list(row["host_keys"]), row["ca_id"], row["kind"])
 
-    def get(self, terminal_id: uuid.UUID) -> Terminal | None:
+    def get(self, terminal_id: uuid.UUID, user_id: uuid.UUID) -> Terminal | None:
+        """The person's terminal: someone else's is as if it were not."""
         t = self._live.get(terminal_id)
-        if t is None or t.owner.id != self.owner.id:
+        if t is None or t.owner.id != user_id:
             return None
         return t
 
-    def live(self) -> list[Terminal]:
-        return sorted((t for t in self._live.values() if t.state != "ended"),
+    def live(self, user_id: uuid.UUID) -> list[Terminal]:
+        return sorted((t for t in self._live.values()
+                       if t.state != "ended" and t.owner.id == user_id),
                       key=lambda t: t.opened_at)
 
-    async def ended(self, terminal_id: uuid.UUID) -> dict | None:
+    async def ended(self, terminal_id: uuid.UUID,
+                    user_id: uuid.UUID) -> dict | None:
         """A terminal no longer in memory, as the database remembers it."""
         row = await self.pool.fetchrow(
             """
@@ -923,7 +967,7 @@ class Terminals:
             JOIN machines m ON m.id = t.machine_id
             JOIN projects p ON p.id = m.project_id
             WHERE t.id = $1 AND t.owner_id = $2
-            """, terminal_id, self.owner.id)
+            """, terminal_id, user_id)
         if row is None:
             return None
         label = f"{row['code']}/{row['machine']}"
@@ -936,20 +980,21 @@ class Terminals:
 
     # ------------------------------------------------- blocks and history
 
-    async def _owned(self, terminal_id: uuid.UUID) -> asyncpg.Record | None:
+    async def _owned(self, terminal_id: uuid.UUID,
+                     user_id: uuid.UUID) -> asyncpg.Record | None:
         return await self.pool.fetchrow(
             """
             SELECT t.id, t.machine_id, m.project_id
             FROM terminals t JOIN machines m ON m.id = t.machine_id
             WHERE t.id = $1 AND t.owner_id = $2
-            """, terminal_id, self.owner.id)
+            """, terminal_id, user_id)
 
-    async def feed(self, terminal_id: uuid.UUID, before: int | None,
-                   limit: int) -> dict | None:
+    async def feed(self, terminal_id: uuid.UUID, user_id: uuid.UUID,
+                   before: int | None, limit: int) -> dict | None:
         """The terminal's finished blocks, the latest `limit` of those that
         started before the number `before`, oldest first. Each with the end
         of its output; None if the terminal is not this person's."""
-        if await self._owned(terminal_id) is None:
+        if await self._owned(terminal_id, user_id) is None:
             return None
         limit = max(1, min(FEED_MAX, int(limit)))
         rows = await self.pool.fetch(
@@ -968,7 +1013,7 @@ class Terminals:
         blocks = await asyncio.to_thread(lambda: [_block_json(r) for r in rows])
         return {"blocks": blocks, "more": more}
 
-    async def block_output(self, terminal_id: uuid.UUID,
+    async def block_output(self, terminal_id: uuid.UUID, user_id: uuid.UUID,
                            seq_start: int) -> tuple[bytes, bool] | None:
         """All a block kept of its output, and whether its middle was cut."""
         row = await self.pool.fetchrow(
@@ -977,17 +1022,19 @@ class Terminals:
             FROM blocks b JOIN terminals t ON t.id = b.terminal_id
             WHERE b.terminal_id = $1 AND t.owner_id = $2 AND b.seq_start = $3
               AND b.expires_at > now()
-            """, terminal_id, self.owner.id, seq_start)
+            """, terminal_id, user_id, seq_start)
         if row is None:
             return None
         data = row["output"] or b""
         output = await asyncio.to_thread(zlib.decompress, data) if data else b""
         return output, row["output_cut"]
 
-    async def history(self, terminal_id: uuid.UUID) -> list[dict] | None:
+    async def history(self, terminal_id: uuid.UUID,
+                      user_id: uuid.UUID) -> list[dict] | None:
         """The commands for the input line's history, newest first: those
-        run on this terminal's machine, then the rest of its project's."""
-        owned = await self._owned(terminal_id)
+        run on this terminal's machine, then the rest of its project's;
+        only the person's own."""
+        owned = await self._owned(terminal_id, user_id)
         if owned is None:
             return None
         rows = await self.pool.fetch(
@@ -1002,7 +1049,7 @@ class Terminals:
             GROUP BY b.command
             ORDER BY bool_or(t.machine_id = $2) DESC, max(b.started_at) DESC
             LIMIT $4
-            """, self.owner.id, owned["machine_id"], owned["project_id"],
+            """, user_id, owned["machine_id"], owned["project_id"],
             HISTORY_MAX)
         return [{"command": r["command"], "here": r["here"]} for r in rows]
 

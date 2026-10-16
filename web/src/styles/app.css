@@ -546,15 +546,88 @@ code {
   border-top: 1px solid var(--raised);
 }
 
-.account {
+.account-box {
+  position: relative;
   flex: 1 1 auto;
+  min-width: 0;
+}
+
+.account {
+  width: 100%;
   min-width: 0;
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 8px 10px;
+  border: 0;
   border-radius: 8px;
+  background: transparent;
   color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.account:hover,
+.account[aria-expanded="true"] {
+  background: var(--raised);
+}
+
+/* The account's menu opens upwards, over the sidebar's list. */
+.account-menu {
+  position: absolute;
+  z-index: 30;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 6px);
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.account-menu-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px 10px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--faint);
+  overflow-wrap: anywhere;
+}
+
+.account-menu-head strong {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 36px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  font: 600 13px var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.menu-item svg {
+  color: var(--dim);
+}
+
+.menu-item:hover,
+.menu-item:focus-visible {
+  background: var(--raised);
 }
 
 .avatar {
@@ -2462,4 +2535,470 @@ code {
   .welcome h1 {
     font-size: 28px;
   }
+}
+
+/* ---------------------------------------------------------------- sign in */
+
+/* As a bank's sign-in: the logo and the name on top, a card in the middle
+ * that asks one thing at a time, the links at the bottom. In the light theme
+ * the card is white on grey, in the dark one lighter than the ground. */
+.signin {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0 16px;
+  background: var(--paper-ground);
+}
+
+.signin-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-top: 48px;
+  font: 800 28px/1 var(--font-ui);
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+
+.signin-middle {
+  flex: 1 0 auto;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 0;
+}
+
+.signin-card {
+  width: 100%;
+  max-width: 440px;
+  padding: 44px 40px 36px;
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  background: var(--paper);
+  text-align: center;
+}
+
+.tt-light .signin-card {
+  border-color: transparent;
+  box-shadow: 0 1px 2px rgba(21, 23, 28, .04), 0 12px 32px rgba(21, 23, 28, .07);
+}
+
+.signin-note {
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 auto 24px;
+  padding: 8px 14px;
+  border-radius: 12px;
+  background: var(--raised);
+  color: var(--dim);
+  font-size: 13px;
+}
+
+.signin-form {
+  display: flex;
+  flex-direction: column;
+}
+
+.signin-form h1 {
+  margin: 0;
+  font: 800 28px/1.2 var(--font-ui);
+  letter-spacing: -0.02em;
+  overflow-wrap: anywhere;
+  animation: signin-in .24s ease;
+}
+
+.signin-lead {
+  margin: 10px 0 0;
+  font-size: 15px;
+  color: var(--dim);
+  overflow-wrap: anywhere;
+}
+
+.signin-lead .ink {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.text-input {
+  width: 100%;
+  height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--ground);
+  color: var(--ink);
+  font: 500 15px var(--font-ui);
+}
+
+.text-input::placeholder {
+  color: var(--faint);
+}
+
+.text-input:focus {
+  outline: none;
+  border-color: var(--amber);
+  box-shadow: 0 0 0 3px var(--amber-ring);
+}
+
+.text-input:disabled {
+  opacity: 0.6;
+}
+
+.signin-input {
+  height: 48px;
+  margin-top: 28px;
+  /* No zoom on phones, which zoom into anything smaller. */
+  font-size: 16px;
+}
+
+.signin-form > .button-accent.big.wide {
+  height: 48px;
+  margin-top: 16px;
+  font-size: 15px;
+}
+
+.signin-small {
+  margin: 16px 0 0;
+  font-size: 13px;
+  color: var(--faint);
+}
+
+.signin-error,
+.signin-ok {
+  margin: 16px 0 0;
+  font-size: 13px;
+  color: var(--red-ink);
+}
+
+.signin-ok {
+  color: var(--green-ink);
+}
+
+/* Digits in dashes. The input over them is there for the keyboard, pasting
+ * and autofill; the dashes only show what it holds. */
+.slots {
+  position: relative;
+  align-self: center;
+  margin-top: 32px;
+}
+
+.slots-row {
+  display: flex;
+  gap: 10px;
+}
+
+.slot {
+  position: relative;
+  width: 36px;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font: 600 30px/1 var(--font-mono);
+  color: var(--ink);
+}
+
+.slots.secret .slots-row {
+  gap: 16px;
+}
+
+.slots.secret .slot {
+  width: 40px;
+}
+
+/* An empty place is a dash; a digit of a quick code, a dot. */
+.slot:not(.filled)::before {
+  content: "";
+  width: 24px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--dim);
+}
+
+.slots.secret .slot.filled::before {
+  content: "";
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--ink);
+}
+
+/* Where the next digit goes: a blinking line before its dash. */
+.slot.here::after {
+  content: "";
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: calc(50% - 17px);
+  width: 2px;
+  border-radius: 1px;
+  background: var(--amber);
+  animation: signin-caret 1s steps(1) infinite;
+}
+
+.slots.busy .slots-row {
+  opacity: .5;
+}
+
+.slots.off .slots-row {
+  opacity: .35;
+}
+
+.slots-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  font-size: 16px;
+  cursor: text;
+}
+
+.slots-input:disabled {
+  cursor: default;
+}
+
+/* A quick code is not shown, even where the input itself would be (a
+ * forced colour scheme, say). */
+.slots.secret .slots-input {
+  -webkit-text-security: disc;
+}
+
+.slots-row.shake {
+  animation: signin-shake .38s ease;
+}
+
+@keyframes signin-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-9px); }
+  40% { transform: translateX(8px); }
+  60% { transform: translateX(-5px); }
+  80% { transform: translateX(3px); }
+}
+
+@keyframes signin-caret {
+  50% { opacity: 0; }
+}
+
+@keyframes signin-in {
+  from { opacity: 0; transform: translateY(4px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .signin-form h1,
+  .slots-row.shake,
+  .slot.here::after {
+    animation: none;
+  }
+}
+
+/* Links under it all: two at the sides, or one in the middle. */
+.signin-links {
+  margin-top: 32px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+
+.signin-links.single {
+  justify-content: center;
+}
+
+.link-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--amber-ink);
+  font: 600 14px var(--font-ui);
+  cursor: pointer;
+}
+
+.link-button:hover {
+  color: var(--amber-hover);
+}
+
+.link-button:disabled {
+  color: var(--faint);
+  cursor: default;
+}
+
+.link-button.quiet {
+  color: var(--dim);
+}
+
+.link-button.quiet:hover {
+  color: var(--ink);
+}
+
+/* Signing up: the name, and one tick for both documents, in small type. */
+.signin-check {
+  margin-top: 16px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--dim);
+  text-align: left;
+  cursor: pointer;
+}
+
+.signin-check input {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 1px 0 0;
+  accent-color: var(--amber);
+  cursor: pointer;
+}
+
+.signin-check a {
+  font-weight: 600;
+}
+
+.signin-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px 24px;
+  padding-bottom: 32px;
+  font-size: 13px;
+}
+
+.signin-footer a {
+  color: var(--faint);
+  text-decoration: none;
+}
+
+.signin-footer a:hover {
+  color: var(--ink);
+  text-decoration: underline;
+}
+
+.button-accent.wide,
+.button-plain.wide {
+  align-self: stretch;
+  justify-content: center;
+  width: 100%;
+}
+
+.button-accent.big.wide {
+  height: 44px;
+  font-size: 14px;
+}
+
+.button-plain:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+@media (max-width: 560px) {
+  .signin-brand {
+    padding-top: 32px;
+    font-size: 24px;
+  }
+
+  .signin-middle {
+    align-items: flex-start;
+    padding: 28px 0;
+  }
+
+  .signin-card {
+    padding: 32px 20px 28px;
+    border-radius: 20px;
+  }
+
+  .signin-form h1 {
+    font-size: 24px;
+  }
+
+  .slots-row {
+    gap: 8px;
+  }
+}
+
+/* ----------------------------------------------------------------- devices */
+
+.devices-dialog {
+  max-width: 560px;
+}
+
+.device-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.device-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+}
+
+.device-row + .device-row {
+  border-top: 1px solid var(--line);
+}
+
+.device-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--faint);
+}
+
+.device-text strong {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.device-text .chip {
+  height: 20px;
+  background: var(--amber-tint);
+  color: var(--amber-ink);
+}
+
+.button-plain.small {
+  flex: none;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.devices-everywhere {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.devices-everywhere h3 {
+  margin: 0;
+  font: 700 14px var(--font-ui);
+}
+
+.devices-everywhere .hint {
+  margin: 0;
 }

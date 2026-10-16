@@ -12,10 +12,9 @@ import time
 import uuid
 from pathlib import Path
 
-import websockets
 
 from ..core import complete, danger, shell, terminals
-from .harness import request, shell_server
+from .harness import page_socket, request, shell_server
 from .test_terminals import (CHANGE, KEY, Pty, _ca_public, _deploy, _home,
                              _login_shell, _machine, _prompts, _screen, _until)
 
@@ -299,7 +298,7 @@ async def test_the_page_types_whole_commands(h):
                 shell_server(await _ca_public(core), home, login) \
                 as (port, host_key):
             machine_id = await _machine(core, port, host_key)
-            t = await core.terminals.open(machine_id, 100, 30)
+            t = await core.terminals.open(core.owner, machine_id, 100, 30)
             await _until(lambda: _prompts(t) >= 1, what="the first prompt")
             assert t.blocks and t.path
             assert t.run("echo one\necho two") is None
@@ -402,12 +401,10 @@ async def test_run_over_the_socket_asks_about_danger(h):
                 shell_server(await _ca_public(core), home, login) \
                 as (port, host_key):
             machine_id = await _machine(core, port, host_key)
-            t = await core.terminals.open(machine_id, 90, 25)
+            t = await core.terminals.open(core.owner, machine_id, 90, 25)
             await _until(lambda: _prompts(t) >= 1, what="the first prompt")
             tid = str(t.id)
-            url = f"ws://localhost:{core.page_port}/api/ws"
-            origin = f"http://localhost:{core.page_port}"
-            async with websockets.connect(url, origin=origin, proxy=None) as ws:
+            async with page_socket(core.page_port) as ws:
                 await ws.send(json.dumps({"op": "attach", "ch": 1, "id": tid,
                                           "after": None, "cols": 90, "rows": 25}))
                 await _frames(ws, _op("replayed"))
@@ -451,7 +448,7 @@ async def test_the_feed_and_history_come_from_the_database(h):
                 shell_server(await _ca_public(core), home, login) \
                 as (port, host_key):
             machine_id = await _machine(core, port, host_key)
-            t = await core.terminals.open(machine_id, 80, 24)
+            t = await core.terminals.open(core.owner, machine_id, 80, 24)
             await _until(lambda: _prompts(t) >= 1, what="the first prompt")
             for i, cmd in enumerate(["echo first", "seq 1 20000",
                                      "echo first", "echo last"]):
@@ -507,7 +504,7 @@ async def test_the_feed_and_history_come_from_the_database(h):
             await t.close()
             r = await request(port_, "GET", f"/api/terminals/{t.id}/blocks")
             assert len(r.json()["blocks"]) == 4, "an ended terminal keeps its feed"
-            info = await core.terminals.ended(t.id)
+            info = await core.terminals.ended(t.id, core.owner.id)
             assert t.home and info and info["home"] == t.home, \
                 "and its home, so ~ reads as ~ after a restart too"
     finally:

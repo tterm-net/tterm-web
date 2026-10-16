@@ -1,26 +1,33 @@
-"""The page and its API, for people. Answers only on this computer.
+"""The page and its API, for people.
+
+Everyone signs in (from 0.0.9): the page and its files are open, the API
+and the socket answer only within a session, and only about the person's
+own projects, machines and terminals. Signing in is under /api/auth, see
+core/auth.py.
 
 The built page lives in web/dist. Every path that is not the API or a file of
 the page gets index.html, so that addresses inside the page survive a reload.
 """
 from __future__ import annotations
 
+import asyncio
 import html
 import secrets
 import uuid
 from pathlib import Path
 
 import asyncpg
-from fastapi import FastAPI, HTTPException, WebSocket
+from fastapi import Depends, FastAPI, Request, WebSocket
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel
 
 from .. import __version__
-from ..core import accounts, machines
-from ..core.accounts import Person
+from ..core import accounts, auth, machines
+from ..core.mail import Mailer
 from ..core.terminals import NotAllowed, NotOpen, Terminal, Terminals
-from .security import PAGE_HEADERS, AddHeaders, LocalOnly, page_csp
-from .ws import PageSocket
+from .connect import client_ip
+from .security import PAGE_HEADERS, AddHeaders, PageGuard, page_csp
+from .ws import SIGNED_OUT_CLOSE, PageSocket
 
 NO_STORE = {"cache-control": "no-store"}
 #: Stage 1 builds the page with stable file names, so the browser must ask
@@ -38,6 +45,40 @@ It comes ready in the release archive; unpack the archive again.
 
 class MePatch(BaseModel):
     theme: str
+
+
+class EmailBody(BaseModel):
+    email: str
+
+
+class CodeBody(BaseModel):
+    email: str
+    code: str
+
+
+class PinBody(BaseModel):
+    pin: str
+
+
+class SignUpBody(BaseModel):
+    #: The address on the screen: its code is the one this browser entered.
+    email: str
+    name: str
+    #: The one tick, for both documents: the Terms of Service and the Privacy
+    #: Policy.
+    agree: bool = False
+
+
+class SignedOut(Exception):
+    """No session, or one that has ended: the page asks to sign in."""
+
+
+#: How long the browser keeps a session's cookie; the session itself ends
+#: sooner, after eight hours without anything done (auth.IDLE).
+SESSION_DAYS = 30
+#: The page marks what it asks by itself, now and then, with this header:
+#: such a request is not something done, and does not keep a session on.
+BACKGROUND_HEADER = "x-tterm-background"
 
 
 class InstallRequest(BaseModel):
@@ -82,10 +123,55 @@ def _json(data, status: int = 200) -> Response:
     return JSONResponse(data, status_code=status, headers=NO_STORE)
 
 
-def create_page_app(pool: asyncpg.Pool, owner: Person, dist: Path,
-                    port: int, connect_url: str,
-                    terminals: Terminals | None = None, agents=None):
-    """The ASGI app for the page, wrapped in the local-only guard."""
+def create_page_app(pool: asyncpg.Pool, dist: Path, page_url: str,
+                    connect_url: str, terminals: Terminals | None = None,
+                    agents=None, *, secret: bytes, mailer: Mailer,
+                    legal: dict[str, str] | None = None):
+    """The ASGI app for the page, wrapped in the page's guard. `legal` has
+    the addresses the sign-in screens link to: the Terms of Service, the
+    Privacy Policy, and support's email."""
+    legal = dict(legal or {})
+    # The cookies: on https with the __Host- prefix, which a browser takes
+    # only from this very host, over https, for the whole site. On the
+    # laptop's plain http that prefix is not accepted, so they go without.
+    secure = page_url.startswith("https://")
+
+    def cookie_name(base: str) -> str:
+        return f"__Host-{base}" if secure else base
+
+    def cookie(request: Request | WebSocket, base: str) -> str | None:
+        return request.cookies.get(cookie_name(base)) or None
+
+    def set_cookie(response: Response, base: str, value: str,
+                   seconds: int) -> None:
+        response.set_cookie(cookie_name(base), value, max_age=seconds,
+                            path="/", secure=secure, httponly=True,
+                            samesite="strict")
+
+    def clear_cookie(response: Response, base: str) -> None:
+        response.delete_cookie(cookie_name(base), path="/", secure=secure,
+                               httponly=True, samesite="strict")
+
+    async def signed_in(request: Request) -> auth.Session:
+        session = await auth.session(
+            pool, cookie(request, auth.SESSION_COOKIE),
+            touch=request.headers.get(BACKGROUND_HEADER) != "1")
+        if session is None:
+            raise SignedOut()
+        return session
+
+    #: The page sockets open now: a session that ends closes its own at once.
+    sockets: set[PageSocket] = set()
+
+    async def cut(ended) -> None:
+        """Closes the sockets of sessions that ended, so that whatever was
+        open there asks to sign in: `ended` tells them by their session."""
+        doomed = [s for s in sockets if ended(s.session)]
+        await asyncio.gather(*(s.sign_out() for s in doomed),
+                             return_exceptions=True)
+
+    def refused(exc: auth.Refused) -> Response:
+        return _json({"error": str(exc), **exc.details}, exc.status)
 
     def with_agents(machine: dict) -> dict:
         """A computer is online while its agent is connected; the page shows
@@ -99,16 +185,209 @@ def create_page_app(pool: asyncpg.Pool, owner: Person, dist: Path,
                   redoc_url=None, openapi_url=None)
     dist = dist.resolve()
 
+    @app.exception_handler(SignedOut)
+    async def signed_out(request: Request, exc: SignedOut) -> Response:
+        return _json({"error": "Sign in to go on.", "signedOut": True}, 401)
+
+    # ------------------------------------------------------------ sign in
+
+    @app.get("/api/auth/state")
+    async def auth_state(request: Request) -> Response:
+        """Signed in or not; if not, whether this browser is a trusted
+        device, so that the page asks for its quick code instead of email."""
+        if await auth.session(pool, cookie(request, auth.SESSION_COOKIE)):
+            return _json({"signedIn": True, "legal": legal})
+        device = await auth.device(pool, cookie(request, auth.DEVICE_COOKIE))
+        return _json({"signedIn": False, "device": {
+            "label": device.label, "name": device.name, "email": device.email,
+        } if device else None, "legal": legal})
+
+    @app.post("/api/auth/code")
+    async def ask_code(body: EmailBody, request: Request) -> Response:
+        """A code for signing in, sent to the address, for this browser."""
+        email = auth.normalize_email(body.email)
+        if email is None:
+            return _json({"error": "That does not look like an email address."},
+                         422)
+        browser = cookie(request, auth.BROWSER_COOKIE) or auth.new_token()
+        try:
+            await auth.ask_code(pool, secret, mailer, email=email,
+                                browser=browser, ip=client_ip(request),
+                                page_url=page_url)
+        except auth.Refused as exc:
+            return refused(exc)
+        response = _json({"sent": True, "email": email,
+                          "minutes": auth.CODE_MINUTES}, 202)
+        set_cookie(response, auth.BROWSER_COOKIE, browser, 24 * 3600)
+        return response
+
+    @app.post("/api/auth/verify")
+    async def check_code(body: CodeBody, request: Request) -> Response:
+        email = auth.normalize_email(body.email)
+        code = auth.digits(body.code, auth.CODE_DIGITS)
+        if email is None or code is None:
+            return _json({"error": "Enter the six digits from the email."}, 422)
+        browser = cookie(request, auth.BROWSER_COOKIE)
+        if browser is None:
+            return _json({"error": "This browser did not keep the sign-in "
+                          "cookie. Allow cookies for this site, then ask for a "
+                          "new code.", "left": 0}, 401)
+        try:
+            signed = await auth.check_code(
+                pool, secret, mailer, email=email, code=code, browser=browser,
+                ip=client_ip(request),
+                label=auth.device_label(request.headers.get("user-agent", "")),
+                page_url=page_url)
+        except auth.Refused as exc:
+            return refused(exc)
+        if isinstance(signed, auth.SignUp):
+            # No account yet: the name and the tick first, in this
+            # browser, which keeps its cookie for that.
+            return _json({"signUp": True, "email": signed.email})
+        return await signed_in_now(request, signed)
+
+    @app.post("/api/auth/signup")
+    async def sign_up(body: SignUpBody, request: Request) -> Response:
+        """Makes the account of the address whose code this browser just
+        entered: the person's name, and their yes to the Terms of Service and
+        the Privacy Policy."""
+        email = auth.normalize_email(body.email)
+        name = auth.clean_name(body.name)
+        if name is None:
+            return _json({"error": "Enter your name: up to "
+                          f"{auth.NAME_MAX} characters."}, 422)
+        if not body.agree:
+            return _json({"error": "Agree to the Terms of Service and Privacy "
+                          "Policy to go on."}, 422)
+        browser = cookie(request, auth.BROWSER_COOKIE)
+        try:
+            if browser is None or email is None:
+                raise auth.SignUpOver("Ask for a new code.")
+            signed = await auth.sign_up(
+                pool, email=email, browser=browser, name=name,
+                ip=client_ip(request),
+                label=auth.device_label(request.headers.get("user-agent", "")))
+        except auth.Refused as exc:
+            return refused(exc)
+        return await signed_in_now(request, signed)
+
+    async def signed_in_now(request: Request, signed: auth.SignedIn) -> Response:
+        """Signed in with a code from email: the session's cookie, and the
+        offer of a quick code for this device."""
+        # A session this browser may still have ends: its cookie is replaced.
+        await auth.sign_out(pool, cookie(request, auth.SESSION_COOKIE))
+        response = _json({"signedIn": True, "new": signed.new,
+                          "name": signed.person.first_name,
+                          "offerPin": True, "pinDigits": auth.PIN_DIGITS})
+        set_cookie(response, auth.SESSION_COOKIE, signed.token,
+                   SESSION_DAYS * 24 * 3600)
+        clear_cookie(response, auth.BROWSER_COOKIE)
+        return response
+
+    @app.post("/api/auth/pin")
+    async def set_pin(body: PinBody, request: Request,
+                      session: auth.Session = Depends(signed_in)) -> Response:
+        """Trusts this browser with a quick code, right after signing in
+        with a code from email."""
+        pin = auth.digits(body.pin, auth.PIN_DIGITS)
+        if pin is None:
+            return _json({"error": f"The quick code is {auth.PIN_DIGITS} "
+                          "digits."}, 422)
+        if auth.too_easy(pin):
+            return _json({"error": "That one is the first anyone would try. "
+                          "Choose digits that are not all the same and not "
+                          "in a row."}, 422)
+        try:
+            key = await auth.trust_device(
+                pool, secret, session, pin,
+                auth.device_label(request.headers.get("user-agent", "")),
+                replaces=cookie(request, auth.DEVICE_COOKIE))
+        except auth.Refused as exc:
+            return refused(exc)
+        response = _json({"trusted": True})
+        set_cookie(response, auth.DEVICE_COOKIE, key,
+                   auth.DEVICE_DAYS * 24 * 3600)
+        return response
+
+    @app.post("/api/auth/pin-login")
+    async def pin_login(body: PinBody, request: Request) -> Response:
+        pin = auth.digits(body.pin, auth.PIN_DIGITS)
+        if pin is None:
+            return _json({"error": f"The quick code is {auth.PIN_DIGITS} "
+                          "digits."}, 422)
+        key = cookie(request, auth.DEVICE_COOKIE)
+        try:
+            if key is None:
+                raise auth.DeviceForgotten("Sign in with a code from email.")
+            signed = await auth.check_pin(
+                pool, secret, key=key, pin=pin, ip=client_ip(request),
+                label=auth.device_label(request.headers.get("user-agent", "")))
+        except auth.DeviceForgotten as exc:
+            response = refused(exc)
+            clear_cookie(response, auth.DEVICE_COOKIE)
+            return response
+        except auth.Refused as exc:
+            return refused(exc)
+        await auth.sign_out(pool, cookie(request, auth.SESSION_COOKIE))
+        response = _json({"signedIn": True})
+        set_cookie(response, auth.SESSION_COOKIE, signed.token,
+                   SESSION_DAYS * 24 * 3600)
+        return response
+
+    @app.post("/api/auth/signout")
+    async def sign_out(request: Request) -> Response:
+        """Ends this browser's session; a trusted device stays trusted."""
+        ended = await auth.sign_out(pool, cookie(request, auth.SESSION_COOKIE))
+        if ended is not None:
+            await cut(lambda s: s.id == ended)
+        response = _json({"signedOut": True})
+        clear_cookie(response, auth.SESSION_COOKIE)
+        return response
+
+    @app.post("/api/auth/signout-everywhere")
+    async def sign_out_everywhere(
+            session: auth.Session = Depends(signed_in)) -> Response:
+        """Every session of the person ends and every device is forgotten."""
+        await auth.sign_out_everywhere(pool, session.person.id)
+        await cut(lambda s: s.person.id == session.person.id)
+        response = _json({"signedOut": True})
+        clear_cookie(response, auth.SESSION_COOKIE)
+        clear_cookie(response, auth.DEVICE_COOKIE)
+        return response
+
+    @app.get("/api/devices")
+    async def list_devices(
+            session: auth.Session = Depends(signed_in)) -> Response:
+        return _json({"devices": await auth.devices(pool, session.person.id,
+                                                    session.device_id)})
+
+    @app.delete("/api/devices/{device_id}")
+    async def forget_device(device_id: uuid.UUID,
+                            session: auth.Session = Depends(signed_in)) -> Response:
+        ended = await auth.forget_device(pool, session.person.id, device_id)
+        if ended is None:
+            return _json({"error": "no such device"}, 404)
+        await cut(lambda s: s.id in ended)
+        response = _json({"forgotten": True,
+                          "current": device_id == session.device_id})
+        if device_id == session.device_id:
+            # This very browser: its session went with it.
+            clear_cookie(response, auth.DEVICE_COOKIE)
+            clear_cookie(response, auth.SESSION_COOKIE)
+        return response
+
     @app.get("/health")
     async def health() -> Response:
         return _json({"ok": True, "service": "tterm-web page",
                       "version": __version__})
 
+    # ------------------------------------------------- within a session
+
     @app.get("/api/state")
-    async def state() -> Response:
+    async def state(session: auth.Session = Depends(signed_in)) -> Response:
         """Everything the page needs on start."""
-        me = await accounts.person(pool, owner.id)
-        projects = await accounts.projects_of(pool, owner.id)
+        me = session.person
+        projects = await accounts.projects_of(pool, me.id)
         for project in projects:
             project["machines"] = [with_agents(m) for m in project["machines"]]
         return _json({
@@ -120,27 +399,30 @@ def create_page_app(pool: asyncpg.Pool, owner: Person, dist: Path,
                 "initials": me.initials,
                 "theme": me.theme,
                 "plan": me.plan,
+                "email": me.email,
             },
             "projects": projects,
-            "terminals": ([t.describe() for t in terminals.live()]
+            "terminals": ([t.describe() for t in terminals.live(me.id)]
                           if terminals else []),
         })
 
     @app.patch("/api/me")
-    async def patch_me(change: MePatch) -> Response:
+    async def patch_me(change: MePatch,
+                       session: auth.Session = Depends(signed_in)) -> Response:
         try:
-            await accounts.set_theme(pool, owner.id, change.theme)
+            await accounts.set_theme(pool, session.person.id, change.theme)
         except ValueError as exc:
-            raise HTTPException(422, str(exc))
+            return _json({"error": str(exc)}, 422)
         return Response(status_code=204, headers=NO_STORE)
 
     @app.post("/api/installs")
-    async def new_install(request: InstallRequest) -> Response:
+    async def new_install(request: InstallRequest,
+                          session: auth.Session = Depends(signed_in)) -> Response:
         """A one-time command that connects a server, for ten minutes; for a
         computer, the command that starts its agent with a new key."""
         try:
             install = await machines.create_install(
-                pool, project_id=request.projectId, user_id=owner.id,
+                pool, project_id=request.projectId, user_id=session.person.id,
                 kind=request.kind, connect_url=connect_url)
         except PermissionError as exc:
             return _json({"error": str(exc)}, 403)
@@ -152,27 +434,32 @@ def create_page_app(pool: asyncpg.Pool, owner: Person, dist: Path,
                       "minutes": machines.INSTALL_MINUTES}, 201)
 
     @app.get("/api/installs/{install_id}")
-    async def install_status(install_id: uuid.UUID) -> Response:
-        status = await machines.install_status(pool, install_id, owner.id)
+    async def install_status(install_id: uuid.UUID,
+                             session: auth.Session = Depends(signed_in)) -> Response:
+        status = await machines.install_status(pool, install_id,
+                                               session.person.id)
         if status is None:
             return _json({"error": "no such install"}, 404)
         return _json(status)
 
     @app.get("/api/machines/{machine_id}")
-    async def machine(machine_id: uuid.UUID) -> Response:
-        details = await machines.machine_details(pool, owner.id, machine_id)
+    async def machine(machine_id: uuid.UUID,
+                      session: auth.Session = Depends(signed_in)) -> Response:
+        details = await machines.machine_details(pool, session.person.id,
+                                                 machine_id)
         if details is None:
             return _json({"error": "no such machine"}, 404)
         return _json(with_agents(details))
 
     @app.delete("/api/machines/{machine_id}")
-    async def remove_machine(machine_id: uuid.UUID) -> Response:
+    async def remove_machine(machine_id: uuid.UUID,
+                             session: auth.Session = Depends(signed_in)) -> Response:
         """Takes the machine out of tTerm Web. Its terminals end, a
         computer's agent hears it is removed and stops; the history stays.
         For a server, the answer carries the command that takes tTerm
         Web's access back on the server itself."""
         try:
-            removed = await machines.remove(pool, owner.id, machine_id)
+            removed = await machines.remove(pool, session.person.id, machine_id)
         except PermissionError as exc:
             return _json({"error": str(exc)}, 403)
         if removed is None:
@@ -185,38 +472,41 @@ def create_page_app(pool: asyncpg.Pool, owner: Person, dist: Path,
         return _json(removed)
 
     @app.post("/api/terminals")
-    async def open_terminal(request: TerminalRequest) -> Response:
+    async def open_terminal(request: TerminalRequest,
+                            session: auth.Session = Depends(signed_in)) -> Response:
         """A new terminal on a machine. It connects in the background; the
         page attaches to it over the socket and watches it come up."""
         if terminals is None:
             return _json({"error": "terminals are not running"}, 503)
         try:
-            terminal = await terminals.open(request.machineId, request.cols,
-                                            request.rows)
+            terminal = await terminals.open(session.person, request.machineId,
+                                            request.cols, request.rows)
         except NotAllowed as exc:
             return _json({"error": str(exc)}, 404)
         return _json(terminal.describe(), 201)
 
     @app.get("/api/terminals/{terminal_id}")
-    async def terminal_info(terminal_id: uuid.UUID) -> Response:
+    async def terminal_info(terminal_id: uuid.UUID,
+                            session: auth.Session = Depends(signed_in)) -> Response:
         if terminals is None:
             return _json({"error": "terminals are not running"}, 503)
-        terminal = terminals.get(terminal_id)
+        terminal = terminals.get(terminal_id, session.person.id)
         if terminal is not None:
             return _json(terminal.describe())
-        ended = await terminals.ended(terminal_id)
+        ended = await terminals.ended(terminal_id, session.person.id)
         if ended is None:
             return _json({"error": "no such terminal"}, 404)
         return _json(ended)
 
     @app.delete("/api/terminals/{terminal_id}")
-    async def end_terminal(terminal_id: uuid.UUID) -> Response:
+    async def end_terminal(terminal_id: uuid.UUID,
+                           session: auth.Session = Depends(signed_in)) -> Response:
         """Ends a terminal: its shell gets a hangup, as when a window
         closes. One whose computer is away stops waiting for it, and the
         shell there ends when the computer is back."""
         if terminals is None:
             return _json({"error": "terminals are not running"}, 503)
-        terminal = terminals.get(terminal_id)
+        terminal = terminals.get(terminal_id, session.person.id)
         if terminal is None:
             return _json({"error": "no such terminal"}, 404)
         await terminal.close()
@@ -224,22 +514,25 @@ def create_page_app(pool: asyncpg.Pool, owner: Person, dist: Path,
 
     @app.get("/api/terminals/{terminal_id}/blocks")
     async def terminal_blocks(terminal_id: uuid.UUID, before: int | None = None,
-                              limit: int = 60) -> Response:
+                              limit: int = 60,
+                              session: auth.Session = Depends(signed_in)) -> Response:
         """The feed: finished blocks, the latest first page of them, each
         with the end of its output."""
         if terminals is None:
             return _json({"error": "terminals are not running"}, 503)
-        feed = await terminals.feed(terminal_id, before, limit)
+        feed = await terminals.feed(terminal_id, session.person.id, before,
+                                    limit)
         if feed is None:
             return _json({"error": "no such terminal"}, 404)
         return _json(feed)
 
     @app.get("/api/terminals/{terminal_id}/blocks/{seq}/output")
-    async def block_output(terminal_id: uuid.UUID, seq: int) -> Response:
+    async def block_output(terminal_id: uuid.UUID, seq: int,
+                           session: auth.Session = Depends(signed_in)) -> Response:
         """Everything a block kept of its output, as the terminal printed it."""
         if terminals is None:
             return _json({"error": "terminals are not running"}, 503)
-        got = await terminals.block_output(terminal_id, seq)
+        got = await terminals.block_output(terminal_id, session.person.id, seq)
         if got is None:
             return _json({"error": "no such block"}, 404)
         output, cut = got
@@ -247,16 +540,18 @@ def create_page_app(pool: asyncpg.Pool, owner: Person, dist: Path,
                         headers={**NO_STORE, "x-tterm-cut": "1" if cut else "0"})
 
     @app.get("/api/terminals/{terminal_id}/history")
-    async def terminal_history(terminal_id: uuid.UUID) -> Response:
+    async def terminal_history(terminal_id: uuid.UUID,
+                               session: auth.Session = Depends(signed_in)) -> Response:
         if terminals is None:
             return _json({"error": "terminals are not running"}, 503)
-        commands = await terminals.history(terminal_id)
+        commands = await terminals.history(terminal_id, session.person.id)
         if commands is None:
             return _json({"error": "no such terminal"}, 404)
         return _json({"commands": commands})
 
-    def _open(terminal_id: uuid.UUID) -> Terminal | None:
-        terminal = terminals.get(terminal_id) if terminals else None
+    def _open(terminal_id: uuid.UUID, session: auth.Session) -> Terminal | None:
+        terminal = (terminals.get(terminal_id, session.person.id)
+                    if terminals else None)
         if terminal is None or terminal.state != "open":
             return None
         return terminal
@@ -265,9 +560,9 @@ def create_page_app(pool: asyncpg.Pool, owner: Person, dist: Path,
     # the HTTP sense or not, they carry the page's header like every POST.
 
     @app.post("/api/terminals/{terminal_id}/complete")
-    async def complete_word(terminal_id: uuid.UUID,
-                            request: CompleteRequest) -> Response:
-        terminal = _open(terminal_id)
+    async def complete_word(terminal_id: uuid.UUID, request: CompleteRequest,
+                            session: auth.Session = Depends(signed_in)) -> Response:
+        terminal = _open(terminal_id, session)
         if terminal is None:
             return _json({"error": NOT_OPEN}, 409)
         if len(request.line) > MAX_LINE:
@@ -278,8 +573,9 @@ def create_page_app(pool: asyncpg.Pool, owner: Person, dist: Path,
             return _json({"error": NOT_OPEN}, 409)
 
     @app.post("/api/terminals/{terminal_id}/dirs")
-    async def terminal_dirs(terminal_id: uuid.UUID) -> Response:
-        terminal = _open(terminal_id)
+    async def terminal_dirs(terminal_id: uuid.UUID,
+                            session: auth.Session = Depends(signed_in)) -> Response:
+        terminal = _open(terminal_id, session)
         if terminal is None:
             return _json({"error": NOT_OPEN}, 409)
         try:
@@ -288,8 +584,9 @@ def create_page_app(pool: asyncpg.Pool, owner: Person, dist: Path,
             return _json({"error": NOT_OPEN}, 409)
 
     @app.post("/api/terminals/{terminal_id}/branches")
-    async def terminal_branches(terminal_id: uuid.UUID) -> Response:
-        terminal = _open(terminal_id)
+    async def terminal_branches(terminal_id: uuid.UUID,
+                                session: auth.Session = Depends(signed_in)) -> Response:
+        terminal = _open(terminal_id, session)
         if terminal is None:
             return _json({"error": NOT_OPEN}, 409)
         try:
@@ -302,7 +599,21 @@ def create_page_app(pool: asyncpg.Pool, owner: Person, dist: Path,
         if terminals is None:
             await websocket.close(code=1013)
             return
-        await PageSocket(websocket, terminals).run()
+        # The page opens its socket by itself, on start and after a lost
+        # connection: not something done.
+        session = await auth.session(
+            pool, cookie(websocket, auth.SESSION_COOKIE), touch=False)
+        if session is None:
+            # Accepted to be closed with a reason the page understands.
+            await websocket.accept()
+            await websocket.close(code=SIGNED_OUT_CLOSE)
+            return
+        page_socket = PageSocket(websocket, terminals, session, pool)
+        sockets.add(page_socket)
+        try:
+            await page_socket.run()
+        finally:
+            sockets.discard(page_socket)
 
     @app.api_route("/api/{rest:path}", methods=["GET", "POST", "PUT", "PATCH",
                                                 "DELETE"])
@@ -330,4 +641,4 @@ def create_page_app(pool: asyncpg.Pool, owner: Person, dist: Path,
             **NO_STORE, "content-security-policy": page_csp(nonce)})
 
     # The guard inside the headers, so that its refusals carry them too.
-    return AddHeaders(LocalOnly(app, port), PAGE_HEADERS)
+    return AddHeaders(PageGuard(app, page_url), PAGE_HEADERS)

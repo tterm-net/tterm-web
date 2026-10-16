@@ -1,8 +1,9 @@
 """People and projects.
 
-Stage 1 has no sign-in. The page opens only on the owner's laptop, and
-whatever it does is done as one person, the local owner, created on the first
-start together with their first project, Personal, with the code P.
+Everyone signs in (from 0.0.9, see auth.py) and gets their first project,
+Personal, with the code P. On the laptop the local owner of stage 1 stays:
+the person this laptop belongs to, whose machines and history are there;
+TTERM_OWNER_EMAIL gives them the address they sign in with.
 """
 from __future__ import annotations
 
@@ -32,6 +33,7 @@ class Person:
     name: str
     theme: str
     plan: str
+    email: str | None = None
 
     @property
     def first_name(self) -> str:
@@ -88,28 +90,58 @@ def suggest_code(name: str, taken: Collection[str] = ()) -> str:
     raise ValueError("no free project code")
 
 
-async def ensure_local_owner(pool: asyncpg.Pool, name: str) -> Person:
-    """The person this laptop belongs to, created on the first start.
+async def ensure_local_owner(pool: asyncpg.Pool, name: str,
+                             email: str) -> Person:
+    """The person this laptop belongs to, created on the first start, with
+    the address they sign in with.
 
     Creates them together with the Personal project, code P. Later starts
-    find them and only refresh the name, if it changed in the settings.
+    find them and only refresh the name and the address, if they changed in
+    the settings. An account that signed in with that address before the
+    laptop's owner had it is left alone: the address stays theirs.
     """
     async with pool.acquire() as conn, conn.transaction():
         await conn.execute("SELECT pg_advisory_xact_lock($1)", OWNER_LOCK)
         row = await conn.fetchrow(
-            "SELECT id, name, theme, plan_id FROM users WHERE is_local_owner")
+            "SELECT id, name, theme, plan_id, email FROM users "
+            "WHERE is_local_owner")
+        taken = await conn.fetchval(
+            "SELECT id FROM users WHERE lower(email) = $1 AND NOT is_local_owner",
+            email)
+        if taken is not None:
+            raise ValueError(f"{email} already belongs to another account")
         if row is None:
             user_id = await conn.fetchval(
-                "INSERT INTO users (name, is_local_owner) VALUES ($1, true) "
-                "RETURNING id", name)
+                "INSERT INTO users (name, email, is_local_owner) "
+                "VALUES ($1, $2, true) RETURNING id", name, email)
             await journal(conn, "user.created", user_id=user_id,
                           details={"name": name, "local_owner": True})
             await create_project(conn, user_id, "Personal", "P")
-            return Person(user_id, name, "system", "free")
-        if row["name"] != name:
-            await conn.execute("UPDATE users SET name = $2 WHERE id = $1",
-                               row["id"], name)
-        return Person(row["id"], name, row["theme"], row["plan_id"])
+            row_theme, row_plan = "system", "free"
+        else:
+            user_id, row_theme, row_plan = row["id"], row["theme"], row["plan_id"]
+            if row["name"] != name or (row["email"] or "") != email:
+                await conn.execute(
+                    "UPDATE users SET name = $2, email = $3 WHERE id = $1",
+                    user_id, name, email)
+        # The address they sign in with: this one, and no other.
+        await conn.execute(
+            "DELETE FROM sign_in_methods WHERE user_id = $1 AND kind = 'email' "
+            "AND subject <> $2", user_id, email)
+        await conn.execute(
+            "INSERT INTO sign_in_methods (user_id, kind, subject) "
+            "VALUES ($1, 'email', $2) ON CONFLICT DO NOTHING", user_id, email)
+        return Person(user_id, name, row_theme, row_plan, email)
+
+
+async def local_owner(pool: asyncpg.Pool) -> Person | None:
+    """The person this laptop belongs to, if there is one."""
+    row = await pool.fetchrow(
+        "SELECT id, name, theme, plan_id, email FROM users WHERE is_local_owner")
+    if row is None:
+        return None
+    return Person(row["id"], row["name"], row["theme"], row["plan_id"],
+                  row["email"])
 
 
 async def create_project(conn: asyncpg.Connection, owner_id: uuid.UUID,
@@ -153,12 +185,31 @@ async def set_theme(pool: asyncpg.Pool, user_id: uuid.UUID, theme: str) -> None:
     await pool.execute("UPDATE users SET theme = $2 WHERE id = $1", user_id, theme)
 
 
+async def limit(pool: asyncpg.Pool | asyncpg.Connection, user_id: uuid.UUID,
+                key: str) -> tuple[str, int | None]:
+    """The person's plan by name, and the most of `key` it allows
+    ("machines", "terminals"); None when the plan sets no limit for it.
+    Plans live in the database: a limit changes there, with no release, and
+    the database takes only whole numbers under known names (006)."""
+    row = await pool.fetchrow(
+        "SELECT p.name, p.limits ->> $2 AS most FROM users u "
+        "JOIN plans p ON p.id = u.plan_id WHERE u.id = $1", user_id, key)
+    if row is None:
+        return "", None
+    if row["most"] is None:
+        return row["name"], None
+    # 50, or 50.0 and 1e2 as JSON may write them.
+    return row["name"], int(float(row["most"]))
+
+
 async def person(pool: asyncpg.Pool, user_id: uuid.UUID) -> Person:
     row = await pool.fetchrow(
-        "SELECT id, name, theme, plan_id FROM users WHERE id = $1", user_id)
+        "SELECT id, name, theme, plan_id, email FROM users WHERE id = $1",
+        user_id)
     if row is None:
         raise LookupError(f"no such person: {user_id}")
-    return Person(row["id"], row["name"], row["theme"], row["plan_id"])
+    return Person(row["id"], row["name"], row["theme"], row["plan_id"],
+                  row["email"])
 
 
 async def projects_of(pool: asyncpg.Pool, user_id: uuid.UUID) -> list[dict]:

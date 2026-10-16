@@ -59,10 +59,14 @@ class Settings:
     #: Postgres.app on the owner's laptop listens on 5433: 5432 belongs to
     #: another project's PostgreSQL, which we leave alone.
     database_url: str
-    #: The page and its API. Only this computer may open it: there is no
-    #: sign-in before stage 2.
+    #: The page and its API. On the server nginx in front of it answers for
+    #: `page_url`; on the laptop it is opened directly.
     page_host: str
     page_port: int
+    #: The page's address as browsers see it: app.tterm.net on the server.
+    #: Requests for any other Host are refused (DNS rebinding), and changes
+    #: and the socket only come from this origin.
+    page_url: str
     #: Where machines talk to us: the installer, registration, agents. The
     #: tunnel to connect-dev.tterm.net points here, and nothing of the page
     #: is reachable through it.
@@ -70,8 +74,21 @@ class Settings:
     connect_port: int
     #: The public address of the above, as machines see it.
     connect_url: str
-    #: The person this laptop belongs to, until accounts arrive.
+    #: The person this laptop belongs to (stage 1), and the address they
+    #: sign in with; without it no one is the laptop's owner, as on the
+    #: server, where everyone signs up.
     owner_name: str
+    owner_email: str
+    #: Email: Brevo's API key, and who the emails are from. Without a key
+    #: each email goes to the log, as on the laptop.
+    brevo_key: str
+    mail_from: str
+    #: What the sign-in screens link to: the Terms of Service and the Privacy
+    #: Policy, on the site, and support's address. Whoever runs tTerm Web
+    #: elsewhere puts their own.
+    terms_url: str
+    privacy_url: str
+    support_email: str
     #: Local state that never goes to git.
     data_dir: Path
     #: The built page.
@@ -80,6 +97,10 @@ class Settings:
     signer_dir: Path
     #: How the core reaches the signer.
     signer_socket: Path
+    #: On the server, where the core and the signer are different users:
+    #: the group that may reach the signer's socket, the core's. Empty on
+    #: the laptop, where both are the owner.
+    signer_group: str
 
     @classmethod
     def load(cls, environ: Mapping[str, str] | None = None,
@@ -114,18 +135,28 @@ class Settings:
             # folder of this user in the system's temporary directory.
             signer_socket = (Path(tempfile.gettempdir())
                              / f"tterm-web-{os.getuid()}" / "signer.sock")
+        page_port = port("TTERM_PAGE_PORT", 8090)
         return cls(
             database_url=get("TTERM_DATABASE_URL",
                              "postgresql://localhost:5433/tterm_web"),
             page_host=get("TTERM_PAGE_HOST", "127.0.0.1"),
-            page_port=port("TTERM_PAGE_PORT", 8090),
+            page_port=page_port,
+            page_url=get("TTERM_PAGE_URL",
+                         f"http://localhost:{page_port}").rstrip("/"),
             connect_host=get("TTERM_CONNECT_HOST", "127.0.0.1"),
             connect_port=port("TTERM_CONNECT_PORT", 8091),
             connect_url=get("TTERM_CONNECT_URL",
                             "https://connect-dev.tterm.net").rstrip("/"),
             owner_name=get("TTERM_OWNER_NAME", account_name()),
+            owner_email=get("TTERM_OWNER_EMAIL", "").lower(),
+            brevo_key=get("TTERM_BREVO_KEY", ""),
+            mail_from=get("TTERM_MAIL_FROM", "tTerm <login@tterm.net>"),
+            terms_url=get("TTERM_TERMS_URL", "https://tterm.net/terms"),
+            privacy_url=get("TTERM_PRIVACY_URL", "https://tterm.net/privacy"),
+            support_email=get("TTERM_SUPPORT_EMAIL", "support@tterm.net"),
             data_dir=data_dir,
             web_dist=path("TTERM_WEB_DIST", "web/dist"),
             signer_dir=signer_dir,
             signer_socket=signer_socket,
+            signer_group=get("TTERM_SIGNER_GROUP", ""),
         )

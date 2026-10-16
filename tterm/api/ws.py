@@ -34,39 +34,98 @@ page the one that types into the terminal (see Watcher).
 do damage nothing brings back is first answered with "confirm"; the page
 asks, and sends it again with "confirmed". A command the shell cannot take
 now (another one is running) is answered with "refused".
+
+The socket belongs to a session (see core/auth.py) and shows only that
+person's terminals. When the session ends, the socket closes with the code
+SIGNED_OUT_CLOSE and the page asks to sign in: at once on Sign out, Sign out
+everywhere or a forgotten device, otherwise within a minute. Keys typed and
+commands run count as something done, and keep the session from ending.
 """
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import uuid
 
+import asyncpg
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from ..core import danger
+from ..core import auth, danger
 from ..core.terminals import INPUT, Terminals, Watcher, clean_command
 
 log = logging.getLogger("tterm.ws")
 
 #: Channels one page may hold at once.
 MAX_CHANNELS = 64
+#: The close code that means "sign in again".
+SIGNED_OUT_CLOSE = 4401
+#: Seconds between the socket's checks that its session is still on.
+RECHECK = 60.0
+#: Seconds between two notes that something was done, at most.
+TOUCH_EVERY = auth.TOUCH_EVERY.total_seconds()
 
 
 class PageSocket:
-    def __init__(self, websocket: WebSocket, terminals: Terminals) -> None:
+    def __init__(self, websocket: WebSocket, terminals: Terminals,
+                 session: auth.Session, pool: asyncpg.Pool) -> None:
         self.ws = websocket
         self.terminals = terminals
+        self.session = session
+        self.user_id = session.person.id
+        self.pool = pool
         self.watchers: dict[int, Watcher] = {}
         self._lock = asyncio.Lock()
         self._closing: set[asyncio.Task] = set()
+        self._closed = False
+        self._touched = 0.0
 
     async def send(self, message: bytes | str) -> None:
         async with self._lock:
+            if self._closed:
+                raise ConnectionError("the socket is closed")
             if isinstance(message, bytes):
                 await self.ws.send_bytes(message)
             else:
                 await self.ws.send_text(message)
+
+    async def sign_out(self) -> None:
+        """The session ended: the page hears it and asks to sign in."""
+        async with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            with contextlib.suppress(Exception):
+                await self.ws.close(code=SIGNED_OUT_CLOSE)
+
+    def _did_something(self) -> None:
+        """Keys or a command: the session is in use. Noted at most once a
+        minute, and without holding up the keys."""
+        now = asyncio.get_running_loop().time()
+        if now - self._touched < TOUCH_EVERY:
+            return
+        self._touched = now
+        self._background(auth.touch(self.pool, self.session.id))
+
+    def _background(self, work) -> None:
+        task = asyncio.create_task(work)
+        self._closing.add(task)
+        task.add_done_callback(self._closing.discard)
+
+    async def _keep_checking(self) -> None:
+        """Ends the socket when its session ends: signed out elsewhere,
+        eight hours without anything done, its device forgotten."""
+        while True:
+            await asyncio.sleep(RECHECK)
+            try:
+                on = await auth.still_on(self.pool, self.session.id)
+            except (OSError, asyncpg.PostgresError) as exc:
+                log.warning("could not check a session: %s", exc)
+                continue
+            if not on:
+                await self.sign_out()
+                return
 
     async def json(self, message: dict) -> None:
         await self.send(json.dumps(message, ensure_ascii=False,
@@ -74,18 +133,22 @@ class PageSocket:
 
     async def run(self) -> None:
         await self.ws.accept()
+        checking = asyncio.create_task(self._keep_checking())
         try:
             while True:
                 message = await self.ws.receive()
                 if message["type"] == "websocket.disconnect":
                     break
+                if self._closed:
+                    continue
                 if message.get("bytes") is not None:
                     self._input(message["bytes"])
                 elif message.get("text") is not None:
                     await self._command(message["text"])
-        except WebSocketDisconnect:
+        except (WebSocketDisconnect, ConnectionError):
             pass
         finally:
+            checking.cancel()
             await asyncio.gather(*(w.stop() for w in self.watchers.values()),
                                  return_exceptions=True)
             self.watchers.clear()
@@ -95,6 +158,7 @@ class PageSocket:
             return
         watcher = self.watchers.get(int.from_bytes(frame[1:5], "big"))
         if watcher is not None:
+            self._did_something()
             watcher.write(frame[5:])
 
     async def _command(self, text: str) -> None:
@@ -123,10 +187,9 @@ class PageSocket:
         elif op == "run":
             await self._run(ch, watcher, msg)
         elif op == "close":
+            self._did_something()
             # Ending a shell can take a moment; the socket goes on meanwhile.
-            task = asyncio.create_task(watcher.terminal.close())
-            self._closing.add(task)
-            task.add_done_callback(self._closing.discard)
+            self._background(watcher.terminal.close())
 
     async def _attach(self, ch: int, msg: dict) -> None:
         await self._detach(ch)
@@ -135,10 +198,11 @@ class PageSocket:
         except ValueError:
             await self.json({"op": "gone", "ch": ch, "terminal": None})
             return
-        terminal = self.terminals.get(terminal_id)
+        terminal = self.terminals.get(terminal_id, self.user_id)
         if terminal is None:
-            await self.json({"op": "gone", "ch": ch,
-                             "terminal": await self.terminals.ended(terminal_id)})
+            await self.json({"op": "gone", "ch": ch, "terminal":
+                             await self.terminals.ended(terminal_id,
+                                                        self.user_id)})
             return
         if len(self.watchers) >= MAX_CHANNELS:
             await self.json({"op": "error", "message": "Too many terminals."})
@@ -155,6 +219,7 @@ class PageSocket:
         command = msg.get("command")
         if not isinstance(command, str):
             return
+        self._did_something()
         # Checked as it will be typed: a control character in the middle of
         # a word must not hide it from the check and then vanish.
         command = clean_command(command)

@@ -61,6 +61,47 @@ AGENT_SOURCE = "https://raw.githubusercontent.com/tterm-net/tterm-agent/main/age
 CHECK_TIMEOUT = 40
 
 
+class LimitReached(PermissionError):
+    """A limit of the plan; the message says which, and what to do."""
+
+
+async def room_problem(pool: asyncpg.Pool | asyncpg.Connection,
+                       project_id: uuid.UUID) -> str | None:
+    """Why no machine can be added to the project now, or None. The machines
+    of all the projects of its owner count, up to what the owner's plan
+    allows ("machines" in its limits)."""
+    owner_id = await pool.fetchval("SELECT owner_id FROM projects WHERE id = $1",
+                                   project_id)
+    if owner_id is None:
+        return None
+    plan, most = await accounts.limit(pool, owner_id, "machines")
+    if most is None:
+        return None
+    count = await pool.fetchval(
+        """
+        SELECT count(*) FROM machines m JOIN projects p ON p.id = m.project_id
+        WHERE p.owner_id = $1 AND m.removed_at IS NULL
+        """, owner_id)
+    if count < most:
+        return None
+    # Said to whoever adds the machine, who may be an admin of someone
+    # else's project: the owner's machines are what counts.
+    return (f"The {plan} plan allows {most} machines, all in use. Remove "
+            "one in tTerm Web to add another.")
+
+
+async def _make_room(conn: asyncpg.Connection, project_id: uuid.UUID) -> None:
+    """In the transaction that adds a machine: one at a time per owner, and
+    only while there is room."""
+    owner_id = await conn.fetchval("SELECT owner_id FROM projects WHERE id = $1",
+                                   project_id)
+    await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))",
+                       f"machines-of:{owner_id}")
+    problem = await room_problem(conn, project_id)
+    if problem is not None:
+        raise LimitReached(problem)
+
+
 def new_token(kind: str = "server") -> str:
     """For a server, twelve characters, 72 random bits: short enough to
     read, far too many to guess in the ten minutes the command works. For a
@@ -189,6 +230,9 @@ async def create_install(pool: asyncpg.Pool, *, project_id: uuid.UUID,
             project_id, user_id)
         if role not in ("owner", "admin"):
             raise PermissionError("only the owner and admins add machines")
+        problem = await room_problem(conn, project_id)
+        if problem is not None:
+            raise LimitReached(problem)
         token = new_token(kind)
         row = await conn.fetchrow(
             "INSERT INTO install_tokens (project_id, kind, token_hash, "
@@ -323,8 +367,10 @@ async def add_computer(pool: asyncpg.Pool, claimed: asyncpg.Record,
     token_id = claimed["id"]
     name = machine_name(reported, default="computer")
     async with pool.acquire() as conn, conn.transaction():
+        # The project first, then its owner: as a server's registration does.
         await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))",
                            str(project_id))
+        await _make_room(conn, project_id)
         key = token_hash(key) if key else await conn.fetchval(
             "SELECT token_hash FROM install_tokens WHERE id = $1", token_id)
         taken = {r["name"] for r in await conn.fetch(
@@ -538,6 +584,14 @@ async def enroll(pool: asyncpg.Pool, signer: SignerClient, e: Enrollment,
     try:
         if e.ssh_user != LOGIN:
             raise EnrollRefused(400, f"Unexpected user {e.ssh_user!r}.")
+        # A server already here only connects again; a new one needs room.
+        here = await pool.fetchval(
+            "SELECT id FROM machines WHERE project_id = $1 AND "
+            "removed_at IS NULL AND host_keys && $2::text[]",
+            project_id, e.host_keys)
+        problem = None if here else await room_problem(pool, project_id)
+        if problem is not None:
+            raise EnrollRefused(403, problem)
         try:
             details = await asyncio.wait_for(
                 _check_server(signer, e, ca_id, owner, name), CHECK_TIMEOUT)
@@ -559,6 +613,19 @@ async def enroll(pool: asyncpg.Pool, signer: SignerClient, e: Enrollment,
                 "UPDATE install_tokens SET state = 'failed', error = $2, "
                 "updated_at = now() WHERE id = $1", install_id, failure)
 
+    try:
+        return await _register_server(pool, e, project_id, install_id, owner,
+                                      name, ca_id, details)
+    except LimitReached as exc:
+        # Another machine came in while this one was being checked.
+        await fail_install(pool, install_id, str(exc))
+        raise EnrollRefused(403, str(exc)) from None
+
+
+async def _register_server(pool: asyncpg.Pool, e: Enrollment,
+                           project_id: uuid.UUID, install_id: uuid.UUID,
+                           owner: accounts.Person, name: str, ca_id: str,
+                           details: dict) -> str:
     async with pool.acquire() as conn, conn.transaction():
         # One registration at a time per project, so that the same server
         # run twice at once still ends up as one machine.
@@ -580,6 +647,7 @@ async def enroll(pool: asyncpg.Pool, signer: SignerClient, e: Enrollment,
                 json.dumps(details))
             kind = "machine.reconnected"
         else:
+            await _make_room(conn, project_id)
             taken = {r["name"] for r in await conn.fetch(
                 "SELECT name FROM machines WHERE project_id = $1 AND "
                 "removed_at IS NULL", project_id)}

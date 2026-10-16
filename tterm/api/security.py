@@ -1,22 +1,23 @@
-"""What keeps the page private to this computer while there is no sign-in.
+"""What keeps other sites from acting through the page.
 
-Until stage 2 anyone who can talk to the page acts as its owner, and from
-0.0.3 the owner has root on the connected machines. Listening on 127.0.0.1
-is not enough on its own, because a browser can be talked into reaching it:
+From 0.0.9 everyone signs in, and the session is a cookie the browser sends
+by itself; the page's own guard stays, as before sign-in, for what a cookie
+cannot tell:
 
-* DNS rebinding. A site makes its own name resolve to 127.0.0.1 and then
+* DNS rebinding. A site makes its own name resolve to our address and then
   talks to us as if it were us. The Host header gives it away, so we answer
-  only to localhost and 127.0.0.1 with our own port.
-* Cross-site requests. Any page in any tab can send a POST to
-  http://localhost:8090. A request that changes something must carry a
-  header a cross-site page cannot set without asking us first, and we never
-  agree; an Origin, when the browser sends one, must be ours.
-* WebSockets, from 0.0.4: browsers always send Origin there, and it must be
-  ours.
+  only to the page's own address (TTERM_PAGE_URL; on the laptop localhost
+  and 127.0.0.1 with our port).
+* Cross-site requests. Any page in any tab can send a POST to us. A request
+  that changes something must carry a header a cross-site page cannot set
+  without asking us first, and we never agree; an Origin, when the browser
+  sends one, must be ours. The cookies are SameSite=Strict as well.
+* WebSockets: browsers always send Origin there, and it must be ours.
 """
 from __future__ import annotations
 
 from typing import Awaitable, Callable
+from urllib.parse import urlsplit
 
 Scope = dict
 Receive = Callable[[], Awaitable[dict]]
@@ -93,14 +94,26 @@ class AddHeaders:
         await self.app(scope, receive, send_with_headers)
 
 
-class LocalOnly:
-    """Lets through only what comes from the page itself, on this computer."""
+def page_origins(page_url: str) -> tuple[set[str], set[str]]:
+    """The Host values and the origins the page answers to. On the laptop
+    localhost, 127.0.0.1 and [::1] are the same page."""
+    parts = urlsplit(page_url)
+    host = (parts.hostname or "").lower()
+    if host in ("localhost", "127.0.0.1", "::1"):
+        names = ["localhost", "127.0.0.1", "[::1]"]
+    else:
+        names = [f"[{host}]" if ":" in host else host]
+    hosts = {f"{name}:{parts.port}" if parts.port else name for name in names}
+    return hosts, {f"{parts.scheme}://{h}" for h in hosts}
 
-    def __init__(self, app: ASGIApp, port: int) -> None:
+
+class PageGuard:
+    """Lets through only what comes from the page itself, at its address."""
+
+    def __init__(self, app: ASGIApp, page_url: str) -> None:
         self.app = app
-        self.hosts = {f"localhost:{port}", f"127.0.0.1:{port}", f"[::1]:{port}"}
-        self.origins = {f"http://{host}" for host in self.hosts}
-        self.port = port
+        self.page_url = page_url
+        self.hosts, self.origins = page_origins(page_url)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] not in ("http", "websocket"):
@@ -109,7 +122,7 @@ class LocalOnly:
         headers = _headers(scope)
         if headers.get("host", "").lower() not in self.hosts:
             await self._refuse(scope, send, 421,
-                               f"Open this page as http://localhost:{self.port}")
+                               f"Open this page as {self.page_url}")
             return
         origin = headers.get("origin")
         if scope["type"] == "websocket":

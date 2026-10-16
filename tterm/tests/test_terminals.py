@@ -27,7 +27,7 @@ import websockets
 
 from ..core import machines, shell, terminals
 from ..core.machines import remember_cas
-from .harness import request, shell_server
+from .harness import page_socket, request, shell_server
 
 KEY = "0123456789abcdef" * 2
 CHANGE = {"x-tterm": "1", "content-type": "application/json"}
@@ -369,7 +369,7 @@ async def test_a_terminal_runs_over_ssh_and_keeps_blocks(h):
                 shell_server(await _ca_public(core), home, login) \
                 as (port, host_key):
             machine_id = await _machine(core, port, host_key)
-            t = await core.terminals.open(machine_id, 100, 30)
+            t = await core.terminals.open(core.owner, machine_id, 100, 30)
             assert t.label == "P/lab" and t.state == "connecting"
             await _until(lambda: _prompts(t) >= 1, what="the first prompt")
             assert t.state == "open" and t.markers and t.shell
@@ -404,7 +404,7 @@ async def test_a_terminal_runs_over_ssh_and_keeps_blocks(h):
                     os.path.realpath(home)
                 output = zlib.decompress(rows[0]["output"])
                 assert b"hello" in output and b"\x1b]6973" not in output
-            second = await core.terminals.open(machine_id, 80, 24)
+            second = await core.terminals.open(core.owner, machine_id, 80, 24)
             assert second.name == "2" and second.label == "P/lab · 2"
             await _until(lambda: second.state == "open", what="the second")
             await second.close()
@@ -437,7 +437,7 @@ async def test_a_server_is_removed(h):
                 shell_server(await _ca_public(core), home, login) \
                 as (port, host_key):
             machine_id = await _machine(core, port, host_key)
-            t = await core.terminals.open(machine_id, 80, 24)
+            t = await core.terminals.open(core.owner, machine_id, 80, 24)
             await _until(lambda: _prompts(t) >= 1, what="the first prompt")
             if full:
                 t.write(b"echo before-the-removal\n")
@@ -497,7 +497,7 @@ async def test_a_server_is_removed(h):
             assert [m for p in state["projects"] for m in p["machines"]] == [] \
                 and state["terminals"] == [], state
             try:
-                await core.terminals.open(machine_id, 80, 24)
+                await core.terminals.open(core.owner, machine_id, 80, 24)
             except terminals.NotAllowed:
                 pass
             else:
@@ -506,7 +506,7 @@ async def test_a_server_is_removed(h):
             r = await request(core.page_port, "GET", f"/api/terminals/{t.id}")
             assert r.json()["reason"] == t.reason, r.json()
             if full:
-                history = await core.terminals.history(t.id)
+                history = await core.terminals.history(t.id, core.owner.id)
                 assert {"command": "echo before-the-removal", "here": True} \
                     in (history or []), history
     finally:
@@ -531,11 +531,11 @@ async def test_a_terminal_that_cannot_connect_says_why(h):
             "host_keys, ca_id) VALUES ($1, 'server', 'gone', '127.0.0.1', $2, "
             "'tterm', $3, $4) RETURNING id", project, closed,
             [key.export_public_key().decode().strip()], cas[0]["id"])
-        t = await core.terminals.open(machine_id, 80, 24)
+        t = await core.terminals.open(core.owner, machine_id, 80, 24)
         await _until(lambda: t.state == "ended", what="the refusal")
         assert "connection refused" in (t.reason or ""), t.reason
         try:
-            await core.terminals.open(uuid.uuid4(), 80, 24)
+            await core.terminals.open(core.owner, uuid.uuid4(), 80, 24)
         except terminals.NotAllowed:
             pass
         else:
@@ -565,7 +565,7 @@ async def test_terminals_left_by_the_last_run_are_closed(h):
         row = await core.pool.fetchrow(
             "SELECT closed_at, end_reason FROM terminals WHERE id = $1", tid)
         assert row["closed_at"] and "stopped" in row["end_reason"]
-        info = await core.terminals.ended(tid)
+        info = await core.terminals.ended(tid, core.owner.id)
         assert info and info["state"] == "gone" and info["label"] == "P/old"
 
 
@@ -612,14 +612,12 @@ async def test_the_socket_streams_replays_and_resumes(h):
             tid = r.json()["id"]
             state = (await request(core.page_port, "GET", "/api/state")).json()
             assert [t["id"] for t in state["terminals"]] == [tid]
-            url = f"ws://localhost:{core.page_port}/api/ws"
-            origin = f"http://localhost:{core.page_port}"
 
             def prompted(n):
                 return lambda got: sum(1 for f in got if isinstance(f, dict)
                                        and f.get("t") == "P") >= n
 
-            async with websockets.connect(url, origin=origin, proxy=None) as ws:
+            async with page_socket(core.page_port) as ws:
                 await ws.send(json.dumps({"op": "attach", "ch": 3, "id": tid,
                                           "after": None, "cols": 90, "rows": 25}))
                 got = await _frames(ws, prompted(1))
@@ -632,9 +630,9 @@ async def test_the_socket_streams_replays_and_resumes(h):
                            for f in got if isinstance(f, bytes))
                 seen = _last_seq(got)
             # Back after a moment away: only what came since.
-            core.terminals.get(uuid.UUID(tid)).write(b"echo two\n")
+            core.terminals.get(uuid.UUID(tid), core.owner.id).write(b"echo two\n")
             await asyncio.sleep(0.6)
-            async with websockets.connect(url, origin=origin, proxy=None) as ws:
+            async with page_socket(core.page_port) as ws:
                 await ws.send(json.dumps({"op": "attach", "ch": 1, "id": tid,
                                           "after": seen, "cols": 90, "rows": 25}))
                 got = await _frames(ws, lambda g: any(
@@ -647,7 +645,7 @@ async def test_the_socket_streams_replays_and_resumes(h):
                 # news, so the page's terminal answers nothing in it.
                 assert got[-1]["op"] == "replayed"
             # A page that comes back empty gets everything kept.
-            async with websockets.connect(url, origin=origin, proxy=None) as ws:
+            async with page_socket(core.page_port) as ws:
                 await ws.send(json.dumps({"op": "attach", "ch": 1, "id": tid,
                                           "after": None, "cols": 90, "rows": 25}))
                 got = await _frames(ws, lambda g: b"two" in _output(g))
@@ -668,10 +666,9 @@ async def test_the_socket_streams_replays_and_resumes(h):
 
 async def test_the_socket_is_only_for_this_page(h):
     async with h.core() as core:
-        url = f"ws://localhost:{core.page_port}/api/ws"
         for origin in ("http://evil.example", None):
             try:
-                async with websockets.connect(url, origin=origin, proxy=None) as ws:
+                async with page_socket(core.page_port, origin=origin) as ws:
                     await asyncio.wait_for(ws.recv(), 2)
             except (websockets.exceptions.InvalidStatus,
                     websockets.exceptions.ConnectionClosed) as exc:

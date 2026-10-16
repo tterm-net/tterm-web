@@ -4,10 +4,16 @@ tTerm in the browser: a real terminal with command blocks, for people who work
 with servers and for their teams. Projects, roles, a journal of who ran what,
 and watching a colleague's terminal, always with them knowing.
 
-**Status:** early development. Version 0.0.8 adds a computer with one
-command that installs [tterm-agent](https://github.com/tterm-net/tterm-agent)
-and starts it whenever you log in, removes machines and ends terminals, and
-remembers folded blocks and a cleared feed. Since 0.0.7 the page is the one
+**Status:** early development. Version 0.0.9 lets everyone in: you sign up
+with a code from email, your name and a yes to the Terms of Service, then sign
+in with a code from email, or on a device you trust with a four-digit quick
+code; each person sees only their own machines and terminals, as many as
+their plan allows; and tTerm Web runs on a server of its own, set up with
+one script (`deploy/`). Version
+0.0.8 added a computer with one command that installs
+[tterm-agent](https://github.com/tterm-net/tterm-agent) and starts it
+whenever you log in, removing machines and ending terminals, and folded
+blocks and a cleared feed that stay so. Since 0.0.7 the page is the one
 of the mockups: tabs of open terminals from any project, "+" for a terminal
 on any machine, a palette on Cmd+K, and a computer's terminals live through
 its sleep, waiting while it is away and going on where they were. Since 0.0.6 a
@@ -16,9 +22,8 @@ since 0.0.5 a terminal is a feed of blocks, one per command, typed into
 tTerm's own input line: history from all your devices, Tab that asks the
 machine, the directory and the git branch as buttons, and a question before
 a command that would destroy something. The classic terminal is one click
-away. The first stage ends with version 0.1, a real terminal to your own
-servers and computers in the browser on your laptop. Then come accounts and
-a server, then teams, then a public launch.
+away. Accounts and a server of its own came early, in 0.0.9, ahead of the
+first stage's end with version 0.1; then come teams, then a public launch.
 
 Related:
 
@@ -29,8 +34,12 @@ Related:
 
 ## Run it on your computer
 
-For development, while there is no sign-in: the page answers only on the
-computer it runs on.
+For development. The page answers only on the computer it runs on, and you
+sign in there as anyone would, with a code from email: without a Brevo key
+(`TTERM_BREVO_KEY`) the email goes to the window tTerm Web runs in, so the
+code is there. If this computer already has machines and history from before
+0.0.9, set `TTERM_OWNER_EMAIL` in `.env` first: they are yours under that
+address.
 
 You need Python 3.12 or newer and PostgreSQL 16 or newer. The defaults expect
 PostgreSQL on port 5433 with a database named `tterm_web`; set
@@ -43,8 +52,8 @@ python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 
-# The page. Release archives bring it built; from git, build it once:
-(cd web && npm ci && npm run build)
+# The page comes built, in web/dist. After a change in web/, build it again:
+# (cd web && npm ci && npm run build)
 
 python -m tterm.dev
 ```
@@ -77,7 +86,9 @@ tterm/
   core/          settings, the database and its migrations, people, projects,
                  machines, SSH, the server passport, terminals and the shell
                  on the other end of them, Tab, the commands held back
-  api/page.py    the page and its API, for people; only this computer
+  core/auth.py   signing in: codes from email, trusted devices, sessions
+  core/mail.py   the emails, through Brevo or into the log
+  api/page.py    the page and its API, for people, each within a session
   api/ws.py      the page's socket: every terminal on the page goes through it
   api/connect.py where machines talk to us: installer, registration, and
                  the agents of computers, which stay connected
@@ -86,8 +97,10 @@ tterm/
                  scripts terminals put on them
   server.py      runs both apps, on two ports
   dev.py         python -m tterm.dev: the signer, then the core
+  serve.py       python -m tterm.serve: the core alone, on a server
   tests/         python -m tterm.tests
 web/             the page: React, TypeScript, Vite, xterm.js
+deploy/          a server: the setup script, systemd, nginx, backups
 ```
 
 **How a server connects.** "Add a machine" makes a one-time command that
@@ -211,13 +224,46 @@ will be separate addresses on the server: `app.tterm.net` for people and
 `connect.tterm.net` for machines. Nothing of the page is reachable through the
 machines' address.
 
-No sign-in yet, so the page guards itself: it answers only when the browser
-asks for `localhost` or `127.0.0.1` on its own port, which defeats DNS
-rebinding, and a request that changes something must come from the page
-itself, its socket included. The page loads nothing from other sites, fonts
-included, and its security policy allows no inline scripts or styles; the
-few style elements xterm.js writes carry a one-time number each copy of the
-page gets.
+**Signing in.** Anyone can. After the first code that works for an address
+the person gives their name and ticks one box, agreeing to the Terms of
+Service and the Privacy Policy, both links (`TTERM_TERMS_URL`,
+`TTERM_PRIVACY_URL`); that makes the account, with its first project,
+Personal, and keeps when the person agreed. The code is six digits by
+email, for ten minutes and five tries, and only in the browser that asked
+for it; codes come at most once a minute to an address, five an hour, and
+there are limits per network and per day. Right after a code, the page
+offers a quick code for this device, four digits, or "Not now". A quick
+code works only together with a long random key the browser keeps, so it is
+no use anywhere else, and five wrong ones forget the device. A session ends
+after eight hours without anything done, on Sign out, or with its device;
+the terminals keep running, and the page asks to sign in again at once.
+Devices, in the menu of the account, lists the trusted browsers, forgets
+one, or signs out everywhere. Each sign-in from a browser tTerm Web does not
+know is told by email. Only hashes are kept: of the codes and quick codes
+with a secret of the server's that is not in the database (`auth.key`), and
+of the session and device keys, long and random, plain ones. The cookies are `HttpOnly` and
+`SameSite=Strict`, and on https `__Host-` and `Secure`. Each person sees
+and reaches only their own projects, machines, terminals and history, and
+has as many machines and open terminals as their plan allows: 50 and 24 on
+the free plan, the only one for now. Plans and their limits live in the
+database, so a limit changes on a running server, without a release; every
+hour the core writes down how much it carries (`usage_stats`), to show
+when a limit needs another look.
+
+The page guards itself as well: it answers only when the browser asks for
+its own address (`TTERM_PAGE_URL`; on a laptop `localhost` or `127.0.0.1`
+with its port), which defeats DNS rebinding, and a request that changes
+something must come from the page itself, its socket included. The page
+loads nothing from other sites, fonts included, and its security policy
+allows no inline scripts or styles; the few style elements xterm.js writes
+carry a one-time number each copy of the page gets.
+
+## On a server
+
+`deploy/setup.sh` sets up a fresh Ubuntu 24.04 server: nginx with Let's
+Encrypt in front, PostgreSQL, the core and the signer as services under
+users of their own, a firewall and a nightly dump of the database. See
+[deploy/README.md](deploy/README.md).
 
 ## Contributing
 

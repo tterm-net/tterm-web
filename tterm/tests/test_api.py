@@ -48,7 +48,7 @@ async def test_theme_change_needs_the_page_header(h):
         assert state["me"]["theme"] == "light"
         r = await request(core.page_port, "PATCH", "/api/me", headers=CHANGE,
                           body=json.dumps({"theme": "blue"}).encode())
-        assert r.status == 422, r.status
+        assert r.status == 422 and "error" in r.json(), r.text
 
 
 async def test_other_sites_cannot_act(h):
@@ -157,7 +157,8 @@ async def test_core_without_database_does_not_leave_ports_taken(h):
     from ..core.config import Settings
     from ..core.db import DatabaseUnavailable
     settings = Settings.load(environ={
-        "TTERM_DATABASE_URL": "postgresql://localhost:1/tterm_web"},
+        "TTERM_DATABASE_URL": "postgresql://localhost:1/tterm_web",
+        "TTERM_DATA_DIR": tempfile.mkdtemp(prefix="tt")},
         env_file=Path("/nonexistent/.env"))
     page, connect = free_socket(), free_socket()
     ports = (page.getsockname()[1], connect.getsockname()[1])
@@ -167,5 +168,33 @@ async def test_core_without_database_does_not_leave_ports_taken(h):
         pass
     else:
         raise AssertionError("started without a database")
+    for port in ports:
+        listen("127.0.0.1", port).close()
+
+
+async def test_a_laptop_from_before_sign_in_asks_for_the_owners_address(h):
+    """0.0.8 and before had a local owner without an address. Signing in
+    first would make a second, empty account: the core says what to set."""
+    from ..core.config import Settings
+    url = await h.database()
+    import asyncpg
+    conn = await asyncpg.connect(url)
+    try:
+        await conn.execute("INSERT INTO users (name, is_local_owner) "
+                           "VALUES ('Denis Gerasimenko', true)")
+    finally:
+        await conn.close()
+    settings = Settings.load(environ={
+        "TTERM_DATABASE_URL": url, "TTERM_DATA_DIR": tempfile.mkdtemp(prefix="tt"),
+        "TTERM_SIGNER_SOCKET": "/nonexistent/s.sock"},
+        env_file=Path("/nonexistent/.env"))
+    page, connect = free_socket(), free_socket()
+    ports = (page.getsockname()[1], connect.getsockname()[1])
+    try:
+        await Core(settings).start(page_socket=page, connect_socket=connect)
+    except RuntimeError as exc:
+        assert "TTERM_OWNER_EMAIL" in str(exc) and "Denis" in str(exc), exc
+    else:
+        raise AssertionError("started with an owner nobody can sign in as")
     for port in ports:
         listen("127.0.0.1", port).close()

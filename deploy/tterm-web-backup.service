@@ -1,0 +1,17 @@
+# A dump of the database a night: see backup.sh.
+[Unit]
+Description=tTerm Web database dump
+After=postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+User=postgres
+Group=postgres
+WorkingDirectory=/
+ExecStart=/bin/sh /opt/tterm-web/deploy/backup.sh
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/backups/tterm-web

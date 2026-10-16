@@ -1,7 +1,8 @@
 """python -m tterm.signer — the signer on its own.
 
 On this computer `python -m tterm.dev` starts it for you. On the server it
-will run as its own system user, under its own systemd unit.
+runs as its own system user, under its own systemd unit (deploy/), and the
+core reaches its socket through the group TTERM_SIGNER_GROUP.
 """
 from __future__ import annotations
 
@@ -19,7 +20,8 @@ async def run(settings: Settings) -> int:
     signer = Signer(settings.signer_dir)
     signer.load_or_create()
     try:
-        server = await serve(signer, settings.signer_socket)
+        server = await serve(signer, settings.signer_socket,
+                             settings.signer_group or None)
     except RuntimeError as exc:
         print(f"signer: {exc}", file=sys.stderr)
         return 1

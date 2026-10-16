@@ -1,0 +1,57 @@
+# The core: the page and its API on 127.0.0.1:8090, the machines' side on
+# 127.0.0.1:8091, nginx in front of both. Settings in /etc/tterm-web/core.env.
+[Unit]
+Description=tTerm Web core
+After=network-online.target postgresql.service tterm-signer.service
+Wants=network-online.target
+Requires=postgresql.service tterm-signer.service
+
+[Service]
+Type=simple
+User=tterm-web
+Group=tterm-web
+SupplementaryGroups=tterm-sign
+WorkingDirectory=/opt/tterm-web
+EnvironmentFile=/etc/tterm-web/core.env
+Environment=PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+# The signer makes its socket a moment after it starts.
+ExecStartPre=/bin/sh -c 'for i in $$(seq 50); do [ -S /run/tterm-signer/signer.sock ] && exit 0; sleep 0.2; done; echo "the signer has no socket"; exit 1'
+ExecStart=/opt/tterm-web/venv/bin/python -m tterm.serve
+# Its name in the logs; deploy/logs.sh keeps them in the journal alone.
+SyslogIdentifier=tterm-web
+# Its own secret (auth.key): this user's alone.
+StateDirectory=tterm-web
+StateDirectoryMode=0700
+UMask=0077
+# Terminals and agents: many connections at once.
+LimitNOFILE=16384
+# Terminals end when the core stops; give them a moment to say so.
+TimeoutStopSec=20
+Restart=on-failure
+RestartSec=3
+
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

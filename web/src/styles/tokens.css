@@ -36,6 +36,9 @@
   --blue-wash: rgba(108, 140, 255, .08);
   --scrim: rgba(5, 6, 8, .62);
   --shadow: 0 24px 64px rgba(0, 0, 0, .55);
+  /* Sign-in: its card, and the ground under it. */
+  --paper: #16181C;
+  --paper-ground: #0D0E11;
   /* The sixteen colours programs ask for, as in the terminal (xtermTheme.ts):
    * finished blocks in the feed use them as text. */
   --ansi-0: #1D2026;
@@ -87,6 +90,8 @@
   --blue-wash: rgba(71, 102, 230, .06);
   --scrim: rgba(21, 23, 28, .28);
   --shadow: 0 24px 64px rgba(21, 23, 28, .16);
+  --paper: #FFFFFF;
+  --paper-ground: #F3F4F6;
   --ansi-0: #15171C;
   --ansi-1: #B3302A;
   --ansi-2: #15702F;

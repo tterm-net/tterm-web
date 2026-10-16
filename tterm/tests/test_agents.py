@@ -220,7 +220,7 @@ async def test_a_computer_joins_and_its_terminals_work(h):
             machine_id = uuid.UUID(machine["id"])
 
             # A terminal on it, as on a server: markers, blocks, its size.
-            t = await core.terminals.open(machine_id, 100, 30)
+            t = await core.terminals.open(core.owner, machine_id, 100, 30)
             await _until(lambda: _prompts(t) >= 1, what="the first prompt")
             assert t.markers and t.blocks == full
             assert t._key.encode() not in _screen(t), "the key never shows"
@@ -246,8 +246,8 @@ async def test_a_computer_joins_and_its_terminals_work(h):
             assert t.reason == "The shell ended with code 7.", t.reason
 
             # Two at once, each its own shell; one closed, the other goes on.
-            a = await core.terminals.open(machine_id, 80, 24)
-            b = await core.terminals.open(machine_id, 80, 24)
+            a = await core.terminals.open(core.owner, machine_id, 80, 24)
+            b = await core.terminals.open(core.owner, machine_id, 80, 24)
             await _until(lambda: _prompts(a) >= 1 and _prompts(b) >= 1,
                          what="two prompts")
             a.write(b"cd src\n")
@@ -270,7 +270,7 @@ async def test_a_computer_joins_and_its_terminals_work(h):
                 assert "was lost" in (b.reason or ""), b.reason
             state = (await request(core.page_port, "GET", "/api/state")).json()
             assert _computer(state)["online"] is False
-            c = await core.terminals.open(machine_id, 80, 24)
+            c = await core.terminals.open(core.owner, machine_id, 80, 24)
             await _until(lambda: c.state == "ended", what="offline")
             assert "not connected right now" in (c.reason or ""), c.reason
 
@@ -278,7 +278,7 @@ async def test_a_computer_joins_and_its_terminals_work(h):
             second = await Agent(_hub(core), token, home, login).start()
             await _until(lambda: core.agents.online(machine_id), 15,
                          what="the agent back")
-            d = await core.terminals.open(machine_id, 80, 24)
+            d = await core.terminals.open(core.owner, machine_id, 80, 24)
             await _until(lambda: _prompts(d) >= 1, what="a prompt again")
             count = await core.pool.fetchval(
                 "SELECT count(*) FROM machines WHERE kind = 'computer'")
@@ -365,7 +365,7 @@ async def test_a_terminal_waits_for_its_agent(h):
                 first = await Agent(hub, token, home, login).start()
                 status = await _wait_status(core, install_id, "connected", first)
                 machine_id = uuid.UUID(status["machine"]["id"])
-                t = await core.terminals.open(machine_id, 80, 24)
+                t = await core.terminals.open(core.owner, machine_id, 80, 24)
                 await _until(lambda: _prompts(t) >= 1, what="the first prompt")
                 n = _prompts(t)
                 t.write(b"for i in $(seq 1 60); do echo L$i; sleep 0.05; done\n")
@@ -391,7 +391,7 @@ async def test_a_terminal_waits_for_its_agent(h):
 
                 # Killed while away: its shells went with it. A new one has
                 # none of them, and the terminal ends saying so.
-                u = await core.terminals.open(machine_id, 80, 24)
+                u = await core.terminals.open(core.owner, machine_id, 80, 24)
                 await _until(lambda: _prompts(u) >= 1, what="another prompt")
                 await first.kill()
                 await _until(lambda: t.away and u.away, what="both away")
@@ -402,7 +402,7 @@ async def test_a_terminal_waits_for_its_agent(h):
                                     "its agent was restarted, or the computer "
                                     "was awake and offline for over an hour."), \
                     u.reason
-                v = await core.terminals.open(machine_id, 80, 24)
+                v = await core.terminals.open(core.owner, machine_id, 80, 24)
                 await _until(lambda: _prompts(v) >= 1, what="a prompt again")
                 await v.close()
             finally:
@@ -448,7 +448,7 @@ async def test_tokens_and_agents_that_do_not_fit(h):
         machine_id = await core.pool.fetchval(
             "INSERT INTO machines (project_id, kind, name) VALUES ($1, "
             "'computer', 'sleepy') RETURNING id", uuid.UUID(project))
-        t = await core.terminals.open(machine_id, 80, 24)
+        t = await core.terminals.open(core.owner, machine_id, 80, 24)
         await _until(lambda: t.state == "ended", what="the refusal")
         assert "sleepy is not connected right now" in (t.reason or "")
         assert isinstance(t.machine, terminals.Machine) and \
@@ -525,7 +525,7 @@ class FakeMac:
 
     async def opened(self, core, machine_id: uuid.UUID):
         """A new terminal on it, open; it and its channel."""
-        t = await core.terminals.open(machine_id, 80, 24)
+        t = await core.terminals.open(core.owner, machine_id, 80, 24)
         known = {m["ch"] for m in self.sent("open")}
         await _until(lambda: t.state == "open", what="the terminal open")
         ch = next(m["ch"] for m in self.sent("open") if m["ch"] not in known)
@@ -1067,7 +1067,7 @@ async def test_the_agent_with_a_key_of_its_own(h):
             assert await core.pool.fetchval(
                 "SELECT agent_token_hash FROM machines WHERE id = $1",
                 machine_id) == machines.token_hash(key)
-            t = await core.terminals.open(machine_id, 80, 24)
+            t = await core.terminals.open(core.owner, machine_id, 80, 24)
             await _until(lambda: _prompts(t) >= 1, what="the first prompt")
             r = await request(core.page_port, "DELETE",
                               f"/api/machines/{machine_id}", headers=CHANGE)

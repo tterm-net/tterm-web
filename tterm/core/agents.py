@@ -601,6 +601,10 @@ class Agents:
         #: When each address last failed its hellos, the latest few.
         self._strikes: dict[str, list[float]] = {}
 
+    def connected(self) -> int:
+        """How many computers have their agent connected now."""
+        return len(self._links)
+
     def attach(self, link: AgentLink) -> None:
         assert link.machine_id is not None
         link.agents = self
@@ -891,6 +895,11 @@ async def session(ws: WebSocket, pool: asyncpg.Pool, agents: Agents,
                     await machines.fail_install(pool, claimed["id"],
                                                 LEFT_WHILE_JOINING)
                     return
+                if isinstance(exc, machines.LimitReached):
+                    # Another machine came in meanwhile and took the room.
+                    await machines.fail_install(pool, claimed["id"], str(exc))
+                    await _refuse(ws, str(exc), revoked=True)
+                    return
                 log.exception("a computer could not join")
                 await machines.fail_install(
                     pool, claimed["id"], f"The computer could not be added: {exc}")
@@ -1060,8 +1069,8 @@ async def _install_problem(pool: asyncpg.Pool, token: str,
         await machines.fail_token(pool, token, KEY_RETIRED)
         return KEY_RETIRED, True, True
     row = await pool.fetchrow(
-        "SELECT kind, state FROM install_tokens WHERE token_hash = $1",
-        machines.token_hash(token))
+        "SELECT kind, state, project_id FROM install_tokens "
+        "WHERE token_hash = $1", machines.token_hash(token))
     if row is None:
         return NOT_KNOWN, True, False
     if row["kind"] != "computer":
@@ -1071,6 +1080,11 @@ async def _install_problem(pool: asyncpg.Pool, token: str,
     if row["state"] == "connected":
         # It became a computer's key, and that computer was removed.
         return NOT_KNOWN, True, False
+    full = await machines.room_problem(pool, row["project_id"])
+    if full is not None:
+        # The dialog shows it too; the agent stops, as for a dead command.
+        await machines.fail_token(pool, token, full)
+        return full, True, False
     return None
 
 

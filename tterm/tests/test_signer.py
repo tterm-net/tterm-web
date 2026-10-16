@@ -177,6 +177,42 @@ async def test_missing_signer_says_what_to_do():
         raise AssertionError("answered from nowhere")
 
 
+async def test_on_the_server_the_core_group_reaches_the_socket():
+    """The signer and the core are different users there: the socket is
+    the group's too, and its folder lets that group in, no one else."""
+    import grp
+    group = grp.getgrgid(os.getgid()).gr_name
+    tmp = Path(tempfile.mkdtemp(prefix="tt"))
+    try:
+        signer = Signer(tmp / "signer")
+        signer.load_or_create()
+        server = await serve(signer, tmp / "run" / "s.sock", group)
+        try:
+            folder = stat.S_IMODE((tmp / "run").stat().st_mode)
+            sock = stat.S_IMODE((tmp / "run" / "s.sock").stat().st_mode)
+            assert (folder, sock) == (0o750, 0o660), (oct(folder), oct(sock))
+            assert (tmp / "run" / "s.sock").stat().st_gid == os.getgid()
+            keys = await SignerClient(tmp / "run" / "s.sock").keys()
+            assert keys and keys[0]["active"]
+            assert stat.S_IMODE((tmp / "signer").stat().st_mode) == 0o700, \
+                "the keys stay the signer's alone"
+        finally:
+            server.close()
+            await server.wait_closed()
+        # A folder the group may write to is refused.
+        open_dir = tmp / "group-writes"
+        open_dir.mkdir()
+        os.chmod(open_dir, 0o770)
+        try:
+            service.private_dir(open_dir, group)
+        except RuntimeError as exc:
+            assert "closed to others" in str(exc)
+        else:
+            raise AssertionError("accepted a folder the group can write")
+    finally:
+        shutil.rmtree(tmp)
+
+
 def test_socket_folder_must_be_private():
     tmp = Path(tempfile.mkdtemp(prefix="tt"))
     try:

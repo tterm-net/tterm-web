@@ -1,0 +1,792 @@
+"""Signing in: a code from email, then, on a device the person trusts, a
+four-digit code for quick sign-in. Open to everyone: an address without an
+account gets one after its first code that works.
+
+    1. The page asks for a code for an address. Six digits go there by
+       email; they work for ten minutes, five tries, and only in the browser
+       that asked (its own cookie, BROWSER_COOKIE): a code read out to
+       someone over the phone is no use in their browser.
+    2. The code signs the person in. For an address without an account it
+       does not yet: first the person gives their name and accepts the
+       Terms of Service, having read the Privacy Policy (sign_up), in the same
+       browser within half an hour.
+    3. Right after, the page offers a quick code for this device; "Not now"
+       leaves the browser a stranger, and next time it is email again.
+    4. A quick code makes the browser a device: a long random key the
+       browser keeps (DEVICE_COOKIE) and, here, its hash and the quick
+       code's. The quick code works only with that key, so it is no use
+       anywhere else; five wrong ones and the device is forgotten, and it
+       is email again.
+
+A session is a cookie as well (SESSION_COOKIE). It ends after eight hours
+without anything done, on Sign out, or with its device. Only hashes are
+kept: of the random tokens plainly, of the codes and the quick codes with a
+secret of this server's that never goes to the database (`auth.key` in the
+data folder), so that a copy of the database alone guesses nothing.
+"""
+from __future__ import annotations
+
+import contextlib
+import datetime as dt
+import hashlib
+import hmac
+import ipaddress
+import logging
+import os
+import re
+import secrets
+import uuid
+from dataclasses import dataclass
+from pathlib import Path
+
+import asyncpg
+
+from . import accounts
+from .accounts import Person
+from .mail import Email, Mailer, MailFailed
+
+log = logging.getLogger("tterm.auth")
+
+CODE_DIGITS = 6
+CODE_MINUTES = 10
+CODE_TRIES = 5
+#: Seconds between two codes for one address.
+CODE_EVERY = 60
+CODES_PER_ADDRESS_HOUR = 5
+#: Per network: an IPv4 address, or an IPv6 /64.
+CODES_PER_IP_HOUR = 10
+#: All the codes tTerm Web sends in a day, under Brevo's free 300.
+CODES_PER_DAY = 250
+#: Of those, the most for addresses without an account: the rest is kept
+#: for the people who have one.
+SIGNUPS_PER_DAY = 150
+#: How long after its code an address without an account may still be
+#: signed up in that browser.
+SIGN_UP_TIME = dt.timedelta(minutes=30)
+#: A person's name, at most.
+NAME_MAX = 100
+PIN_DIGITS = 4
+PIN_TRIES = 5
+#: How long after signing in with a code from email a quick code may be set.
+PIN_OFFER = dt.timedelta(minutes=15)
+DEVICE_DAYS = 90
+#: A session ends after this long without anything done.
+IDLE = dt.timedelta(hours=8)
+#: A session's last activity is written at most this often.
+TOUCH_EVERY = dt.timedelta(minutes=1)
+
+SESSION_COOKIE = "tterm-session"
+DEVICE_COOKIE = "tterm-device"
+BROWSER_COOKIE = "tterm-browser"
+
+#: An address as people have them: no quotes, no brackets, no spaces.
+_EMAIL = re.compile(r"^[a-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}"
+                    r"@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+                    r"(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$")
+
+
+# --------------------------------------------------------------- refusals
+
+class Refused(Exception):
+    """Something the person is told, with an HTTP status for the page."""
+
+    status = 400
+
+    def __init__(self, message: str, **details) -> None:
+        super().__init__(message)
+        self.details = details
+
+
+class TooSoon(Refused):
+    status = 429
+
+
+class WrongCode(Refused):
+    status = 401
+
+
+class DeviceForgotten(Refused):
+    """The device's key is unknown, or no longer trusted: email again."""
+    status = 410
+
+
+class NotSignedIn(Refused):
+    status = 401
+
+
+# ---------------------------------------------------------------- secrets
+
+def load_secret(path: Path) -> bytes:
+    """This server's secret for the hashes of codes, made on the first
+    start and readable by this user only."""
+    try:
+        data = path.read_bytes()
+    except FileNotFoundError:
+        pass
+    else:
+        if len(data) < 32:
+            raise RuntimeError(
+                f"{path} is damaged. Delete it and start again: the quick "
+                "codes set until now stop working, and everyone signs in "
+                "with a code from email once.")
+        return data
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fresh = path.with_name(path.name + ".new")
+    fd = os.open(fresh, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as f:
+        f.write(secrets.token_bytes(32))
+    os.replace(fresh, path)
+    return path.read_bytes()
+
+
+def _mac(secret: bytes, *parts: str | bytes) -> bytes:
+    mac = hmac.new(secret, digestmod=hashlib.sha256)
+    for part in parts:
+        data = part.encode() if isinstance(part, str) else part
+        mac.update(len(data).to_bytes(4, "big"))
+        mac.update(data)
+    return mac.digest()
+
+
+def token_hash(token: str) -> bytes:
+    """Tokens are long and random: a plain hash is enough."""
+    return hashlib.sha256(token.encode()).digest()
+
+
+def new_token() -> str:
+    return secrets.token_urlsafe(32)
+
+
+# -------------------------------------------------------------- the words
+
+def normalize_email(raw: object) -> str | None:
+    """The address in lower case, or None if it cannot be one."""
+    if not isinstance(raw, str):
+        return None
+    email = raw.strip().lower()
+    if not 3 <= len(email) <= 254 or not email.isprintable():
+        return None
+    return email if _EMAIL.match(email) else None
+
+
+def network_of(ip: str) -> str:
+    """Where the limits per network count: an IPv4 address on its own, an
+    IPv6 one by its /64, which one home or one server gets whole; with only
+    its full address, anyone with IPv6 would have endless networks."""
+    try:
+        address = ipaddress.ip_address(ip)
+    except ValueError:
+        return ip
+    if address.version == 6:
+        if address.ipv4_mapped is not None:
+            return str(address.ipv4_mapped)
+        return str(ipaddress.ip_network(f"{address}/64", strict=False))
+    return str(address)
+
+
+def digits(raw: object, count: int) -> str | None:
+    """Exactly `count` digits, spaces around and inside forgiven."""
+    if not isinstance(raw, str):
+        return None
+    value = "".join(raw.split())
+    if len(value) == count and value.isascii() and value.isdigit():
+        return value
+    return None
+
+
+def too_easy(pin: str) -> bool:
+    """A quick code anyone would try first: one digit four times, or the
+    digits in a row (1234, 9876)."""
+    steps = {int(b) - int(a) for a, b in zip(pin, pin[1:])}
+    return len(set(pin)) == 1 or steps in ({1}, {-1})
+
+
+def clean_name(raw: object) -> str | None:
+    """The name as the person typed it, its spaces tidied; None if it cannot
+    be one: empty, too long, with no letter or digit, or with characters
+    that do not print."""
+    if not isinstance(raw, str):
+        return None
+    name = " ".join(raw.split())
+    if not 1 <= len(name) <= NAME_MAX or not name.isprintable():
+        return None
+    return name if re.search(r"[^\W_]", name) else None
+
+
+def device_label(user_agent: str) -> str:
+    """"Chrome on macOS", from what the browser says about itself."""
+    ua = user_agent or ""
+    if "Edg/" in ua:
+        browser = "Edge"
+    elif "OPR/" in ua:
+        browser = "Opera"
+    elif "Firefox/" in ua or "FxiOS" in ua:
+        browser = "Firefox"
+    elif "Chrome/" in ua or "CriOS" in ua:
+        browser = "Chrome"
+    elif "Safari/" in ua:
+        browser = "Safari"
+    else:
+        browser = "A browser"
+    if "iPhone" in ua:
+        system = "iPhone"
+    elif "iPad" in ua:
+        system = "iPad"
+    elif "Android" in ua:
+        system = "Android"
+    elif "Macintosh" in ua or "Mac OS X" in ua:
+        system = "macOS"
+    elif "Windows" in ua:
+        system = "Windows"
+    elif "Linux" in ua or "X11" in ua:
+        system = "Linux"
+    else:
+        return browser
+    return f"{browser} on {system}"
+
+
+# ------------------------------------------------------------------ codes
+
+async def ask_code(pool: asyncpg.Pool, secret: bytes, mailer: Mailer, *,
+                   email: str, browser: str, ip: str, page_url: str) -> None:
+    """Sends a code for signing in to `email`, for this browser. Refuses,
+    saying when to try again, when codes come too often: to one address,
+    from one network, or in all. An email that does not go out does not
+    count."""
+    code = f"{secrets.randbelow(10 ** CODE_DIGITS):0{CODE_DIGITS}d}"
+    net = network_of(ip) if ip else ""
+    async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))",
+                           f"login-code:{email}")
+        last = await conn.fetchval(
+            "SELECT extract(epoch FROM now() - max(created_at)) FROM login_codes "
+            "WHERE email = $1", email)
+        if last is not None and last < CODE_EVERY:
+            wait = int(CODE_EVERY - last) + 1
+            raise TooSoon(f"A code was sent a moment ago. You can ask for "
+                          f"another in {wait} seconds.", wait=wait)
+        hour = await conn.fetchval(
+            "SELECT count(*) FROM login_codes WHERE email = $1 "
+            "AND created_at > now() - interval '1 hour'", email)
+        if hour >= CODES_PER_ADDRESS_HOUR:
+            raise TooSoon("Too many codes for this address. Try again in an "
+                          "hour.", wait=3600)
+        if net and await conn.fetchval(
+                "SELECT count(*) FROM login_codes WHERE net = $1 "
+                "AND created_at > now() - interval '1 hour'",
+                net) >= CODES_PER_IP_HOUR:
+            raise TooSoon("Too many codes from this network. Try again in an "
+                          "hour.", wait=3600)
+        new = not await conn.fetchval(
+            "SELECT EXISTS (SELECT 1 FROM users WHERE lower(email) = $1)", email)
+        day = await conn.fetchrow(
+            "SELECT count(*) AS codes, count(*) FILTER (WHERE new_account) "
+            "AS signups FROM login_codes "
+            "WHERE created_at > now() - interval '1 day'")
+        if day["codes"] >= CODES_PER_DAY:
+            log.error("the day's codes are used up")
+            raise TooSoon("No more email can go out today. Try again "
+                          "tomorrow.", wait=3600)
+        if new and day["signups"] >= SIGNUPS_PER_DAY:
+            log.error("the day's sign-ups are used up")
+            raise TooSoon("No more new accounts today. Try again tomorrow.",
+                          wait=3600)
+        code_id = await conn.fetchval(
+            "INSERT INTO login_codes (email, code_hash, browser, ip, net, "
+            "new_account, expires_at) VALUES ($1, $2, $3, $4, $5, $6, "
+            "now() + make_interval(mins => $7)) RETURNING id",
+            email, _mac(secret, "code", email, code), token_hash(browser), ip,
+            net, new, CODE_MINUTES)
+    try:
+        await mailer.send(Email(
+            to=email,
+            subject=f"{code} is your tTerm sign-in code",
+            text=(f"Your code for signing in to tTerm: {code}\n\n"
+                  f"It works for {CODE_MINUTES} minutes, and only in the "
+                  "browser where you asked for it. Never tell it to anyone: "
+                  "tTerm never asks for it by phone or in a chat.\n\n"
+                  "If you did not ask for it, ignore this email. Without "
+                  "the code nobody can sign in.\n\n"
+                  f"tTerm Web, {page_url}\n")))
+    except MailFailed:
+        # Nothing went out: it counts against no limit, and a new try may
+        # come at once.
+        await pool.execute("DELETE FROM login_codes WHERE id = $1", code_id)
+        raise Refused("The email could not be sent. Try again.")
+
+
+@dataclass(frozen=True)
+class SignedIn:
+    person: Person
+    email: str
+    #: The session's token, for its cookie.
+    token: str
+    session_id: uuid.UUID
+    #: The account was made just now.
+    new: bool = False
+
+
+@dataclass(frozen=True)
+class SignUp:
+    """The code was right, and the address has no account yet: the person
+    gives their name and accepts the terms first (sign_up)."""
+    email: str
+
+
+class SignUpOver(Refused):
+    """Too late, or in another browser: a new code, then."""
+    status = 410
+
+
+async def check_code(pool: asyncpg.Pool, secret: bytes, mailer: Mailer, *,
+                     email: str, code: str, browser: str, ip: str,
+                     label: str, page_url: str) -> SignedIn | SignUp:
+    """Signs in with a code from email; for an address without an account,
+    says that the account is to be made first. Only the latest code for the
+    address in this browser counts."""
+    wrong = await _try_code(pool, secret, email=email, code=code,
+                            browser=browser)
+    if wrong is not None:
+        raise wrong
+    async with pool.acquire() as conn, conn.transaction():
+        # Used now, if no one else used it in the meantime.
+        used = await conn.fetchval(
+            """
+            UPDATE login_codes SET used_at = now()
+            WHERE id = (SELECT id FROM login_codes
+                        WHERE email = $1 AND browser = $2 AND used_at IS NULL
+                          AND expires_at > now()
+                        ORDER BY created_at DESC LIMIT 1)
+              AND used_at IS NULL AND code_hash = $3 AND tries < $4
+            RETURNING id
+            """, email, token_hash(browser), _mac(secret, "code", email, code),
+            CODE_TRIES)
+        if used is None:
+            raise WrongCode("This code no longer works. Ask for a new one.",
+                            left=0)
+        person = await _account(conn, email)
+        if person is None:
+            await conn.execute(
+                "UPDATE login_codes SET signup_by = now() + $2::interval "
+                "WHERE id = $1", used, SIGN_UP_TIME)
+            return SignUp(email)
+        token, session_id = await _new_session(
+            conn, person.id, method="code", label=label, ip=ip)
+        await accounts.journal(conn, "user.signed_in", user_id=person.id,
+                               details={"how": "code", "device": label,
+                                        "ip": ip})
+    # The person hears of every sign-in from a browser tTerm Web does not
+    # know. A sign-in they did not make means someone has their email.
+    with contextlib.suppress(MailFailed):
+        await mailer.send(Email(
+            to=email,
+            subject="New sign-in to tTerm",
+            text=(f"Someone signed in to tTerm as {email} with a code "
+                  f"from this email, using {label}"
+                  f"{f', from {ip}' if ip else ''}.\n\n"
+                  "If it was you, there is nothing to do.\n\n"
+                  "If it was not: open tTerm, then Devices in the menu "
+                  "of your account, and sign out everywhere; then change "
+                  "the password of this email, because whoever signed "
+                  "in could read it.\n\n"
+                  f"tTerm Web, {page_url}\n")))
+    return SignedIn(person, email, token, session_id)
+
+
+async def sign_up(pool: asyncpg.Pool, *, email: str, browser: str, name: str,
+                  ip: str, label: str) -> SignedIn:
+    """Makes the account of `email`, whose code this browser entered, with
+    the person's name and their yes to the Terms of Service, and signs them in.
+    Once only, and only while the address has no account: one made
+    meanwhile is signed in to with a new code, as always. `name` is clean
+    (clean_name); the page asks for the tick before it comes here."""
+    # Raised after the transaction, which keeps the sign-up used up.
+    refusal: Refused | None = None
+    async with pool.acquire() as conn, conn.transaction():
+        found = await conn.fetchval(
+            """
+            UPDATE login_codes SET signup_by = NULL
+            WHERE id = (SELECT id FROM login_codes
+                        WHERE browser = $1 AND email = $2 AND signup_by > now()
+                        ORDER BY used_at DESC LIMIT 1)
+              AND signup_by > now()
+            RETURNING id
+            """, token_hash(browser), email)
+        if found is None:
+            raise SignUpOver("Too much time has passed since the code. Ask "
+                             "for a new one.")
+        person = await _make_account(conn, email, name)
+        if person is None:
+            refusal = SignUpOver("This address has an account now. Ask for a "
+                                 "new code to sign in.")
+        else:
+            token, session_id = await _new_session(
+                conn, person.id, method="code", label=label, ip=ip)
+            await accounts.journal(conn, "user.signed_in", user_id=person.id,
+                                   details={"how": "code", "device": label,
+                                            "ip": ip})
+    if refusal is not None:
+        raise refusal
+    return SignedIn(person, email, token, session_id, True)
+
+
+async def _try_code(pool: asyncpg.Pool, secret: bytes, *, email: str,
+                    code: str, browser: str) -> WrongCode | None:
+    """Checks the code; a wrong one counts as a try, kept even though the
+    sign-in fails. What to tell the person, or None if the code is right."""
+    async with pool.acquire() as conn, conn.transaction():
+        row = await conn.fetchrow(
+            """
+            SELECT id, code_hash, tries FROM login_codes
+            WHERE email = $1 AND browser = $2 AND used_at IS NULL
+              AND expires_at > now()
+            ORDER BY created_at DESC LIMIT 1
+            FOR UPDATE
+            """, email, token_hash(browser))
+        if row is None or row["tries"] >= CODE_TRIES:
+            return WrongCode("This code no longer works. Ask for a new one.",
+                             left=0)
+        if hmac.compare_digest(row["code_hash"],
+                               _mac(secret, "code", email, code)):
+            return None
+        tries = row["tries"] + 1
+        await conn.execute("UPDATE login_codes SET tries = $2 WHERE id = $1",
+                           row["id"], tries)
+    left = CODE_TRIES - tries
+    if left <= 0:
+        return WrongCode("Wrong code, and that was the last try. Ask for a "
+                         "new one.", left=0)
+    return WrongCode(f"Wrong code. {left} {'try' if left == 1 else 'tries'} "
+                     "left.", left=left)
+
+
+async def _account(conn: asyncpg.Connection, email: str) -> Person | None:
+    """The account of an address, if it has one."""
+    row = await conn.fetchrow(
+        "SELECT id, name, theme, plan_id FROM users WHERE lower(email) = $1",
+        email)
+    if row is None:
+        return None
+    return Person(row["id"], row["name"], row["theme"], row["plan_id"], email)
+
+
+async def _make_account(conn: asyncpg.Connection, email: str,
+                        name: str) -> Person | None:
+    """A new account for an address, with its Personal project, as the
+    local owner's was, and the time its person accepted the terms; None if
+    the address has one already. Sign-ups for it still waiting in other
+    browsers get None, and sign_up refuses them: from now on it is signing
+    in. (Not by touching their rows here: their own transactions may hold
+    them while waiting for this lock.)"""
+    await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))",
+                       f"user:{email}")
+    if await _account(conn, email) is not None:
+        return None
+    user_id = await conn.fetchval(
+        "INSERT INTO users (name, email, terms_accepted_at) "
+        "VALUES ($1, $2, now()) RETURNING id", name, email)
+    await conn.execute(
+        "INSERT INTO sign_in_methods (user_id, kind, subject) "
+        "VALUES ($1, 'email', $2) ON CONFLICT DO NOTHING", user_id, email)
+    await accounts.journal(conn, "user.created", user_id=user_id,
+                           details={"via": "email"})
+    await accounts.create_project(conn, user_id, "Personal", "P")
+    return Person(user_id, name, "system", "free", email)
+
+
+async def _new_session(conn: asyncpg.Connection, user_id: uuid.UUID, *,
+                       method: str, label: str, ip: str,
+                       device_id: uuid.UUID | None = None
+                       ) -> tuple[str, uuid.UUID]:
+    token = new_token()
+    session_id = await conn.fetchval(
+        "INSERT INTO sessions (user_id, token_hash, device_id, method, label, ip) "
+        "VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
+        user_id, token_hash(token), device_id, method, label[:200], ip)
+    return token, session_id
+
+
+async def open_session(pool: asyncpg.Pool, user_id: uuid.UUID, *,
+                       label: str = "", ip: str = "") -> str:
+    """A session made directly, without a code: for the checks."""
+    async with pool.acquire() as conn:
+        token, _ = await _new_session(conn, user_id, method="code",
+                                      label=label, ip=ip)
+    return token
+
+
+# ----------------------------------------------------- devices, quick code
+
+async def trust_device(pool: asyncpg.Pool, secret: bytes, session: "Session",
+                       pin: str, label: str, *, replaces: str | None = None
+                       ) -> str:
+    """This browser becomes a device of the person's, with a quick code.
+    Only right after signing in with a code from email, and only once:
+    a quick code is not changed by whoever finds the browser open.
+
+    `replaces` is the key this browser kept until now, as a device of this
+    person or someone else's: its cookie goes, so that device is forgotten.
+    """
+    late = Refused("A quick code is set right after signing in with a code "
+                   "from email. Sign out and sign in again to set it.")
+    if session.method != "code" or session.age > PIN_OFFER:
+        raise late
+    key = new_token()
+    key_hash = token_hash(key)
+    async with pool.acquire() as conn, conn.transaction():
+        row = await conn.fetchrow(
+            "SELECT device_id FROM sessions WHERE id = $1 AND ended_at IS NULL "
+            "FOR UPDATE", session.id)
+        if row is None or row["device_id"] is not None:
+            raise late
+        device_id = await conn.fetchval(
+            "INSERT INTO devices (user_id, key_hash, pin_hash, label) "
+            "VALUES ($1, $2, $3, $4) RETURNING id",
+            session.person.id, key_hash, _mac(secret, "pin", key_hash, pin),
+            label[:200])
+        await conn.execute("UPDATE sessions SET device_id = $2 WHERE id = $1",
+                           session.id, device_id)
+        if replaces:
+            old = await conn.fetchval(
+                "SELECT id FROM devices WHERE key_hash = $1 "
+                "AND forgotten_at IS NULL", token_hash(replaces))
+            if old is not None:
+                await _forget(conn, old)
+        await accounts.journal(conn, "user.device_trusted",
+                               user_id=session.person.id,
+                               details={"device": label})
+    return key
+
+
+@dataclass(frozen=True)
+class Device:
+    id: uuid.UUID
+    label: str
+    name: str
+    email: str
+
+
+async def device(pool: asyncpg.Pool, key: str | None) -> Device | None:
+    """The device this browser is, if it is one still trusted."""
+    if not key:
+        return None
+    row = await pool.fetchrow(
+        """
+        SELECT d.id, d.label, u.name, u.email FROM devices d
+        JOIN users u ON u.id = d.user_id
+        WHERE d.key_hash = $1 AND d.forgotten_at IS NULL
+          AND d.last_used_at > now() - make_interval(days => $2)
+        """, token_hash(key), DEVICE_DAYS)
+    if row is None:
+        return None
+    return Device(row["id"], row["label"], row["name"], row["email"] or "")
+
+
+async def check_pin(pool: asyncpg.Pool, secret: bytes, *, key: str, pin: str,
+                    ip: str, label: str) -> SignedIn:
+    """Signs in on a trusted device with its quick code. Five wrong ones
+    and the device is forgotten."""
+    key_hash = token_hash(key)
+    # What the person is told when the code does not sign them in. It is
+    # raised only after the transaction, which keeps the wrong try.
+    refusal: Refused | None = None
+    async with pool.acquire() as conn, conn.transaction():
+        row = await conn.fetchrow(
+            """
+            SELECT d.id, d.user_id, d.pin_hash, d.pin_tries,
+                   d.last_used_at > now() - make_interval(days => $2) AS fresh,
+                   u.name, u.theme, u.plan_id, u.email
+            FROM devices d JOIN users u ON u.id = d.user_id
+            WHERE d.key_hash = $1 AND d.forgotten_at IS NULL
+            FOR UPDATE OF d
+            """, key_hash, DEVICE_DAYS)
+        if row is None:
+            refusal = DeviceForgotten("This device is not trusted any more. "
+                                      "Sign in with a code from email.")
+        elif not row["fresh"]:
+            await _forget(conn, row["id"])
+            refusal = DeviceForgotten(f"This device was not used for "
+                                      f"{DEVICE_DAYS} days. Sign in with a "
+                                      "code from email.")
+        elif not hmac.compare_digest(row["pin_hash"],
+                                     _mac(secret, "pin", key_hash, pin)):
+            tries = row["pin_tries"] + 1
+            if tries >= PIN_TRIES:
+                await _forget(conn, row["id"])
+                await accounts.journal(conn, "user.device_forgotten",
+                                       user_id=row["user_id"],
+                                       details={"why": "wrong codes", "ip": ip})
+                refusal = DeviceForgotten(
+                    f"{PIN_TRIES} wrong codes: this device is forgotten. Sign "
+                    "in with a code from email.")
+            else:
+                await conn.execute(
+                    "UPDATE devices SET pin_tries = $2 WHERE id = $1",
+                    row["id"], tries)
+                left = PIN_TRIES - tries
+                refusal = WrongCode(f"Wrong code. {left} "
+                                    f"{'try' if left == 1 else 'tries'} left.",
+                                    left=left)
+        else:
+            await conn.execute(
+                "UPDATE devices SET pin_tries = 0, last_used_at = now() "
+                "WHERE id = $1", row["id"])
+            token, session_id = await _new_session(
+                conn, row["user_id"], method="pin", label=label, ip=ip,
+                device_id=row["id"])
+            await accounts.journal(conn, "user.signed_in",
+                                   user_id=row["user_id"],
+                                   details={"how": "pin", "device": label,
+                                            "ip": ip})
+    if refusal is not None:
+        raise refusal
+    person = Person(row["user_id"], row["name"], row["theme"], row["plan_id"],
+                    row["email"])
+    return SignedIn(person, row["email"] or "", token, session_id)
+
+
+async def _forget(conn: asyncpg.Connection,
+                  device_id: uuid.UUID) -> list[uuid.UUID]:
+    """The device is no longer trusted, and its sessions end: their ids."""
+    await conn.execute("UPDATE devices SET forgotten_at = now() WHERE id = $1",
+                       device_id)
+    rows = await conn.fetch("UPDATE sessions SET ended_at = now() "
+                            "WHERE device_id = $1 AND ended_at IS NULL "
+                            "RETURNING id", device_id)
+    return [r["id"] for r in rows]
+
+
+async def devices(pool: asyncpg.Pool, user_id: uuid.UUID,
+                  current: uuid.UUID | None) -> list[dict]:
+    rows = await pool.fetch(
+        "SELECT id, label, created_at, last_used_at FROM devices "
+        "WHERE user_id = $1 AND forgotten_at IS NULL "
+        "AND last_used_at > now() - make_interval(days => $2) "
+        "ORDER BY last_used_at DESC", user_id, DEVICE_DAYS)
+    return [{"id": str(r["id"]), "label": r["label"],
+             "createdAt": int(r["created_at"].timestamp() * 1000),
+             "lastUsed": int(r["last_used_at"].timestamp() * 1000),
+             "current": r["id"] == current} for r in rows]
+
+
+async def forget_device(pool: asyncpg.Pool, user_id: uuid.UUID,
+                        device_id: uuid.UUID) -> list[uuid.UUID] | None:
+    """Forgets one of the person's devices; the sessions that ended with
+    it, or None if there is no such device of theirs."""
+    async with pool.acquire() as conn, conn.transaction():
+        found = await conn.fetchval(
+            "SELECT id FROM devices WHERE id = $1 AND user_id = $2 "
+            "AND forgotten_at IS NULL FOR UPDATE", device_id, user_id)
+        if found is None:
+            return None
+        ended = await _forget(conn, device_id)
+        await accounts.journal(conn, "user.device_forgotten", user_id=user_id,
+                               details={"why": "by hand"})
+    return ended
+
+
+# --------------------------------------------------------------- sessions
+
+@dataclass(frozen=True)
+class Session:
+    id: uuid.UUID
+    person: Person
+    device_id: uuid.UUID | None
+    method: str
+    #: How long ago it began.
+    age: dt.timedelta
+
+
+async def session(pool: asyncpg.Pool, token: str | None, *,
+                  touch: bool = True) -> Session | None:
+    """The session of this cookie, if it is still on. Notes it as used,
+    unless `touch` is False: for what the page asks by itself, now and
+    then, with nobody doing anything."""
+    if not token:
+        return None
+    row = await pool.fetchrow(
+        """
+        SELECT s.id, s.user_id, s.device_id, s.method,
+               now() - s.created_at AS age,
+               s.last_seen_at < now() - $2::interval AS idle,
+               s.last_seen_at < now() - $3::interval AS stale,
+               d.forgotten_at IS NOT NULL AS forgotten,
+               u.name, u.theme, u.plan_id, u.email
+        FROM sessions s
+        JOIN users u ON u.id = s.user_id
+        LEFT JOIN devices d ON d.id = s.device_id
+        WHERE s.token_hash = $1 AND s.ended_at IS NULL
+        """, token_hash(token), IDLE, TOUCH_EVERY)
+    if row is None:
+        return None
+    if row["idle"] or row["forgotten"]:
+        await pool.execute("UPDATE sessions SET ended_at = now() WHERE id = $1",
+                           row["id"])
+        return None
+    if touch and row["stale"]:
+        await pool.execute("UPDATE sessions SET last_seen_at = now() WHERE id = $1",
+                           row["id"])
+    person = Person(row["user_id"], row["name"], row["theme"], row["plan_id"],
+                    row["email"])
+    return Session(row["id"], person, row["device_id"], row["method"], row["age"])
+
+
+async def still_on(pool: asyncpg.Pool, session_id: uuid.UUID) -> bool:
+    """Whether a session an open socket belongs to is still on. One that
+    went idle ends here, as it would on the page's next request."""
+    row = await pool.fetchrow(
+        """
+        SELECT s.ended_at IS NULL AS open,
+               s.last_seen_at < now() - $2::interval AS idle,
+               d.forgotten_at IS NOT NULL AS forgotten
+        FROM sessions s LEFT JOIN devices d ON d.id = s.device_id
+        WHERE s.id = $1
+        """, session_id, IDLE)
+    if row is None or not row["open"]:
+        return False
+    if row["idle"] or row["forgotten"]:
+        await pool.execute("UPDATE sessions SET ended_at = now() "
+                           "WHERE id = $1 AND ended_at IS NULL", session_id)
+        return False
+    return True
+
+
+async def touch(pool: asyncpg.Pool, session_id: uuid.UUID) -> None:
+    """Something was done in an open session (keys typed into a terminal)."""
+    await pool.execute(
+        "UPDATE sessions SET last_seen_at = now() WHERE id = $1 "
+        "AND ended_at IS NULL AND last_seen_at < now() - $2::interval",
+        session_id, TOUCH_EVERY)
+
+
+async def sign_out(pool: asyncpg.Pool, token: str | None) -> uuid.UUID | None:
+    """Ends the session of this cookie; its id, if it was on."""
+    if not token:
+        return None
+    return await pool.fetchval("UPDATE sessions SET ended_at = now() "
+                               "WHERE token_hash = $1 AND ended_at IS NULL "
+                               "RETURNING id", token_hash(token))
+
+
+async def sign_out_everywhere(pool: asyncpg.Pool, user_id: uuid.UUID) -> None:
+    """Every session ends and every device is forgotten: from anywhere,
+    only a code from email signs in now."""
+    async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("UPDATE devices SET forgotten_at = now() "
+                           "WHERE user_id = $1 AND forgotten_at IS NULL", user_id)
+        await conn.execute("UPDATE sessions SET ended_at = now() "
+                           "WHERE user_id = $1 AND ended_at IS NULL", user_id)
+        await accounts.journal(conn, "user.signed_out_everywhere",
+                               user_id=user_id)
+
+
+async def sweep(pool: asyncpg.Pool) -> None:
+    """Old codes and long-ended sessions go, and so does what is kept only
+    for a while: commands with their output (30 days unless the project
+    says less) and the journal (a year)."""
+    await pool.execute("DELETE FROM login_codes "
+                       "WHERE created_at < now() - interval '2 days'")
+    await pool.execute("DELETE FROM sessions WHERE ended_at < now() - interval "
+                       "'30 days' OR last_seen_at < now() - interval '30 days'")
+    await pool.execute("DELETE FROM blocks WHERE expires_at <= now()")
+    await pool.execute("DELETE FROM journal WHERE expires_at <= now()")

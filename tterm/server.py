@@ -1,10 +1,13 @@
 """The core as a running thing: the database, the page, the machines' side.
 
-Two listeners, as on the server later with its two addresses: the page and
-its API for people, and the side machines talk to. They are separate apps on
+Two listeners, as on the server with its two addresses: the page and its API
+for people, and the side machines talk to. They are separate apps on
 separate ports, so the tunnel, which points at the machines' port, cannot
 lead anyone to the page. The signer is a separate process; the core only
 talks to it.
+
+Everyone signs in (from 0.0.9). On the laptop the person it belongs to is
+the local owner, as before, once TTERM_OWNER_EMAIL gives them an address.
 """
 from __future__ import annotations
 
@@ -19,14 +22,19 @@ import uvicorn
 
 from .api.connect import create_connect_app
 from .api.page import create_page_app
-from .core import accounts, db, machines
+from .core import accounts, auth, db, machines, stats
 from .core.agents import FRAME_MAX, Agents
 from .core.terminals import Terminals
 from .core.accounts import Person
 from .core.config import Settings
+from .core.mail import BrevoMailer, LogMailer, Mailer
 from .core.signer_client import SignerClient, SignerRefused, SignerUnavailable
 
 log = logging.getLogger("tterm")
+
+#: Seconds between sweeps of old codes and sessions, and between the usage
+#: counts.
+SWEEP_EVERY = 3600
 
 
 class PortBusy(Exception):
@@ -96,14 +104,20 @@ class Core:
         self.settings = settings
         self.signer = signer or SignerClient(settings.signer_socket)
         self.pool: asyncpg.Pool | None = None
+        #: The person this laptop belongs to, if there is one (see
+        #: accounts.ensure_local_owner); on the server no one.
         self.owner: Person | None = None
         self.active_ca: dict | None = None
         self.terminals: Terminals | None = None
         #: The computers whose agent is connected right now.
         self.agents = Agents()
+        #: How emails go: Brevo, or this window's log.
+        self.mailer: Mailer = (BrevoMailer(settings.brevo_key, settings.mail_from)
+                               if settings.brevo_key else LogMailer())
         self._servers: list[_Server] = []
         self._tasks: list[asyncio.Task] = []
         self._sockets: list[socket.socket] = []
+        self._sweeper: asyncio.Task | None = None
 
     @property
     def page_port(self) -> int:
@@ -126,20 +140,41 @@ class Core:
             raise
         self._sockets = [page_socket, connect_socket]
         try:
+            secret = auth.load_secret(s.data_dir / "auth.key")
             self.pool = await db.connect(s.database_url)
             await db.migrate(self.pool)
-            self.owner = await accounts.ensure_local_owner(self.pool, s.owner_name)
+            if s.owner_email:
+                try:
+                    self.owner = await accounts.ensure_local_owner(
+                        self.pool, s.owner_name, s.owner_email)
+                except ValueError as exc:
+                    raise RuntimeError(f"TTERM_OWNER_EMAIL: {exc}.") from None
+            else:
+                self.owner = await accounts.local_owner(self.pool)
+                if self.owner is not None and not self.owner.email:
+                    # A laptop from before sign-in: its machines and history
+                    # are this person's, and only their address leads there.
+                    # Signing in first would make them a second, empty
+                    # account under that address.
+                    raise RuntimeError(
+                        f"Put TTERM_OWNER_EMAIL=your email in .env and start "
+                        f"again: the address {self.owner.name} signs in with "
+                        "from now on, to find the machines and the history "
+                        "on this computer.")
             await self._meet_signer()
-            self.terminals = Terminals(self.pool, self.signer, self.owner,
-                                       self.agents)
+            self.terminals = Terminals(self.pool, self.signer, self.agents)
             await self.terminals.start()
         except BaseException:
             await self.stop()
             raise
+        self._sweeper = asyncio.create_task(self._sweep())
 
-        page = create_page_app(self.pool, self.owner, s.web_dist,
-                               self.page_port, s.connect_url, self.terminals,
-                               self.agents)
+        page = create_page_app(self.pool, s.web_dist, s.page_url,
+                               s.connect_url, self.terminals, self.agents,
+                               secret=secret, mailer=self.mailer,
+                               legal={"terms": s.terms_url,
+                                      "privacy": s.privacy_url,
+                                      "support": s.support_email})
         connect = create_connect_app(self.pool, self.signer, s.connect_url,
                                      self.agents)
         for app, sock, limits in ((page, self._sockets[0], {}),
@@ -176,12 +211,38 @@ class Core:
         await machines.remember_cas(self.pool, cas)
         self.active_ca = next((ca for ca in cas if ca["active"]), None)
 
+    async def _sweep(self) -> None:
+        """Now and every hour: old codes and long-ended sessions go, and the
+        usage counts are written down."""
+        while True:
+            try:
+                await auth.sweep(self.pool)
+            except (OSError, asyncpg.PostgresError) as exc:
+                log.warning("could not sweep old sign-ins: %s", exc)
+            try:
+                peak, top = self.terminals.peaks() if self.terminals else (0, 0)
+                await stats.take(self.pool,
+                                 computers_online=self.agents.connected(),
+                                 terminals_peak=peak, terminals_top=top)
+                if self.terminals:
+                    self.terminals.restart_peaks()
+            except (OSError, asyncpg.PostgresError) as exc:
+                log.warning("could not write the usage counts: %s", exc)
+            except Exception:       # noqa: BLE001 - the next hour still comes
+                log.exception("could not write the usage counts")
+            await asyncio.sleep(SWEEP_EVERY)
+
     async def wait(self) -> None:
         """Returns when any server stops on its own, which it should not."""
         if self._tasks:
             await asyncio.wait(self._tasks, return_when=asyncio.FIRST_COMPLETED)
 
     async def stop(self, grace: float = 5.0) -> None:
+        if self._sweeper is not None:
+            self._sweeper.cancel()
+            with contextlib.suppress(BaseException):
+                await self._sweeper
+            self._sweeper = None
         # Terminals first: their ends go to the database, which closes last.
         if self.terminals is not None:
             with contextlib.suppress(Exception):

@@ -5,6 +5,7 @@ import asyncpg
 
 from ..core import accounts
 
+ME = "denis@example.com"
 
 def test_initials_as_on_the_avatar():
     assert accounts.initials("Denis Gerasimenko") == "DG"
@@ -42,7 +43,7 @@ def test_project_code_rules():
 
 async def test_first_start_creates_owner_and_personal(h):
     async with h.pool() as pool:
-        me = await accounts.ensure_local_owner(pool, "Denis Gerasimenko")
+        me = await accounts.ensure_local_owner(pool, "Denis Gerasimenko", ME)
         assert me.initials == "DG" and me.theme == "system" and me.plan == "free"
         projects = await accounts.projects_of(pool, me.id)
         assert [(p["name"], p["code"], p["role"]) for p in projects] == [
@@ -51,29 +52,55 @@ async def test_first_start_creates_owner_and_personal(h):
         kinds = [r["kind"] for r in await pool.fetch(
             "SELECT kind FROM journal ORDER BY id")]
         assert kinds == ["user.created", "project.created"], kinds
+        # The address they sign in with.
+        assert me.email == ME
+        assert await pool.fetchval(
+            "SELECT subject FROM sign_in_methods WHERE user_id = $1 "
+            "AND kind = 'email'", me.id) == ME
 
 
 async def test_later_starts_find_the_same_owner(h):
     async with h.pool() as pool:
-        first = await accounts.ensure_local_owner(pool, "Denis")
-        again = await accounts.ensure_local_owner(pool, "Denis Gerasimenko")
+        first = await accounts.ensure_local_owner(pool, "Denis", ME)
+        again = await accounts.ensure_local_owner(pool, "Denis Gerasimenko", ME)
         assert again.id == first.id
         assert again.name == "Denis Gerasimenko", "the name follows the settings"
         assert await pool.fetchval("SELECT count(*) FROM users") == 1
         assert await pool.fetchval("SELECT count(*) FROM projects") == 1
+        # A new address in the settings replaces the old one.
+        moved = await accounts.ensure_local_owner(pool, "Denis", "d@example.org")
+        assert moved.id == first.id and moved.email == "d@example.org"
+        assert [r["subject"] for r in await pool.fetch(
+            "SELECT subject FROM sign_in_methods WHERE user_id = $1",
+            first.id)] == ["d@example.org"]
+        assert (await accounts.local_owner(pool)).email == "d@example.org"
+
+
+async def test_an_address_someone_signed_up_with_stays_theirs(h):
+    async with h.pool() as pool:
+        async with pool.acquire() as conn:
+            await conn.execute("INSERT INTO users (name, email) "
+                               "VALUES ('Anna', 'anna@example.com')")
+        try:
+            await accounts.ensure_local_owner(pool, "Denis", "anna@example.com")
+        except ValueError as exc:
+            assert "another account" in str(exc), exc
+        else:
+            raise AssertionError("the owner took someone else's address")
+        assert await accounts.local_owner(pool) is None
 
 
 async def test_two_processes_starting_at_once_make_one_owner(h):
     async with h.pool() as pool:
         people = await asyncio.gather(
-            *[accounts.ensure_local_owner(pool, "Denis") for _ in range(4)])
+            *[accounts.ensure_local_owner(pool, "Denis", ME) for _ in range(4)])
         assert len({p.id for p in people}) == 1
         assert await pool.fetchval("SELECT count(*) FROM users") == 1
 
 
 async def test_theme_is_kept_in_the_account(h):
     async with h.pool() as pool:
-        me = await accounts.ensure_local_owner(pool, "Denis")
+        me = await accounts.ensure_local_owner(pool, "Denis", ME)
         await accounts.set_theme(pool, me.id, "light")
         assert (await accounts.person(pool, me.id)).theme == "light"
         try:
@@ -86,7 +113,7 @@ async def test_theme_is_kept_in_the_account(h):
 
 async def test_codes_are_unique_per_owner(h):
     async with h.pool() as pool:
-        me = await accounts.ensure_local_owner(pool, "Denis")
+        me = await accounts.ensure_local_owner(pool, "Denis", ME)
         async with pool.acquire() as conn:
             await accounts.create_project(conn, me.id, "Client X", "cx")
             try:

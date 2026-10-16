@@ -161,6 +161,24 @@ export const Check = (p: Props) => (
   <Stroke {...p} width={2.4}><path d="M5 12l5 5 9-10" /></Stroke>
 );
 
+/** A laptop and a phone: the devices of an account. */
+export const Devices = (p: Props) => (
+  <Stroke {...p}>
+    <rect x="2" y="5" width="14" height="10" rx="1.5" />
+    <path d="M1 18h12" />
+    <rect x="17" y="9" width="6" height="11" rx="1.5" />
+  </Stroke>
+);
+
+/** A door with an arrow out of it. */
+export const SignOut = (p: Props) => (
+  <Stroke {...p}>
+    <path d="M10 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4" />
+    <path d="M15 8l4 4-4 4" />
+    <path d="M19 12H9" />
+  </Stroke>
+);
+
 export const Sun = (p: Props) => (
   <Stroke {...p}>
     <circle cx="12" cy="12" r="4" />

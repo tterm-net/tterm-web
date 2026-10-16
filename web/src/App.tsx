@@ -1,16 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AddMachine } from "./AddMachine";
 import {
-  endTerminal, loadState, openTerminal, removeMachine, saveTheme,
-  type Machine, type MachineKind, type State, type TerminalInfo, type Theme,
+  endTerminal, loadState, onSignedOut, openTerminal, removeMachine, saveTheme,
+  SignedOut, signOut, type Machine, type MachineKind, type State,
+  type TerminalInfo, type Theme,
 } from "./api";
 import { Confirm, Removed } from "./Confirm";
+import { Devices } from "./Devices";
 import { Finder, type FinderGroup, type FinderItem } from "./Finder";
 import {
-  ChevronRight, Close, Computer, Moon, Pin, Plus, Server, Sun,
+  ChevronRight, Close, Computer, Devices as DevicesIcon, Moon, Pin, Plus,
+  Server, SignOut as SignOutIcon, Sun,
 } from "./icons";
 import { Machines } from "./Machines";
 import { Sidebar } from "./Sidebar";
+import { SignIn } from "./SignIn";
 import { socket } from "./socket";
 import { TabBar, type Dot, type TabView } from "./TabBar";
 import { rememberedTabs, rememberTabs, shortcut, TABS_MAX } from "./tabs";
@@ -33,6 +37,15 @@ const COMPUTERS_MS = 10_000;
 
 /** /t/<id> is a terminal; anything else is the machines page. */
 const TERMINAL_PATH = /^\/t\/([0-9a-f-]{36})\/?$/;
+
+/** The sign-in screen's note when a session ends with nothing done here:
+ * eight hours away, or signed out from another device. */
+const SESSION_ENDED = "Your session ended. Sign in again: your terminals " +
+  "kept running.";
+
+/** The core is on this very computer (the owner's laptop): then it is the
+ * window running it that is worth a look. */
+const LOCAL = ["localhost", "127.0.0.1", "[::1]"].includes(location.hostname);
 
 /** A first guess at the window in characters, for the shell to start with;
  * the terminal measures itself exactly as soon as it is on screen. */
@@ -89,15 +102,32 @@ export function App() {
   const [online, setOnline] = useState(true);
   const [asking, setAsking] = useState<Asking | null>(null);
   const [removed, setRemoved] = useState<{ name: string; cleanup: string } | null>(null);
+  const [devices, setDevices] = useState(false);
+  /** Not signed in: the sign-in screen, with a note on why, if there is one. */
+  const [signedOut, setSignedOut] = useState<{ note: string | null } | null>(null);
   const openTimer = useRef<number | undefined>(undefined);
   const closeTimer = useRef<number | undefined>(undefined);
   const toastTimer = useRef<number | undefined>(undefined);
   const pruned = useRef(false);
+  /** Who was signed in on this page last, and with which address. */
+  const lastUser = useRef<string | null>(null);
+  const lastEmail = useRef<string | null>(null);
+  const stateNow = useRef<State | null>(null);
+  stateNow.current = state;
 
   const load = useCallback(() => {
     setProblem(null);
     loadState()
       .then((loaded) => {
+        if (lastUser.current && lastUser.current !== loaded.me.id) {
+          // Someone else signed in on this page: nothing of the one before.
+          pruned.current = true;
+          setTabs([]);
+          setStatuses({});
+          history.replaceState(null, "", "/");
+          setPath("/");
+        }
+        lastUser.current = loaded.me.id;
         setState(loaded);
         setTheme(loaded.me.theme);
         if (!pruned.current) {
@@ -108,17 +138,49 @@ export function App() {
           setTabs((ts) => ts.filter((id) => live.has(id) || id === here));
         }
       })
-      .catch(() =>
-        setProblem("tTerm Web is not answering. Is python -m tterm.dev " +
-          "running in a terminal window?"));
+      .catch((error) => {
+        // Not signed in: onSignedOut below shows the sign-in screen.
+        if (error instanceof SignedOut) return;
+        setProblem(LOCAL
+          ? "tTerm Web is not answering. Is python -m tterm.dev running in " +
+            "a terminal window?"
+          : "tTerm Web is not answering. Check the connection, then try " +
+            "again.");
+      });
   }, []);
 
   useEffect(load, [load]);
 
+  /** The session is over: the sign-in screen, and nothing of the page
+   * behind it. A note from Sign out itself wins over one from the socket
+   * closing because of it. */
+  const endSession = useCallback((note: string | null, firm = true) => {
+    lastEmail.current = stateNow.current?.me.email ?? lastEmail.current;
+    setSignedOut((was) => (firm || !was ? { note } : was));
+    setState(null);
+    setAdding(null);
+    setAsking(null);
+    setRemoved(null);
+    setDevices(false);
+    setPalette(false);
+    setPicking(false);
+  }, []);
+
+  useEffect(() => onSignedOut(() =>
+    endSession(lastUser.current ? SESSION_ENDED : null, false)), [endSession]);
+
+  const signedIn = useCallback(() => {
+    socket.signedIn();
+    setSignedOut(null);
+    pruned.current = false;
+    load();
+  }, [load]);
+
   /** After a machine connects or a terminal opens or ends: the sidebar and
-   * the page learn of it. */
+   * the page learn of it. Asked in the background: it is not something the
+   * person did, and keeps no session on. */
   const refresh = useCallback(() => {
-    loadState().then(setState).catch(() => {});
+    loadState(true).then(setState).catch(() => {});
   }, []);
 
   // A computer comes online when its agent starts and goes when it stops,
@@ -253,6 +315,13 @@ export function App() {
     refresh();
   }, [refresh]);
 
+  const signOutHere = useCallback(() => {
+    signOut()
+      .then(() => endSession("You signed out."))
+      .catch(() => notYet("Could not sign out: tTerm Web did not answer. " +
+        "Try again."));
+  }, [endSession, notYet]);
+
   const toggleTheme = useCallback(() => {
     const next: Theme = shown(theme) === "light" ? "dark" : "light";
     setTheme(next);
@@ -337,6 +406,13 @@ export function App() {
   useEffect(() => {
     document.title = title;
   }, [title]);
+
+  if (signedOut) {
+    return (
+      <SignIn note={signedOut.note} email={lastEmail.current ?? undefined}
+        onSignedIn={signedIn} />
+    );
+  }
 
   if (problem) {
     return (
@@ -472,6 +548,21 @@ export function App() {
         words: "sidebar panel pin",
         run: togglePin,
       },
+      {
+        key: "devices",
+        label: "Devices",
+        hint: "where your quick code works",
+        icon: <DevicesIcon size={15} />,
+        words: "devices quick code pin sessions account trusted forget",
+        run: () => setDevices(true),
+      },
+      {
+        key: "sign-out",
+        label: "Sign out",
+        icon: <SignOutIcon size={15} />,
+        words: "sign out log out logout exit account",
+        run: signOutHere,
+      },
     ];
     return [
       { title: "Terminals", items: terminals },
@@ -552,6 +643,11 @@ export function App() {
           }}
           onRemoveMachine={askRemove}
           onEndTerminal={askEnd}
+          onDevices={() => {
+            if (!pinned) setOpen(false);
+            setDevices(true);
+          }}
+          onSignOut={signOutHere}
           onHome={() => {
             if (!pinned) setOpen(false);
             navigate("/");
@@ -617,6 +713,11 @@ export function App() {
       {removed && (
         <Removed name={removed.name} cleanup={removed.cleanup}
           onClose={() => setRemoved(null)} notify={notYet} />
+      )}
+
+      {devices && (
+        <Devices onClose={() => setDevices(false)} notify={notYet}
+          onSignedOut={(note) => endSession(note)} />
       )}
 
       {toast && <div className="toast" role="status">{toast}</div>}

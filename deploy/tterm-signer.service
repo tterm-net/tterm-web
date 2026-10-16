@@ -1,0 +1,57 @@
+# The signer: the CA keys, and nothing else. Its own user; the core reaches
+# its socket through the group tterm-sign and can never read the keys.
+[Unit]
+Description=tTerm Web signer
+After=network.target
+
+[Service]
+Type=simple
+User=tterm-signer
+Group=tterm-sign
+WorkingDirectory=/opt/tterm-web
+ExecStart=/opt/tterm-web/venv/bin/python -m tterm.signer
+# Its name in the logs; deploy/logs.sh keeps them in the journal alone.
+SyslogIdentifier=tterm-signer
+Environment=PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+Environment=TTERM_SIGNER_DIR=/var/lib/tterm-signer
+Environment=TTERM_SIGNER_SOCKET=/run/tterm-signer/signer.sock
+Environment=TTERM_SIGNER_GROUP=tterm-sign
+# The keys: this user's alone.
+StateDirectory=tterm-signer
+StateDirectoryMode=0700
+# The socket's folder: the group may come in, no one else.
+RuntimeDirectory=tterm-signer
+RuntimeDirectoryMode=0750
+UMask=0077
+Restart=on-failure
+RestartSec=2
+
+# It signs, and that is all: no network, no privileges, nothing to write
+# but its own folders.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+IPAddressDeny=any
+RestrictAddressFamilies=AF_UNIX
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

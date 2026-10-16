@@ -2,6 +2,10 @@
 
 Each run creates its own databases next to the real one and drops them at
 the end. The real database, tterm_web, is never opened.
+
+A core from Harness.core has its local owner signed in: request() and
+page_socket() carry the owner's session cookie to that core's page unless
+told otherwise (a "cookie" header of their own, even an empty one).
 """
 from __future__ import annotations
 
@@ -24,8 +28,9 @@ from urllib.parse import urlsplit, urlunsplit
 
 import asyncpg
 import asyncssh
+import websockets
 
-from ..core import db, passport
+from ..core import auth, db, passport
 from ..core.config import Settings
 from ..core.signer_client import SignerClient
 from ..server import Core
@@ -233,6 +238,8 @@ class Response:
     status: int
     headers: dict[str, str]
     body: bytes
+    #: Every Set-Cookie header, in order (`headers` keeps only the last).
+    set_cookies: list[str] = field(default_factory=list)
 
     @property
     def text(self) -> str:
@@ -256,19 +263,54 @@ def _request(port: int, method: str, path: str, headers: dict[str, str],
         resp = conn.getresponse()
         return Response(resp.status,
                         {k.lower(): v for k, v in resp.getheaders()},
-                        resp.read())
+                        resp.read(),
+                        [v for k, v in resp.getheaders()
+                         if k.lower() == "set-cookie"])
     finally:
         conn.close()
+
+
+#: The owner's session cookie for each running core's page port.
+SESSIONS: dict[int, str] = {}
+OWNER_EMAIL = "denis@example.com"
 
 
 async def request(port: int, method: str, path: str, *,
                   host: str | None = None, headers: dict[str, str] | None = None,
                   body: bytes | None = None) -> Response:
-    """A plain HTTP request with full control over Host and the headers."""
+    """A plain HTTP request with full control over Host and the headers.
+    To a core's page it goes as its owner, unless `headers` has a cookie."""
     all_headers = {"host": host or f"localhost:{port}"}
-    all_headers.update(headers or {})
+    if port in SESSIONS:
+        all_headers["cookie"] = SESSIONS[port]
+    for key, value in (headers or {}).items():
+        all_headers[key.lower()] = value
+    if not all_headers.get("cookie"):
+        all_headers.pop("cookie", None)
     return await asyncio.to_thread(_request, port, method, path, all_headers,
                                    body)
+
+
+def page_socket(port: int, *, cookie: str | None = None, **options):
+    """The page's socket, as the core's owner unless `cookie` says else
+    ("" for none)."""
+    cookie = SESSIONS.get(port, "") if cookie is None else cookie
+    options.setdefault("origin", f"http://localhost:{port}")
+    return websockets.connect(
+        f"ws://localhost:{port}/api/ws", proxy=None,
+        additional_headers={"cookie": cookie} if cookie else None, **options)
+
+
+async def sign_in_as(core, email: str, name: str | None = None) -> str:
+    """A session for the account of `email`, made as signing up would make
+    it: the cookie that carries it. The name, unless given, from the
+    address: anna.nikolaeva@… is Anna Nikolaeva."""
+    name = name or email.split("@")[0].replace(".", " ").title()
+    async with core.pool.acquire() as conn, conn.transaction():
+        person = (await auth._make_account(conn, email, name)
+                  or await auth._account(conn, email))
+    token = await auth.open_session(core.pool, person.id)
+    return f"{auth.SESSION_COOKIE}={token}"
 
 
 def free_socket() -> socket.socket:
@@ -352,8 +394,12 @@ class Harness:
 
     @contextlib.asynccontextmanager
     async def core(self, *, dist: Path | None = None,
-                   owner: str = "Denis Gerasimenko", with_signer: bool = True):
-        """A running core on free ports, with a small fake page and a signer."""
+                   owner: str = "Denis Gerasimenko", with_signer: bool = True,
+                   owner_email: str = OWNER_EMAIL,
+                   environ: dict[str, str] | None = None):
+        """A running core on free ports, with a small fake page and a signer;
+        its local owner signed in (see request), and emails kept by the log
+        mailer, core.mailer.sent. Without `owner_email`, no local owner."""
         async with contextlib.AsyncExitStack() as stack:
             tmp = stack.enter_context(tempfile.TemporaryDirectory())
             if dist is None:
@@ -365,18 +411,27 @@ class Harness:
             client = SignerClient(Path(tmp) / "nobody-here.sock", timeout=0.5)
             if with_signer:
                 _, client = await stack.enter_async_context(self.signer())
+            page = free_socket()
             settings = Settings.load(environ={
                 "TTERM_DATABASE_URL": await self.database(),
                 "TTERM_OWNER_NAME": owner,
+                "TTERM_OWNER_EMAIL": owner_email,
                 "TTERM_WEB_DIST": str(dist),
                 "TTERM_CONNECT_URL": "https://connect.test",
+                "TTERM_PAGE_URL": f"http://localhost:{page.getsockname()[1]}",
+                "TTERM_DATA_DIR": str(Path(tmp) / "data"),
+                **(environ or {}),
             }, env_file=Path(tmp) / "no.env")
             core = Core(settings, signer=client)
-            await core.start(page_socket=free_socket(),
-                             connect_socket=free_socket())
+            await core.start(page_socket=page, connect_socket=free_socket())
+            port = core.page_port
             try:
+                if core.owner is not None:
+                    token = await auth.open_session(core.pool, core.owner.id)
+                    SESSIONS[port] = f"{auth.SESSION_COOKIE}={token}"
                 yield core
             finally:
+                SESSIONS.pop(port, None)
                 await core.stop()
 
     async def close(self) -> None:

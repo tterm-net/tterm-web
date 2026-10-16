@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import datetime as dt
+import grp
 import json
 import logging
 import os
@@ -246,32 +247,46 @@ def socket_in_use(path: Path) -> bool:
         probe.close()
 
 
-def private_dir(directory: Path) -> None:
+def private_dir(directory: Path, group: str | None = None) -> None:
     """The socket's folder: made private if new, refused if someone else's.
 
     It may sit in a shared temporary directory, where another user could
-    have made a folder of that name first to listen in.
+    have made a folder of that name first to listen in. With `group`, as
+    on the server, where the core runs as a user of its own, the members of
+    that group may come in as well, and no one else.
     """
-    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    gid = grp.getgrnam(group).gr_gid if group else None
+    directory.mkdir(mode=0o750 if group else 0o700, parents=True, exist_ok=True)
     info = directory.stat()
-    if info.st_uid != os.getuid() or info.st_mode & 0o077:
+    if gid is not None and info.st_uid == os.getuid() and info.st_gid != gid:
+        os.chown(directory, -1, gid)
+        info = directory.stat()
+    # A group may look in and reach the socket, never put anything there.
+    let_in = 0o050 if gid is not None else 0
+    if (info.st_uid != os.getuid() or info.st_mode & 0o077 & ~let_in
+            or (gid is not None and info.st_gid != gid)):
         raise RuntimeError(
             f"{directory} must belong to this user and be closed to others "
-            "(chmod 700) before the signer will put its socket there")
+            f"({'chmod 750, group ' + group if group else 'chmod 700'}) "
+            "before the signer will put its socket there")
 
 
-async def serve(signer: Signer, path: Path) -> asyncio.AbstractServer:
-    """Listens on the socket, readable and writable by this user only."""
-    private_dir(path.parent)
+async def serve(signer: Signer, path: Path,
+                group: str | None = None) -> asyncio.AbstractServer:
+    """Listens on the socket, readable and writable by this user only, and
+    by the members of `group` if one is given."""
+    private_dir(path.parent, group)
     if path.exists():
         if socket_in_use(path):
             raise RuntimeError(f"another signer is already running on {path}")
         path.unlink()
-    old = os.umask(0o177)
+    old = os.umask(0o117 if group else 0o177)
     try:
         server = await asyncio.start_unix_server(signer.handle, path=str(path),
                                                  limit=MAX_LINE)
     finally:
         os.umask(old)
-    os.chmod(path, 0o600)
+    if group and path.stat().st_gid != grp.getgrnam(group).gr_gid:
+        os.chown(path, -1, grp.getgrnam(group).gr_gid)
+    os.chmod(path, 0o660 if group else 0o600)
     return server

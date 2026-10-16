@@ -6,12 +6,17 @@
 // blinks. The terminals do not care, they live in the core. The socket comes
 // back by itself, and each channel asks for what it missed after the last
 // number it has, so the screen goes on where it was.
+//
+// Except when the session ended: the core closes the socket with
+// SIGNED_OUT, and it stays closed until the person signs in again.
 
-import type { RunningCommand, TerminalInfo } from "./api";
+import { signedOutNow, type RunningCommand, type TerminalInfo } from "./api";
 
 const OUTPUT = 1;
 const INPUT = 2;
 const RETRY_MS = [300, 1000, 2000, 4000, 8000];
+/** The close code of a session that ended (tterm/api/ws.py). */
+const SIGNED_OUT = 4401;
 
 /** A marker from the shell, as the core passes it on. `at` is the core's
  * clock, in milliseconds. */
@@ -87,7 +92,14 @@ class Socket {
   private retry = 0;
   private timer: number | undefined;
   private listeners = new Set<Listener>();
+  private signedOut = false;
   connected = false;
+
+  /** Signed in again: the socket may connect. */
+  signedIn(): void {
+    this.signedOut = false;
+    if (this.channels.size > 0) this.connect();
+  }
 
   onConnection(listener: Listener): () => void {
     this.listeners.add(listener);
@@ -147,7 +159,7 @@ class Socket {
   }
 
   private connect(): void {
-    if (this.ws) return;
+    if (this.ws || this.signedOut) return;
     window.clearTimeout(this.timer);
     const scheme = location.protocol === "https:" ? "wss" : "ws";
     const ws = new WebSocket(`${scheme}://${location.host}/api/ws`);
@@ -162,9 +174,14 @@ class Socket {
       }
     };
     ws.onmessage = (event) => this.receive(event.data);
-    ws.onclose = () => {
+    ws.onclose = (event) => {
       this.ws = null;
       this.setConnected(false);
+      if (event.code === SIGNED_OUT) {
+        this.signedOut = true;
+        signedOutNow();
+        return;
+      }
       if (this.channels.size === 0) return;
       const wait = RETRY_MS[Math.min(this.retry, RETRY_MS.length - 1)];
       this.retry += 1;

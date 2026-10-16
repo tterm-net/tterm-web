@@ -6,11 +6,14 @@
 // A machine opens a new terminal on it; a terminal goes to its tab, opening
 // the tab again if it was closed. Pointed at, a machine offers Remove and a
 // terminal End (from 0.0.8); both ask first.
+//
+// The account at the bottom opens its menu (from 0.0.9): Devices, Sign out.
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Machine, Me, Project, Role, TerminalInfo } from "./api";
 import {
-  ChevronDown, Close, Computer, Dots, Logo, Moon, Pin, Plus, Server, Sun, Trash,
+  ChevronDown, Close, Computer, Devices, Dots, Logo, Moon, Pin, Plus, Server,
+  SignOut, Sun, Trash,
 } from "./icons";
 import type { Dot } from "./TabBar";
 import type { Shown } from "./theme";
@@ -44,6 +47,8 @@ interface Props {
   onHome: () => void;
   dotFor: (terminal: TerminalInfo) => Dot;
   notYet: (what: string) => void;
+  onDevices: () => void;
+  onSignOut: () => void;
 }
 
 export function Sidebar(props: Props) {
@@ -204,13 +209,8 @@ export function Sidebar(props: Props) {
       </div>
 
       <div className="sidebar-foot">
-        <div className="account">
-          <span className="avatar" aria-hidden="true">{me.initials}</span>
-          <span className="account-text">
-            <strong>{me.firstName}</strong>
-            <span>Account · {me.plan === "free" ? "Free plan" : me.plan}</span>
-          </span>
-        </div>
+        <AccountMenu me={me} onDevices={props.onDevices}
+          onSignOut={props.onSignOut} />
         <button type="button" className="icon-button"
           aria-label={themeLabel} title={themeLabel}
           onClick={props.onToggleTheme}>
@@ -218,5 +218,75 @@ export function Sidebar(props: Props) {
         </button>
       </div>
     </aside>
+  );
+}
+
+/** The account at the bottom of the sidebar, and its menu. */
+function AccountMenu(props: {
+  me: Me;
+  onDevices: () => void;
+  onSignOut: () => void;
+}) {
+  const { me } = props;
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  const plan = me.plan === "free" ? "Free plan" : me.plan;
+
+  useEffect(() => {
+    if (!open) return;
+    const away = (event: MouseEvent) => {
+      if (!box.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", away);
+    window.addEventListener("keydown", onKey, true);
+    box.current?.querySelector<HTMLButtonElement>("[role=menuitem]")?.focus();
+    return () => {
+      document.removeEventListener("mousedown", away);
+      window.removeEventListener("keydown", onKey, true);
+    };
+  }, [open]);
+
+  const pick = (then: () => void) => () => {
+    setOpen(false);
+    then();
+  };
+
+  return (
+    <div className="account-box" ref={box}>
+      {open && (
+        <div className="account-menu" role="menu" aria-label="Account">
+          <div className="account-menu-head">
+            <strong>{me.name}</strong>
+            {me.email && <span>{me.email}</span>}
+            <span>{plan}</span>
+          </div>
+          <button type="button" role="menuitem" className="menu-item"
+            onClick={pick(props.onDevices)}>
+            <Devices size={15} />
+            Devices
+          </button>
+          <button type="button" role="menuitem" className="menu-item"
+            onClick={pick(props.onSignOut)}>
+            <SignOut size={15} />
+            Sign out
+          </button>
+        </div>
+      )}
+      <button type="button" className="account" aria-haspopup="menu"
+        aria-expanded={open} title={me.email ?? undefined}
+        onClick={() => setOpen((was) => !was)}>
+        <span className="avatar" aria-hidden="true">{me.initials}</span>
+        <span className="account-text">
+          <strong>{me.firstName}</strong>
+          <span>Account · {plan}</span>
+        </span>
+      </button>
+    </div>
   );
 }

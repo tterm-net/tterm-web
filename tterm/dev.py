@@ -15,6 +15,7 @@ import sys
 from . import __version__
 from .core import db
 from .core.config import ROOT, Settings
+from .core.mail import BrevoMailer
 from .core.signer_client import SignerClient, SignerUnavailable
 from .server import Core, PortBusy
 
@@ -23,15 +24,29 @@ log = logging.getLogger("tterm")
 
 def banner(settings: Settings, core: Core) -> str:
     ca = core.active_ca
+    owner = core.owner
+    if owner is None:
+        you = "no one: everyone signs up with their email"
+    elif owner.email:
+        you = f"{owner.name}, signs in as {owner.email}"
+    else:
+        you = (f"{owner.name}, without an address: put TTERM_OWNER_EMAIL=your "
+               "email in .env and start again")
+    if isinstance(core.mailer, BrevoMailer):
+        email = f"through Brevo, from {settings.mail_from}"
+    else:
+        email = "into this window: the codes for signing in appear here"
+    local = settings.page_host in ("127.0.0.1", "localhost", "::1")
     return "\n".join([
         f"tTerm Web {__version__}",
-        f"  page       http://localhost:{core.page_port}"
-        "   only on this computer",
+        f"  page       {settings.page_url}"
+        f"{'   only on this computer' if local else ''}",
         f"  machines   http://127.0.0.1:{core.connect_port}"
         f"   the tunnel to {settings.connect_url} points here",
         f"  database   {db.describe(settings.database_url)}",
         f"  signer     {ca['id'] + '  ' + ca['fingerprint'] if ca else 'not answering'}",
-        f"  you        {core.owner.name if core.owner else '?'}",
+        f"  email      {email}",
+        f"  you        {you}",
         "Ctrl+C stops it.",
         "",
     ])
