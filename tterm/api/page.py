@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel
 
 from .. import __version__
-from ..core import accounts, auth, machines
+from ..core import accounts, auth, letters, machines
 from ..core.mail import Mailer
 from ..core.terminals import NotAllowed, NotOpen, Terminal, Terminals
 from .connect import client_ip
@@ -33,6 +33,8 @@ NO_STORE = {"cache-control": "no-store"}
 #: Stage 1 builds the page with stable file names, so the browser must ask
 #: every time whether a file changed. Cheap on localhost.
 NO_CACHE = {"cache-control": "no-cache"}
+#: tTerm's icon, 108 px, for the emails (letters.py).
+MAIL_LOGO = Path(__file__).resolve().parent.parent / "templates" / "mail-logo.png"
 
 PAGE_MISSING = """<!doctype html>
 <meta charset="utf-8"><title>tTerm</title>
@@ -133,6 +135,8 @@ def create_page_app(pool: asyncpg.Pool, dist: Path, page_url: str,
     the addresses the sign-in screens link to: the Terms of Service, the
     Privacy Policy, and support's email."""
     legal = dict(legal or {})
+    # Support's address, at the bottom of the emails too.
+    support = legal.get("support") or letters.SUPPORT
     # The cookies: on https with the __Host- prefix, which a browser takes
     # only from this very host, over https, for the whole site. On the
     # laptop's plain http that prefix is not accepted, so they go without.
@@ -215,7 +219,7 @@ def create_page_app(pool: asyncpg.Pool, dist: Path, page_url: str,
         try:
             await auth.ask_code(pool, secret, mailer, email=email,
                                 browser=browser, ip=client_ip(request),
-                                page_url=page_url)
+                                page_url=page_url, support=support)
         except auth.Refused as exc:
             return refused(exc)
         response = _json({"sent": True, "email": email,
@@ -239,7 +243,7 @@ def create_page_app(pool: asyncpg.Pool, dist: Path, page_url: str,
                 pool, secret, mailer, email=email, code=code, browser=browser,
                 ip=client_ip(request),
                 label=auth.device_label(request.headers.get("user-agent", "")),
-                page_url=page_url)
+                page_url=page_url, support=support)
         except auth.Refused as exc:
             return refused(exc)
         if isinstance(signed, auth.SignUp):
@@ -660,6 +664,15 @@ def create_page_app(pool: asyncpg.Pool, dist: Path, page_url: str,
                                                 "DELETE"])
     async def api_missing(rest: str) -> Response:
         return _json({"error": "no such API"}, 404)
+
+    @app.get(letters.LOGO_PATH)
+    async def mail_logo() -> Response:
+        """The logo in the emails. Mail apps and their image proxies fetch
+        it from wherever the email is read, so this one file, unlike the
+        rest of the page, other sites may load."""
+        return FileResponse(MAIL_LOGO, media_type="image/png", headers={
+            "cache-control": "public, max-age=604800",
+            "cross-origin-resource-policy": "cross-origin"})
 
     @app.get("/{path:path}")
     async def page(path: str) -> Response:

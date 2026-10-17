@@ -41,9 +41,9 @@ from pathlib import Path
 
 import asyncpg
 
-from . import accounts
+from . import accounts, letters
 from .accounts import Person
-from .mail import Email, Mailer, MailFailed
+from .mail import Mailer, MailFailed
 
 log = logging.getLogger("tterm.auth")
 
@@ -248,7 +248,8 @@ def device_label(user_agent: str) -> str:
 # ------------------------------------------------------------------ codes
 
 async def ask_code(pool: asyncpg.Pool, secret: bytes, mailer: Mailer, *,
-                   email: str, browser: str, ip: str, page_url: str) -> None:
+                   email: str, browser: str, ip: str, page_url: str,
+                   support: str = letters.SUPPORT) -> None:
     """Sends a code for signing in to `email`, for this browser. Refuses,
     saying when to try again, when codes come too often: to one address,
     from one network, or in all. An email that does not go out does not
@@ -298,16 +299,9 @@ async def ask_code(pool: asyncpg.Pool, secret: bytes, mailer: Mailer, *,
             email, _mac(secret, "code", email, code), token_hash(browser), ip,
             net, new, CODE_MINUTES)
     try:
-        await mailer.send(Email(
-            to=email,
-            subject=f"{code} is your tTerm sign-in code",
-            text=(f"Your code for signing in to tTerm: {code}\n\n"
-                  f"It works for {CODE_MINUTES} minutes, and only in the "
-                  "browser where you asked for it. Never tell it to anyone: "
-                  "tTerm never asks for it by phone or in a chat.\n\n"
-                  "If you did not ask for it, ignore this email. Without "
-                  "the code nobody can sign in.\n\n"
-                  f"tTerm Web, {page_url}\n")))
+        await mailer.send(letters.code_email(
+            to=email, code=code, minutes=CODE_MINUTES, page_url=page_url,
+            support=support))
     except MailFailed:
         # Nothing went out: it counts against no limit, and a new try may
         # come at once.
@@ -340,7 +334,8 @@ class SignUpOver(Refused):
 
 async def check_code(pool: asyncpg.Pool, secret: bytes, mailer: Mailer, *,
                      email: str, code: str, browser: str, ip: str,
-                     label: str, page_url: str) -> SignedIn | SignUp:
+                     label: str, page_url: str,
+                     support: str = letters.SUPPORT) -> SignedIn | SignUp:
     """Signs in with a code from email; for an address without an account,
     says that the account is to be made first. Only the latest code for the
     address in this browser counts."""
@@ -378,18 +373,10 @@ async def check_code(pool: asyncpg.Pool, secret: bytes, mailer: Mailer, *,
     # The person hears of every sign-in from a browser tTerm Web does not
     # know. A sign-in they did not make means someone has their email.
     with contextlib.suppress(MailFailed):
-        await mailer.send(Email(
-            to=email,
-            subject="New sign-in to tTerm",
-            text=(f"Someone signed in to tTerm as {email} with a code "
-                  f"from this email, using {label}"
-                  f"{f', from {ip}' if ip else ''}.\n\n"
-                  "If it was you, there is nothing to do.\n\n"
-                  "If it was not: open tTerm, then your account at the "
-                  "bottom of the sidebar, and Forget all devices; then "
-                  "change the password of this email, because whoever "
-                  "signed in could read it.\n\n"
-                  f"tTerm Web, {page_url}\n")))
+        await mailer.send(letters.sign_in_email(
+            to=email, label=label, ip=ip,
+            at=dt.datetime.now(dt.timezone.utc), page_url=page_url,
+            support=support))
     return SignedIn(person, email, token, session_id)
 
 

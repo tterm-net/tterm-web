@@ -1,10 +1,11 @@
 """Email: the codes for signing in, and the note about a sign-in from a
-device tTerm Web does not know.
+device tTerm Web does not know. What they say and how they look: letters.py.
 
-On the server it goes out through Brevo's API (TTERM_BREVO_KEY). Without a
-key, as on the laptop, each email goes to the log instead, code and all, so
-that signing in works there too; the checks read what was "sent" from the
-same place.
+On the server it goes out through Brevo's API (TTERM_BREVO_KEY), as HTML
+with the plain text beside it (from 0.0.11). Without a key, as on the
+laptop, each email goes to the log instead, its text, code and all, so that
+signing in works there too; the checks read what was "sent" from the same
+place.
 """
 from __future__ import annotations
 
@@ -31,6 +32,8 @@ class Email:
     to: str
     subject: str
     text: str
+    #: The same as HTML, for the mail apps that show it; empty: text only.
+    html: str = ""
 
 
 class Mailer:
@@ -61,12 +64,16 @@ class BrevoMailer(Mailer):
         self.sender = {"name": name, "email": address} if name else {"email": address}
 
     async def send(self, email: Email) -> None:
-        body = json.dumps({
+        message = {
             "sender": self.sender,
             "to": [{"email": email.to}],
             "subject": email.subject,
             "textContent": email.text,
-        }).encode()
+        }
+        if email.html:
+            # Both go out as one email; the mail app picks what it shows.
+            message["htmlContent"] = email.html
+        body = json.dumps(message).encode()
 
         def post() -> int:
             request = urllib.request.Request(

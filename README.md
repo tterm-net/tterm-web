@@ -4,7 +4,10 @@ tTerm in the browser: a real terminal with command blocks, for people who work
 with servers and for their teams. Projects, roles, a journal of who ran what,
 and watching a colleague's terminal, always with them knowing.
 
-**Status:** early development. Version 0.0.10 adds the account page, opened
+**Status:** early development. Version 0.0.11 dresses the two emails, the
+code for signing in and the note about a new sign-in, in tTerm's look: HTML
+with the logo and the code large, the same words as plain text beside it.
+Version 0.0.10 added the account page, opened
 from the account at the bottom of the sidebar: your name, which you can
 change, the plan and what counts against it, the trusted devices with Forget
 and Forget all devices, the theme, and Sign out, which makes the browser
@@ -92,6 +95,7 @@ tterm/
                  on the other end of them, Tab, the commands held back
   core/auth.py   signing in: codes from email, trusted devices, sessions
   core/mail.py   the emails, through Brevo or into the log
+  core/letters.py  what the emails say, as HTML and as text
   api/page.py    the page and its API, for people, each within a session
   api/ws.py      the page's socket: every terminal on the page goes through it
   api/connect.py where machines talk to us: installer, registration, and

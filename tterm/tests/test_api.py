@@ -106,6 +106,21 @@ async def test_page_files_and_addresses_inside_the_page(h):
         assert api.status == 404 and api.json() == {"error": "no such API"}
 
 
+async def test_the_emails_logo_may_be_loaded_from_anywhere(h):
+    """Mail apps and their image proxies fetch it from wherever the email is
+    read, without a session; the rest of the page stays its own."""
+    async with h.core() as core:
+        r = await request(core.page_port, "GET", "/mail/logo.png",
+                          headers={"cookie": ""})
+        assert r.status == 200, r.status
+        assert r.headers["content-type"] == "image/png", r.headers
+        assert r.body.startswith(b"\x89PNG"), r.body[:8]
+        assert r.headers["cross-origin-resource-policy"] == "cross-origin"
+        assert r.headers["cache-control"].startswith("public"), r.headers
+        other = await request(core.page_port, "GET", "/assets/index.js")
+        assert other.headers["cross-origin-resource-policy"] == "same-origin"
+
+
 async def test_page_files_stay_inside_dist(h):
     async with h.core() as core:
         for path in ("/../tterm/server.py", "/%2e%2e/tterm/server.py",

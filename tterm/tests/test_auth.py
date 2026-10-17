@@ -229,6 +229,9 @@ async def test_a_new_address_signs_up_after_its_code(h):
         code = last_code(core, "anna.nikolaeva@example.com")
         assert len(code) == 6 and code.isdigit()
         assert code in sent.text and f"localhost:{core.page_port}" in sent.text
+        # And as HTML, with the logo from this page (from 0.0.11).
+        assert f">{code}</td>" in sent.html
+        assert f'src="http://localhost:{core.page_port}/mail/logo.png"' in sent.html
         r = await anna.verify("anna.nikolaeva@example.com", "12")
         assert r.status == 422, r.status
         browser = anna.jar["tterm-browser"]
@@ -289,6 +292,7 @@ async def test_a_new_address_signs_up_after_its_code(h):
         note = core.mailer.sent[-1]
         assert note.subject == "New sign-in to tTerm", note.subject
         assert "Safari on iPhone" in note.text and "Forget all devices" in note.text
+        assert "Safari on iPhone" in note.html and "/account" in note.html
         assert await core.pool.fetchval("SELECT count(*) FROM users") == 1
 
 
@@ -1140,6 +1144,13 @@ async def test_brevo_gets_the_email_as_its_api_wants_it():
                         "to": [{"email": "anna@example.com"}],
                         "subject": "123456 is your code",
                         "textContent": "Your code: 123456"}, body
+        # With HTML, both parts go in one email (from 0.0.11).
+        await mailer.send(mail.Email("anna@example.com", "123456 is your code",
+                                     "Your code: 123456",
+                                     html="<p>Your code: 123456</p>"))
+        body = _Brevo.got[-1][2]
+        assert body["htmlContent"] == "<p>Your code: 123456</p>", body
+        assert body["textContent"] == "Your code: 123456", body
         _Brevo.status = 401
         try:
             await mailer.send(mail.Email("anna@example.com", "s", "t"))
