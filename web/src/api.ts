@@ -376,12 +376,42 @@ export function quickSignIn(pin: string): Promise<void> {
   return auth("/api/auth/pin-login", { pin });
 }
 
+/** Sign out (on the account page): this browser forgets the person, so
+ * that next time it takes a code from email (from 0.0.10). */
 export function signOut(): Promise<void> {
   return auth("/api/auth/signout");
 }
 
-export async function signOutEverywhere(): Promise<void> {
+/** Forget all devices: every session ends and no browser is trusted any
+ * more. */
+export async function forgetAllDevices(): Promise<void> {
   await check(await fetch("/api/auth/signout-everywhere", change("POST", {})));
+}
+
+/** What the account page shows besides the name and the address. */
+export interface AccountInfo {
+  plan: {
+    id: string;
+    name: string;
+    /** The most there may be; null where the plan sets no limit. */
+    limits: { machines: number | null; terminals: number | null };
+  };
+  /** What counts against the limits now. */
+  usage: { machines: number; terminals: number };
+  devices: Device[];
+  legal: Legal;
+}
+
+export async function loadAccount(): Promise<AccountInfo> {
+  const response = await fetch("/api/account", { cache: "no-store" });
+  return (await check(response)).json();
+}
+
+/** The name as the person changed it, tidied by the core. */
+export async function saveName(name: string): Promise<{
+  name: string; firstName: string; initials: string;
+}> {
+  return (await check(await fetch("/api/me", change("PATCH", { name })))).json();
 }
 
 export async function listDevices(): Promise<Device[]> {

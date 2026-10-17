@@ -95,10 +95,12 @@ async def ensure_local_owner(pool: asyncpg.Pool, name: str,
     """The person this laptop belongs to, created on the first start, with
     the address they sign in with.
 
-    Creates them together with the Personal project, code P. Later starts
-    find them and only refresh the name and the address, if they changed in
-    the settings. An account that signed in with that address before the
-    laptop's owner had it is left alone: the address stays theirs.
+    Creates them together with the Personal project, code P, named as the
+    settings say. Later starts find them and refresh only the address, if it
+    changed in the settings: from 0.0.10 the name is the person's to change,
+    on the account page, and a start does not take it back. An account that
+    signed in with that address before the laptop's owner had it is left
+    alone: the address stays theirs.
     """
     async with pool.acquire() as conn, conn.transaction():
         await conn.execute("SELECT pg_advisory_xact_lock($1)", OWNER_LOCK)
@@ -120,10 +122,10 @@ async def ensure_local_owner(pool: asyncpg.Pool, name: str,
             row_theme, row_plan = "system", "free"
         else:
             user_id, row_theme, row_plan = row["id"], row["theme"], row["plan_id"]
-            if row["name"] != name or (row["email"] or "") != email:
-                await conn.execute(
-                    "UPDATE users SET name = $2, email = $3 WHERE id = $1",
-                    user_id, name, email)
+            name = row["name"]
+            if (row["email"] or "") != email:
+                await conn.execute("UPDATE users SET email = $2 WHERE id = $1",
+                                   user_id, email)
         # The address they sign in with: this one, and no other.
         await conn.execute(
             "DELETE FROM sign_in_methods WHERE user_id = $1 AND kind = 'email' "
@@ -183,6 +185,46 @@ async def set_theme(pool: asyncpg.Pool, user_id: uuid.UUID, theme: str) -> None:
     if theme not in THEMES:
         raise ValueError(f"theme must be one of {', '.join(THEMES)}")
     await pool.execute("UPDATE users SET theme = $2 WHERE id = $1", user_id, theme)
+
+
+async def set_name(pool: asyncpg.Pool, user_id: uuid.UUID, name: str) -> None:
+    """The person's name, as they changed it on the account page (0.0.10).
+    Cleaned by the caller (auth.clean_name). The journal notes that it
+    changed, not what it was."""
+    async with pool.acquire() as conn, conn.transaction():
+        changed = await conn.fetchval(
+            "UPDATE users SET name = $2 WHERE id = $1 AND name <> $2 "
+            "RETURNING id", user_id, name)
+        if changed is not None:
+            await journal(conn, "user.renamed", user_id=user_id)
+
+
+async def plan_of(pool: asyncpg.Pool, user_id: uuid.UUID) -> dict:
+    """The person's plan for the account page: its name, its limits, and
+    the machines of their own projects that count against "machines". The
+    open terminals are the core's to count (Terminals.live)."""
+    row = await pool.fetchrow(
+        """
+        SELECT p.id, p.name, p.limits,
+               (SELECT count(*) FROM machines m
+                JOIN projects pr ON pr.id = m.project_id
+                WHERE pr.owner_id = u.id AND m.removed_at IS NULL) AS machines
+        FROM users u JOIN plans p ON p.id = u.plan_id WHERE u.id = $1
+        """, user_id)
+    if row is None:
+        raise LookupError(f"no such person: {user_id}")
+    limits = json.loads(row["limits"]) if isinstance(row["limits"], str) \
+        else dict(row["limits"] or {})
+
+    def most(key: str) -> int | None:
+        value = limits.get(key)
+        # 50, or 50.0 and 1e2 as JSON may write them (as in limit()).
+        return None if value is None else int(float(value))
+
+    return {"id": row["id"], "name": row["name"],
+            "limits": {"machines": most("machines"),
+                       "terminals": most("terminals")},
+            "machines": row["machines"]}
 
 
 async def limit(pool: asyncpg.Pool | asyncpg.Connection, user_id: uuid.UUID,

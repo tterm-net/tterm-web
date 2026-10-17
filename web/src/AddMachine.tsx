@@ -104,7 +104,12 @@ export function AddMachine(props: Props) {
   useEffect(() => {
     dialog.current?.focus();
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") handlers.current.onClose();
+      // Handled here: what lies under the dialog (the account page) lets
+      // this Esc be.
+      if (event.key === "Escape") {
+        event.preventDefault();
+        handlers.current.onClose();
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

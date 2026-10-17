@@ -385,10 +385,10 @@ async def check_code(pool: asyncpg.Pool, secret: bytes, mailer: Mailer, *,
                   f"from this email, using {label}"
                   f"{f', from {ip}' if ip else ''}.\n\n"
                   "If it was you, there is nothing to do.\n\n"
-                  "If it was not: open tTerm, then Devices in the menu "
-                  "of your account, and sign out everywhere; then change "
-                  "the password of this email, because whoever signed "
-                  "in could read it.\n\n"
+                  "If it was not: open tTerm, then your account at the "
+                  "bottom of the sidebar, and Forget all devices; then "
+                  "change the password of this email, because whoever "
+                  "signed in could read it.\n\n"
                   f"tTerm Web, {page_url}\n")))
     return SignedIn(person, email, token, session_id)
 
@@ -768,9 +768,52 @@ async def sign_out(pool: asyncpg.Pool, token: str | None) -> uuid.UUID | None:
                                "RETURNING id", token_hash(token))
 
 
+async def forget_browser(pool: asyncpg.Pool, token: str | None,
+                         key: str | None) -> list[uuid.UUID]:
+    """Sign out, from 0.0.10: this browser forgets the person. Its session
+    ends, and if the browser is a trusted device, the device is forgotten,
+    with every session on it: next time it takes a code from email, which
+    is also how one switches to another account. A session that merely ends
+    (eight hours without anything done) keeps the device, and the quick
+    code brings the person back. The sessions that ended."""
+    ended: list[uuid.UUID] = []
+    async with pool.acquire() as conn, conn.transaction():
+        # The device first, then the sessions, in the order forget_device
+        # and sign_out_everywhere take them: two of these at once (Sign out
+        # here, Forget from a phone) then wait for each other instead of
+        # deadlocking.
+        device = None
+        if key:
+            device = await conn.fetchrow(
+                "SELECT id, user_id FROM devices WHERE key_hash = $1 "
+                "AND forgotten_at IS NULL FOR UPDATE", token_hash(key))
+        row = None
+        if token:
+            row = await conn.fetchrow(
+                "UPDATE sessions SET ended_at = now() WHERE token_hash = $1 "
+                "AND ended_at IS NULL RETURNING id, user_id", token_hash(token))
+        if row is not None:
+            ended.append(row["id"])
+        if device is not None:
+            ended += await _forget(conn, device["id"])
+        who = row["user_id"] if row is not None else (
+            device["user_id"] if device is not None else None)
+        if who is not None:
+            await accounts.journal(conn, "user.signed_out", user_id=who,
+                                   details={"device_forgotten": device is not None})
+        if device is not None and device["user_id"] != who:
+            # A shared browser: someone else's sign-out forgot it, and the
+            # device's owner reads that in their own journal.
+            await accounts.journal(conn, "user.device_forgotten",
+                                   user_id=device["user_id"],
+                                   details={"why": "signed out in that browser"})
+    return ended
+
+
 async def sign_out_everywhere(pool: asyncpg.Pool, user_id: uuid.UUID) -> None:
     """Every session ends and every device is forgotten: from anywhere,
-    only a code from email signs in now."""
+    only a code from email signs in now. On the account page this is
+    "Forget all devices" (0.0.10), so that it reads like Forget for one."""
     async with pool.acquire() as conn, conn.transaction():
         await conn.execute("UPDATE devices SET forgotten_at = now() "
                            "WHERE user_id = $1 AND forgotten_at IS NULL", user_id)

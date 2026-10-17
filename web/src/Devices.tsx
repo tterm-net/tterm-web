@@ -1,14 +1,15 @@
-// The browsers where the person signs in with a quick code, from the menu
-// of their account. Forget one, and there it is email again; Sign out
-// everywhere ends every session and forgets them all.
+// The browsers where the person signs in with a quick code, on the account
+// page (from 0.0.10; a dialog of its own in 0.0.9). Forget one, and there
+// it is email again; Forget all devices ends every session and forgets them
+// all, so that one word means the same for one and for all.
 
-import { useEffect, useRef, useState } from "react";
-import { forgetDevice, listDevices, signOutEverywhere, type Device } from "./api";
-import { Close } from "./icons";
+import { useState } from "react";
+import { forgetAllDevices, forgetDevice, type Device } from "./api";
+import { Computer, Phone } from "./icons";
 import { since } from "./time";
 
 interface Props {
-  onClose: () => void;
+  devices: Device[];
   /** This browser is signed out now, and why. */
   onSignedOut: (note: string) => void;
   notify: (text: string) => void;
@@ -19,25 +20,16 @@ function when(ms: number): string {
   return ago === "less than a minute" ? "just now" : `${ago} ago`;
 }
 
-export function Devices(props: Props) {
-  const [devices, setDevices] = useState<Device[] | null>(null);
+/** Phones and tablets by their label, as device_label() writes it. */
+function handheld(label: string): boolean {
+  return /iPhone|iPad|Android/.test(label);
+}
+
+export function DevicesSection(props: Props) {
+  const [devices, setDevices] = useState<Device[]>(props.devices);
   const [problem, setProblem] = useState<string | null>(null);
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
-  const box = useRef<HTMLElement>(null);
-  const close = useRef(props.onClose);
-  close.current = props.onClose;
-
-  useEffect(() => {
-    box.current?.focus();
-    listDevices().then(setDevices)
-      .catch((error: Error) => setProblem(error.message));
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") close.current();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
 
   const forget = async (device: Device) => {
     setProblem(null);
@@ -48,20 +40,20 @@ export function Devices(props: Props) {
           "from email.");
         return;
       }
-      setDevices((all) => all?.filter((d) => d.id !== device.id) ?? null);
+      setDevices((all) => all.filter((d) => d.id !== device.id));
       props.notify(`${device.label} is forgotten: there it is email again.`);
     } catch (error) {
       setProblem((error as Error).message);
     }
   };
 
-  const everywhere = async () => {
+  const forgetAll = async () => {
     setBusy(true);
     setProblem(null);
     try {
-      await signOutEverywhere();
-      props.onSignedOut("You signed out everywhere. Each device signs in " +
-        "with a code from email now.");
+      await forgetAllDevices();
+      props.onSignedOut("All devices are forgotten. Each one signs in with " +
+        "a code from email now.");
     } catch (error) {
       setProblem((error as Error).message);
       setBusy(false);
@@ -69,36 +61,31 @@ export function Devices(props: Props) {
   };
 
   return (
-    <div className="scrim">
-      <section ref={box} className="dialog devices-dialog" role="dialog"
-        aria-modal="true" aria-labelledby="dv-title" tabIndex={-1}>
-        <div className="dialog-head">
-          <div className="dialog-title">
-            <h2 id="dv-title">Devices</h2>
-            <p className="dialog-sub">
-              Browsers where you sign in with your quick code. Anywhere else,
-              it takes a code from email.
-            </p>
-          </div>
-          <button type="button" className="icon-button small" aria-label="Close"
-            onClick={props.onClose}>
-            <Close size={16} />
-          </button>
-        </div>
-
-        {devices === null && !problem && (
-          <div className="waiting"><span className="spinner" />Loading…</div>
-        )}
-        {devices !== null && devices.length === 0 && (
-          <p className="note-box">
-            No trusted devices. Right after signing in with a code from email,
-            set a quick code, and that browser becomes one.
+    <section className="account-section" aria-labelledby="ac-devices">
+      <div className="account-section-head">
+        <h2 id="ac-devices">Devices</h2>
+        <p>
+          Browsers where you sign in with your quick code. Anywhere else, it
+          takes a code from email.
+        </p>
+        <p>
+          After 8 hours without anything done, tTerm asks for the quick code
+          again. Your terminals keep running.
+        </p>
+      </div>
+      <div className="account-card devices-card">
+        {devices.length === 0 ? (
+          <p className="devices-none">
+            No browser is remembered. Each sign-in takes a code from email.
           </p>
-        )}
-        {devices !== null && devices.length > 0 && (
+        ) : (
           <ul className="device-list">
             {devices.map((device) => (
               <li key={device.id} className="device-row">
+                <span className="device-icon" aria-hidden="true">
+                  {handheld(device.label) ? <Phone size={17} />
+                    : <Computer size={17} />}
+                </span>
                 <span className="device-text">
                   <strong>
                     {device.label}
@@ -117,33 +104,35 @@ export function Devices(props: Props) {
             ))}
           </ul>
         )}
-        {problem && <div className="error-box" role="alert">{problem}</div>}
-
-        <div className="devices-everywhere">
-          <h3>Sign out everywhere</h3>
-          <p className="hint">
-            Every session ends, here and on your other devices, and every
-            device is forgotten. Your terminals keep running.
-          </p>
+        <div className="forget-all">
+          <span className="forget-all-text">
+            <strong>Forget all devices</strong>
+            <span>
+              Every device is forgotten and every session ends, this one too.
+              Each browser then asks for a code from email. Your terminals keep
+              running.
+            </span>
+          </span>
           {asking ? (
-            <div className="button-row">
+            <span className="button-row">
               <button type="button" className="button-danger big"
-                disabled={busy} onClick={() => void everywhere()}>
-                Sign out everywhere
+                disabled={busy} onClick={() => void forgetAll()}>
+                Forget all devices
               </button>
               <button type="button" className="button-plain"
                 onClick={() => setAsking(false)}>
                 Cancel
               </button>
-            </div>
+            </span>
           ) : (
             <button type="button" className="button-plain"
               onClick={() => setAsking(true)}>
-              Sign out everywhere…
+              Forget all devices…
             </button>
           )}
         </div>
-      </section>
-    </div>
+        {problem && <div className="error-box" role="alert">{problem}</div>}
+      </div>
+    </section>
   );
 }

@@ -78,6 +78,13 @@ export function SignIn(props: Props) {
   const [note, setNote] = useState<string | null>(props.note ?? null);
   const [legal, setLegal] = useState<Legal>(LEGAL);
 
+  // Why the session ended may come after this screen is up: Sign out closes
+  // the page's socket a moment before its own answer, "You signed out.",
+  // arrives. The later word wins.
+  useEffect(() => {
+    if (props.note) setNote(props.note);
+  }, [props.note]);
+
   useEffect(() => {
     let stopped = false;
     authState()

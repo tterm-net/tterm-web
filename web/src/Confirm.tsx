@@ -24,7 +24,10 @@ export function Confirm(props: Props) {
   useEffect(() => {
     box.current?.querySelector<HTMLButtonElement>(".confirm-cancel")?.focus();
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") cancel.current();
+      if (event.key === "Escape") {
+        event.preventDefault();
+        cancel.current();
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -87,7 +90,10 @@ export function Removed(props: {
   useEffect(() => {
     box.current?.focus();
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") close.current();
+      if (event.key === "Escape") {
+        event.preventDefault();
+        close.current();
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

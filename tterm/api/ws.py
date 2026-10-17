@@ -37,8 +37,8 @@ now (another one is running) is answered with "refused".
 
 The socket belongs to a session (see core/auth.py) and shows only that
 person's terminals. When the session ends, the socket closes with the code
-SIGNED_OUT_CLOSE and the page asks to sign in: at once on Sign out, Sign out
-everywhere or a forgotten device, otherwise within a minute. Keys typed and
+SIGNED_OUT_CLOSE and the page asks to sign in: at once on Sign out, Forget
+all devices or a forgotten device, otherwise within a minute. Keys typed and
 commands run count as something done, and keep the session from ending.
 """
 from __future__ import annotations

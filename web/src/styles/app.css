@@ -568,65 +568,7 @@ code {
 }
 
 .account:hover,
-.account[aria-expanded="true"] {
-  background: var(--raised);
-}
-
-/* The account's menu opens upwards, over the sidebar's list. */
-.account-menu {
-  position: absolute;
-  z-index: 30;
-  left: 0;
-  right: 0;
-  bottom: calc(100% + 6px);
-  display: flex;
-  flex-direction: column;
-  padding: 6px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--surface);
-  box-shadow: var(--shadow);
-}
-
-.account-menu-head {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 8px 10px 10px;
-  margin-bottom: 4px;
-  border-bottom: 1px solid var(--line);
-  font-size: 12px;
-  color: var(--faint);
-  overflow-wrap: anywhere;
-}
-
-.account-menu-head strong {
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--ink);
-}
-
-.menu-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  height: 36px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--ink);
-  font: 600 13px var(--font-ui);
-  text-align: left;
-  cursor: pointer;
-}
-
-.menu-item svg {
-  color: var(--dim);
-}
-
-.menu-item:hover,
-.menu-item:focus-visible {
+.account[aria-current="page"] {
   background: var(--raised);
 }
 
@@ -1442,6 +1384,12 @@ code {
   .jump-text,
   .jump kbd {
     display: none;
+  }
+
+  /* On a phone the tabs share one line with ⟩ and the palette, instead of
+     taking a line of their own (0.0.10). */
+  .tabs {
+    flex-basis: 0;
   }
 }
 
@@ -2924,41 +2872,276 @@ code {
   }
 }
 
-/* ----------------------------------------------------------------- devices */
+/* ------------------------------------------------------------ account page */
 
-.devices-dialog {
-  max-width: 560px;
+/* The account page (0.0.10), as approved on the canvas: one column, with
+   the trusted devices and Forget all devices in one block. */
+.account-view {
+  width: 100%;
+  max-width: 760px;
+  box-sizing: border-box;
+  margin: 0 auto;
+  padding: 36px 24px 72px;
+  display: flex;
+  flex-direction: column;
+  gap: 36px;
+}
+
+.account-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.account-head h1 {
+  margin: 0;
+  font: 800 30px/1.15 var(--font-ui);
+  letter-spacing: -0.02em;
+}
+
+.account-close {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dim);
+  font: 600 13px var(--font-ui);
+  cursor: pointer;
+}
+
+.account-close:hover {
+  background: var(--raised);
+  color: var(--ink);
+}
+
+.account-close kbd {
+  font: 500 11px var(--font-mono);
+  color: var(--faint);
+}
+
+.account-card {
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.account-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.account-section-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.account-section-head h2 {
+  margin: 0;
+  font: 700 17px var(--font-ui);
+}
+
+.account-section-head p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--dim);
+}
+
+/* The profile: the avatar, the name and the address, and Edit name. */
+.profile-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px;
+}
+
+.profile-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.avatar.big {
+  width: 48px;
+  height: 48px;
+  font-size: 15px;
+}
+
+.profile-text {
+  flex: 1 1 240px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.profile-text strong {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.profile-text span {
+  font-size: 13px;
+  color: var(--dim);
+}
+
+.profile-edit {
+  flex: 1 1 320px;
+  min-width: 0;
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.profile-label {
+  flex: 1 1 220px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dim);
+}
+
+.profile-note {
+  margin: 0 0 0 64px;
+  font-size: 12px;
+  color: var(--faint);
+}
+
+/* The plan, and how much of it is used. */
+.plan-card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px;
+}
+
+.plan-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--dim);
+}
+
+.plan-badge {
+  height: 26px;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: var(--amber-tint);
+  color: var(--amber-ink);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.meters {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 24px;
+}
+
+.meter {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.meter-text {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.meter-text strong {
+  font-weight: 600;
+}
+
+.meter-text span {
+  color: var(--dim);
+}
+
+.meter-bar {
+  display: block;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--raised);
+  overflow: hidden;
+}
+
+.meter-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--amber);
+}
+
+.meter-fill.some {
+  min-width: 6px;
+}
+
+/* Devices, with Forget all devices in the same block. */
+.devices-card {
+  display: flex;
+  flex-direction: column;
 }
 
 .device-list {
   list-style: none;
   margin: 0;
-  padding: 0;
+  padding: 4px 0;
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--line);
-  border-radius: 12px;
 }
 
 .device-row {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding: 12px 16px;
 }
 
 .device-row + .device-row {
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--raised);
+}
+
+.device-icon {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: var(--raised);
+  color: var(--dim);
 }
 
 .device-text {
-  flex: 1 1 auto;
+  flex: 1 1 240px;
   min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
   font-size: 12px;
-  color: var(--faint);
+  color: var(--dim);
 }
 
 .device-text strong {
@@ -2967,7 +3150,7 @@ code {
   flex-wrap: wrap;
   gap: 8px;
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--ink);
 }
 
@@ -2977,28 +3160,157 @@ code {
   color: var(--amber-ink);
 }
 
+.devices-none {
+  margin: 0;
+  padding: 14px 16px;
+  font-size: 13px;
+  color: var(--dim);
+}
+
+.forget-all {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding: 14px 16px 16px;
+  border-top: 1px solid var(--line);
+}
+
+.forget-all-text {
+  flex: 1 1 320px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+  color: var(--dim);
+}
+
+.forget-all-text strong {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.devices-card .error-box {
+  margin: 0 16px 16px;
+}
+
+/* The theme: three choices side by side. */
+.theme-card {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding: 14px 16px;
+}
+
+.theme-label {
+  flex: 1 1 160px;
+  font-weight: 600;
+}
+
+.segmented {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--ground);
+}
+
+.segmented button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dim);
+  font: 600 12px var(--font-ui);
+  cursor: pointer;
+}
+
+.segmented button:hover {
+  color: var(--ink);
+}
+
+.segmented button[aria-pressed="true"] {
+  background: var(--line);
+  color: var(--ink);
+}
+
+/* Sign out: only here. */
+.signout-card {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding: 16px 18px;
+}
+
+.signout-text {
+  flex: 1 1 320px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+  color: var(--dim);
+}
+
+.signout-text h2 {
+  margin: 0;
+  font: 700 15px var(--font-ui);
+  color: var(--ink);
+}
+
+.signout-card .button-plain {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.account-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 4px;
+  font-size: 13px;
+}
+
+.account-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+}
+
+.account-links a {
+  font-weight: 600;
+  text-decoration: none;
+}
+
 .button-plain.small {
   flex: none;
-  height: 32px;
+  height: 34px;
   padding: 0 12px;
   border-radius: 8px;
   font-size: 12px;
 }
 
-.devices-everywhere {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 8px;
-  padding-top: 16px;
-  border-top: 1px solid var(--line);
-}
+@media (max-width: 560px) {
+  .account-view {
+    padding: 24px 16px 56px;
+    gap: 28px;
+  }
 
-.devices-everywhere h3 {
-  margin: 0;
-  font: 700 14px var(--font-ui);
-}
+  .meters {
+    grid-template-columns: minmax(0, 1fr);
+  }
 
-.devices-everywhere .hint {
-  margin: 0;
+  .profile-note {
+    margin-left: 0;
+  }
 }

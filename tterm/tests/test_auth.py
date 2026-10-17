@@ -124,6 +124,16 @@ async def codes_are_old(core) -> None:
         "UPDATE login_codes SET created_at = created_at - interval '2 minutes'")
 
 
+async def away_for_hours(core) -> None:
+    """As if eight hours went by with nothing done: each session ends on its
+    next look, as in a bank, and a trusted device stays trusted, so that its
+    quick code brings the person back. (Sign out forgets the browser, from
+    0.0.10.)"""
+    await core.pool.execute(
+        "UPDATE sessions SET last_seen_at = now() - $1::interval",
+        auth.IDLE + auth.TOUCH_EVERY)
+
+
 async def closed_with(ws, timeout: float = 5.0) -> int | None:
     """The close code the socket ends with, waiting for it."""
     try:
@@ -278,7 +288,7 @@ async def test_a_new_address_signs_up_after_its_code(h):
         assert again["new"] is False
         note = core.mailer.sent[-1]
         assert note.subject == "New sign-in to tTerm", note.subject
-        assert "Safari on iPhone" in note.text and "sign out everywhere" in note.text
+        assert "Safari on iPhone" in note.text and "Forget all devices" in note.text
         assert await core.pool.fetchval("SELECT count(*) FROM users") == 1
 
 
@@ -479,7 +489,7 @@ async def test_a_quick_code_signs_in_on_its_device(h):
         # Once only: a browser found open does not get its code changed.
         r = await anna.call("POST", "/api/auth/pin", {"pin": "3916"})
         assert r.status == 400, r.status
-        assert (await anna.call("POST", "/api/auth/signout")).status == 200
+        await away_for_hours(core)
         r = await anna.call("GET", "/api/auth/state")
         assert r.json() == {"signedIn": False, "device": {
             "label": "Chrome on macOS", "name": "Anna", "email": email},
@@ -494,7 +504,7 @@ async def test_a_quick_code_signs_in_on_its_device(h):
         # Signed in with the quick code, it is not set again.
         r = await anna.call("POST", "/api/auth/pin", {"pin": "3916"})
         assert r.status == 400, r.status
-        await anna.call("POST", "/api/auth/signout")
+        await away_for_hours(core)
         # Someone else's key with Anna's code is nothing.
         thief = Browser(core.page_port)
         thief.jar["tterm-device"] = auth.new_token()
@@ -533,7 +543,7 @@ async def test_a_browser_that_changes_hands_forgets_the_old_device(h):
         shared = Browser(core.page_port)
         await sign_in(core, shared, "anna@example.com")
         await shared.call("POST", "/api/auth/pin", {"pin": "2741"})
-        await shared.call("POST", "/api/auth/signout")
+        await away_for_hours(core)
         # Bob uses email on Anna's device and trusts it for himself.
         await codes_are_old(core)
         await sign_in(core, shared, "bob@example.com")
@@ -544,6 +554,67 @@ async def test_a_browser_that_changes_hands_forgets_the_old_device(h):
             "JOIN users u ON u.id = d.user_id ORDER BY d.created_at")
         assert [(r["email"], r["trusted"]) for r in rows] == [
             ("anna@example.com", False), ("bob@example.com", True)]
+
+
+async def test_sign_out_makes_the_browser_forget_you(h):
+    async with h.core(owner_email="") as core:
+        anna = Browser(core.page_port)
+        await sign_in(core, anna, "anna@example.com")
+        assert (await anna.call("POST", "/api/auth/pin", {"pin": "2741"})).status == 200
+        phone = Browser(core.page_port, agent=SAFARI_IPHONE)
+        await codes_are_old(core)
+        await sign_in(core, phone, "anna@example.com")
+        assert (await phone.call("POST", "/api/auth/pin", {"pin": "5824"})).status == 200
+        async with anna.socket() as ws:
+            await answers(ws)
+            r = await anna.call("POST", "/api/auth/signout")
+            assert r.status == 200 and r.json() == {"signedOut": True}, r.text
+            assert await closed_with(ws, 3) == ws_module.SIGNED_OUT_CLOSE
+        assert "tterm-session" not in anna.jar and "tterm-device" not in anna.jar
+        # Next time this browser is a stranger: a code from email, which is
+        # also how one switches to another account.
+        r = await anna.call("GET", "/api/auth/state")
+        assert r.json()["signedIn"] is False and r.json()["device"] is None, r.text
+        rows = await core.pool.fetch(
+            "SELECT label, forgotten_at IS NULL AS trusted FROM devices "
+            "ORDER BY created_at")
+        assert [(r["label"], r["trusted"]) for r in rows] == [
+            ("Chrome on macOS", False), ("Safari on iPhone", True)], rows
+        # The other device is not touched.
+        assert (await phone.call("GET", "/api/state")).status == 200
+        row = await core.pool.fetchrow(
+            "SELECT kind, details->>'device_forgotten' AS forgot FROM journal "
+            "ORDER BY id DESC LIMIT 1")
+        assert (row["kind"], row["forgot"]) == ("user.signed_out", "true"), row
+        # Again, or with no cookies at all: no error, and nothing else ends.
+        assert (await anna.call("POST", "/api/auth/signout")).status == 200
+        assert (await Browser(core.page_port).call(
+            "POST", "/api/auth/signout")).status == 200
+        assert (await phone.call("GET", "/api/state")).status == 200
+        # A session that ends by itself keeps its device (the quick code).
+        await away_for_hours(core)
+        r = await phone.call("GET", "/api/auth/state")
+        assert r.json()["device"]["label"] == "Safari on iPhone", r.text
+        # A shared browser: Anna's device in it, Bob signed in by email
+        # without a quick code. His Sign out forgets the browser, and
+        # Anna's own journal says so.
+        shared = Browser(core.page_port)
+        await codes_are_old(core)
+        await sign_in(core, shared, "anna@example.com")
+        assert (await shared.call("POST", "/api/auth/pin", {"pin": "3916"})).status == 200
+        await away_for_hours(core)
+        await codes_are_old(core)
+        await sign_in(core, shared, "bob@example.com")
+        assert (await shared.call("POST", "/api/auth/signout")).status == 200
+        rows = await core.pool.fetch(
+            "SELECT u.email, j.kind, j.details->>'why' AS why FROM journal j "
+            "JOIN users u ON u.id = j.user_id "
+            "WHERE j.kind IN ('user.signed_out', 'user.device_forgotten') "
+            "ORDER BY j.id DESC LIMIT 2")
+        assert sorted((r["email"], r["kind"], r["why"]) for r in rows) == [
+            ("anna@example.com", "user.device_forgotten",
+             "signed out in that browser"),
+            ("bob@example.com", "user.signed_out", None)], rows
 
 
 # --------------------------------------------------------------- sessions
@@ -907,6 +978,67 @@ async def test_the_plan_limits_machines_and_terminals(h):
                               "projectId": str(project),
                               "kind": "computer"}).encode())
         assert r.status == 201, r.text
+
+
+# ------------------------------------------------------------ account page
+
+async def test_the_account_page_has_the_name_plan_and_devices(h):
+    async with h.core() as core:
+        # The laptop's owner: no device trusted, nothing used yet.
+        r = await request(core.page_port, "GET", "/api/account")
+        assert r.status == 200 and r.headers["cache-control"] == "no-store"
+        assert r.json() == {
+            "plan": {"id": "free", "name": "Free",
+                     "limits": {"machines": 50, "terminals": 24}},
+            "usage": {"machines": 0, "terminals": 0},
+            "devices": [], "legal": LEGAL}, r.text
+        silent = free_socket()
+        try:
+            port = silent.getsockname()[1]
+            machine = await _server(core, port=port)
+            await _server(core, port=port, name="db")
+            opened = await core.terminals.open(core.owner, machine, 80, 24)
+            usage = (await request(core.page_port, "GET",
+                                   "/api/account")).json()["usage"]
+            assert usage == {"machines": 2, "terminals": 1}, usage
+            await opened.close()
+        finally:
+            silent.close()
+        # A limit the plan does not set is none.
+        await core.pool.execute("UPDATE plans SET limits = '{\"machines\": 3}'")
+        plan = (await request(core.page_port, "GET", "/api/account")).json()["plan"]
+        assert plan["limits"] == {"machines": 3, "terminals": None}, plan
+        # The name, changed there: its spaces tidied, at most 100 characters.
+        r = await request(core.page_port, "PATCH", "/api/me", headers=CHANGE,
+                          body=json.dumps({"name": "  Denis   G. "}).encode())
+        assert r.status == 200 and r.json() == {
+            "name": "Denis G.", "firstName": "Denis", "initials": "DG"}, r.text
+        me = (await request(core.page_port, "GET", "/api/state")).json()["me"]
+        assert (me["name"], me["firstName"], me["initials"]) == (
+            "Denis G.", "Denis", "DG"), me
+        for bad in ("", "   ", "x" * 101, "___", "a\u0007b"):
+            r = await request(core.page_port, "PATCH", "/api/me", headers=CHANGE,
+                              body=json.dumps({"name": bad}).encode())
+            assert r.status == 422 and "name" in r.json()["error"], (bad, r.text)
+        # A wrong theme with a good name: neither changes.
+        r = await request(core.page_port, "PATCH", "/api/me", headers=CHANGE,
+                          body=json.dumps({"name": "Den", "theme": "blue"}).encode())
+        assert r.status == 422, r.text
+        assert await core.pool.fetchval(
+            "SELECT name FROM users WHERE is_local_owner") == "Denis G."
+        # Each changes only their own.
+        anna = Browser(core.page_port)
+        await sign_in(core, anna, "anna@example.com")
+        r = await anna.call("PATCH", "/api/me", {"name": "Anna K"})
+        assert r.status == 200 and r.json()["initials"] == "AK", r.text
+        assert sorted(r["name"] for r in await core.pool.fetch(
+            "SELECT name FROM users")) == ["Anna K", "Denis G."]
+        assert await core.pool.fetchval(
+            "SELECT count(*) FROM journal WHERE kind = 'user.renamed'") == 2
+        # Without a session, nothing.
+        r = await request(core.page_port, "GET", "/api/account",
+                          headers={"cookie": ""})
+        assert r.status == 401 and r.json()["signedOut"], r.status
 
 
 # ------------------------------------------------------------ usage counts

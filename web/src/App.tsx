@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Account } from "./Account";
 import { AddMachine } from "./AddMachine";
 import {
   endTerminal, loadState, onSignedOut, openTerminal, removeMachine, saveTheme,
@@ -6,11 +7,9 @@ import {
   type TerminalInfo, type Theme,
 } from "./api";
 import { Confirm, Removed } from "./Confirm";
-import { Devices } from "./Devices";
 import { Finder, type FinderGroup, type FinderItem } from "./Finder";
 import {
-  ChevronRight, Close, Computer, Devices as DevicesIcon, Moon, Pin, Plus,
-  Server, SignOut as SignOutIcon, Sun,
+  ChevronRight, Close, Computer, Moon, Person, Pin, Plus, Server, Sun,
 } from "./icons";
 import { Machines } from "./Machines";
 import { Sidebar } from "./Sidebar";
@@ -35,8 +34,10 @@ const TOAST_MS = 3200;
 /** How often the page asks whether computers came online or went. */
 const COMPUTERS_MS = 10_000;
 
-/** /t/<id> is a terminal; anything else is the machines page. */
+/** /t/<id> is a terminal, /account the account page (0.0.10); anything else
+ * is the machines page. */
 const TERMINAL_PATH = /^\/t\/([0-9a-f-]{36})\/?$/;
+const ACCOUNT_PATH = /^\/account\/?$/;
 
 /** The sign-in screen's note when a session ends with nothing done here:
  * eight hours away, or signed out from another device. */
@@ -72,6 +73,11 @@ function dotOf(status: TabStatus | undefined, known: TerminalInfo | undefined,
   return "open";
 }
 
+/** The account page's step in the history: where it was opened from. */
+interface AccountMark {
+  accountFrom: string;
+}
+
 /** What waits for a yes before it is done. */
 type Asking =
   | { kind: "remove"; machine: Machine }
@@ -102,7 +108,6 @@ export function App() {
   const [online, setOnline] = useState(true);
   const [asking, setAsking] = useState<Asking | null>(null);
   const [removed, setRemoved] = useState<{ name: string; cleanup: string } | null>(null);
-  const [devices, setDevices] = useState(false);
   /** Not signed in: the sign-in screen, with a note on why, if there is one. */
   const [signedOut, setSignedOut] = useState<{ note: string | null } | null>(null);
   const openTimer = useRef<number | undefined>(undefined);
@@ -112,6 +117,9 @@ export function App() {
   /** Who was signed in on this page last, and with which address. */
   const lastUser = useRef<string | null>(null);
   const lastEmail = useRef<string | null>(null);
+  /** Each opening of the account page shows it afresh: devices that came
+   * or went meanwhile, what the plan counts now. */
+  const [accountVisit, setAccountVisit] = useState(0);
   const stateNow = useRef<State | null>(null);
   stateNow.current = state;
 
@@ -161,7 +169,6 @@ export function App() {
     setAdding(null);
     setAsking(null);
     setRemoved(null);
-    setDevices(false);
     setPalette(false);
     setPicking(false);
   }, []);
@@ -201,10 +208,11 @@ export function App() {
   // Addresses: back and forward move between the machines page and
   // terminals the way they would between pages. In place, the address
   // takes the current one's step in the history instead of adding one.
-  const navigate = useCallback((to: string, inPlace = false) => {
+  const navigate = useCallback((to: string, inPlace = false,
+    mark: AccountMark | null = null) => {
     if (to !== location.pathname) {
-      if (inPlace) history.replaceState(null, "", to);
-      else history.pushState(null, "", to);
+      if (inPlace) history.replaceState(mark, "", to);
+      else history.pushState(mark, "", to);
     }
     setPath(to);
   }, []);
@@ -315,19 +323,30 @@ export function App() {
     refresh();
   }, [refresh]);
 
-  const signOutHere = useCallback(() => {
-    signOut()
-      .then(() => endSession("You signed out."))
-      .catch(() => notYet("Could not sign out: tTerm Web did not answer. " +
-        "Try again."));
-  }, [endSession, notYet]);
+  /** Sign out, on the account page only: this browser forgets the person. */
+  const signOutHere = useCallback(() => signOut()
+    .then(() => endSession("You signed out."))
+    .catch((error) => {
+      notYet("Could not sign out: tTerm Web did not answer. Try again.");
+      throw error;
+    }), [endSession, notYet]);
 
-  const toggleTheme = useCallback(() => {
-    const next: Theme = shown(theme) === "light" ? "dark" : "light";
+  const chooseTheme = useCallback((next: Theme) => {
     setTheme(next);
     saveTheme(next).catch(() =>
       notYet("Could not save the theme: tTerm Web did not answer."));
-  }, [theme, notYet]);
+  }, [notYet]);
+  const toggleTheme = useCallback(() => {
+    chooseTheme(shown(theme) === "light" ? "dark" : "light");
+  }, [theme, chooseTheme]);
+
+  /** The name changed on the account page: the sidebar and the greetings
+   * follow at once. */
+  const renamed = useCallback((named: {
+    name: string; firstName: string; initials: string;
+  }) => {
+    setState((was) => (was ? { ...was, me: { ...was.me, ...named } } : was));
+  }, []);
 
   // The sidebar.
   const cancelTimers = () => {
@@ -402,7 +421,9 @@ export function App() {
     return { id, label, dot, title };
   });
   const current = tabViews.find((t) => t.id === terminalId);
-  const title = current ? `${current.label} · tTerm` : "tTerm";
+  const accountOpen = !terminalId && ACCOUNT_PATH.test(path);
+  const title = current ? `${current.label} · tTerm`
+    : accountOpen ? "Account · tTerm" : "tTerm";
   useEffect(() => {
     document.title = title;
   }, [title]);
@@ -442,6 +463,24 @@ export function App() {
     setAdding({ projectId, kind });
   };
   const goTo = (id: string) => navigate(`/t/${id}`);
+  const openAccount = () => {
+    if (!pinned) setOpen(false);
+    setPalette(false);
+    setPicking(false);
+    setAccountVisit((n) => n + 1);
+    if (!ACCOUNT_PATH.test(location.pathname)) {
+      navigate("/account", false, { accountFrom: location.pathname });
+    }
+  };
+  /** Back to where the page was opened from: the step before it in the
+   * history, which its entry remembers (Back and Forward keep that right).
+   * Opened by its address, as a bookmark, to the machines page instead,
+   * never out of tTerm. */
+  const closeAccount = () => {
+    const mark = history.state as AccountMark | null;
+    if (mark?.accountFrom) history.back();
+    else navigate("/", true);
+  };
   const runningHere = terminalId ? live.find((t) => t.id === terminalId) : undefined;
   const machineIds = new Set(state.projects.flatMap((p) => p.machines.map((m) => m.id)));
   const dotFor = (t: TerminalInfo): Dot =>
@@ -549,19 +588,13 @@ export function App() {
         run: togglePin,
       },
       {
-        key: "devices",
-        label: "Devices",
-        hint: "where your quick code works",
-        icon: <DevicesIcon size={15} />,
-        words: "devices quick code pin sessions account trusted forget",
-        run: () => setDevices(true),
-      },
-      {
-        key: "sign-out",
-        label: "Sign out",
-        icon: <SignOutIcon size={15} />,
-        words: "sign out log out logout exit account",
-        run: signOutHere,
+        key: "account",
+        label: "Account",
+        hint: "name, plan, devices, sign out",
+        icon: <Person size={15} />,
+        words: "account profile name plan devices quick code forget theme " +
+          "sign out log out logout settings",
+        run: openAccount,
       },
     ];
     return [
@@ -599,7 +632,16 @@ export function App() {
             onOpenNew={startTerminal} onChanged={refresh} notify={notYet}
             machineThere={(machineId) => machineIds.has(machineId)} />
         ))}
-        {!terminalId && (
+        {accountOpen && (
+          <div className="page-scroll">
+            <Account key={accountVisit} me={state.me} theme={theme}
+              onTheme={chooseTheme}
+              onRenamed={renamed} onSignOut={signOutHere}
+              onSignedOut={(note) => endSession(note)} onClose={closeAccount}
+              notify={notYet} />
+          </div>
+        )}
+        {!terminalId && !accountOpen && (
           <div className="page-scroll">
             {anyMachine ? (
               <Machines projects={state.projects} terminals={state.terminals}
@@ -643,11 +685,8 @@ export function App() {
           }}
           onRemoveMachine={askRemove}
           onEndTerminal={askEnd}
-          onDevices={() => {
-            if (!pinned) setOpen(false);
-            setDevices(true);
-          }}
-          onSignOut={signOutHere}
+          onAccount={openAccount}
+          accountOpen={accountOpen}
           onHome={() => {
             if (!pinned) setOpen(false);
             navigate("/");
@@ -713,11 +752,6 @@ export function App() {
       {removed && (
         <Removed name={removed.name} cleanup={removed.cleanup}
           onClose={() => setRemoved(null)} notify={notYet} />
-      )}
-
-      {devices && (
-        <Devices onClose={() => setDevices(false)} notify={notYet}
-          onSignedOut={(note) => endSession(note)} />
       )}
 
       {toast && <div className="toast" role="status">{toast}</div>}

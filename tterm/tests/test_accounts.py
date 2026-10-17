@@ -64,7 +64,16 @@ async def test_later_starts_find_the_same_owner(h):
         first = await accounts.ensure_local_owner(pool, "Denis", ME)
         again = await accounts.ensure_local_owner(pool, "Denis Gerasimenko", ME)
         assert again.id == first.id
-        assert again.name == "Denis Gerasimenko", "the name follows the settings"
+        # From 0.0.10 the name is the person's, changed on the account page:
+        # a start leaves it as it is.
+        assert again.name == "Denis", "the settings name the owner once"
+        await accounts.set_name(pool, first.id, "Denis G.")
+        await accounts.set_name(pool, first.id, "Denis G.")
+        again = await accounts.ensure_local_owner(pool, "Denis Gerasimenko", ME)
+        assert again.name == "Denis G." and again.initials == "DG", again
+        assert (await accounts.local_owner(pool)).name == "Denis G."
+        assert await pool.fetchval(
+            "SELECT count(*) FROM journal WHERE kind = 'user.renamed'") == 1
         assert await pool.fetchval("SELECT count(*) FROM users") == 1
         assert await pool.fetchval("SELECT count(*) FROM projects") == 1
         # A new address in the settings replaces the old one.

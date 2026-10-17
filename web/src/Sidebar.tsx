@@ -7,13 +7,13 @@
 // the tab again if it was closed. Pointed at, a machine offers Remove and a
 // terminal End (from 0.0.8); both ask first.
 //
-// The account at the bottom opens its menu (from 0.0.9): Devices, Sign out.
+// The account at the bottom opens the account page (from 0.0.10; in 0.0.9 a
+// menu with Devices and Sign out, which are on that page now).
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import type { Machine, Me, Project, Role, TerminalInfo } from "./api";
 import {
-  ChevronDown, Close, Computer, Devices, Dots, Logo, Moon, Pin, Plus, Server,
-  SignOut, Sun, Trash,
+  ChevronDown, Close, Computer, Dots, Logo, Moon, Pin, Plus, Server, Sun, Trash,
 } from "./icons";
 import type { Dot } from "./TabBar";
 import type { Shown } from "./theme";
@@ -47,8 +47,9 @@ interface Props {
   onHome: () => void;
   dotFor: (terminal: TerminalInfo) => Dot;
   notYet: (what: string) => void;
-  onDevices: () => void;
-  onSignOut: () => void;
+  /** The account page, and whether it is the one shown. */
+  onAccount: () => void;
+  accountOpen: boolean;
 }
 
 export function Sidebar(props: Props) {
@@ -209,8 +210,8 @@ export function Sidebar(props: Props) {
       </div>
 
       <div className="sidebar-foot">
-        <AccountMenu me={me} onDevices={props.onDevices}
-          onSignOut={props.onSignOut} />
+        <AccountButton me={me} onAccount={props.onAccount}
+          current={props.accountOpen} />
         <button type="button" className="icon-button"
           aria-label={themeLabel} title={themeLabel}
           onClick={props.onToggleTheme}>
@@ -221,70 +222,21 @@ export function Sidebar(props: Props) {
   );
 }
 
-/** The account at the bottom of the sidebar, and its menu. */
-function AccountMenu(props: {
-  me: Me;
-  onDevices: () => void;
-  onSignOut: () => void;
-}) {
+/** The account at the bottom of the sidebar: the name and the plan. It opens
+ * the account page, and lights up under the mouse like anything else here
+ * that does something, so it needs no word saying so. */
+function AccountButton(props: { me: Me; onAccount: () => void; current: boolean }) {
   const { me } = props;
-  const [open, setOpen] = useState(false);
-  const box = useRef<HTMLDivElement>(null);
   const plan = me.plan === "free" ? "Free plan" : me.plan;
-
-  useEffect(() => {
-    if (!open) return;
-    const away = (event: MouseEvent) => {
-      if (!box.current?.contains(event.target as Node)) setOpen(false);
-    };
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.stopPropagation();
-        setOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", away);
-    window.addEventListener("keydown", onKey, true);
-    box.current?.querySelector<HTMLButtonElement>("[role=menuitem]")?.focus();
-    return () => {
-      document.removeEventListener("mousedown", away);
-      window.removeEventListener("keydown", onKey, true);
-    };
-  }, [open]);
-
-  const pick = (then: () => void) => () => {
-    setOpen(false);
-    then();
-  };
-
   return (
-    <div className="account-box" ref={box}>
-      {open && (
-        <div className="account-menu" role="menu" aria-label="Account">
-          <div className="account-menu-head">
-            <strong>{me.name}</strong>
-            {me.email && <span>{me.email}</span>}
-            <span>{plan}</span>
-          </div>
-          <button type="button" role="menuitem" className="menu-item"
-            onClick={pick(props.onDevices)}>
-            <Devices size={15} />
-            Devices
-          </button>
-          <button type="button" role="menuitem" className="menu-item"
-            onClick={pick(props.onSignOut)}>
-            <SignOut size={15} />
-            Sign out
-          </button>
-        </div>
-      )}
-      <button type="button" className="account" aria-haspopup="menu"
-        aria-expanded={open} title={me.email ?? undefined}
-        onClick={() => setOpen((was) => !was)}>
+    <div className="account-box">
+      <button type="button" className="account" onClick={props.onAccount}
+        aria-current={props.current ? "page" : undefined}
+        title="Your account and settings">
         <span className="avatar" aria-hidden="true">{me.initials}</span>
         <span className="account-text">
           <strong>{me.firstName}</strong>
-          <span>Account · {plan}</span>
+          <span>{plan}</span>
         </span>
       </button>
     </div>

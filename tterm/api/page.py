@@ -44,7 +44,9 @@ It comes ready in the release archive; unpack the archive again.
 
 
 class MePatch(BaseModel):
-    theme: str
+    #: Either or both. The name from 0.0.10, on the account page.
+    theme: str | None = None
+    name: str | None = None
 
 
 class EmailBody(BaseModel):
@@ -336,18 +338,26 @@ def create_page_app(pool: asyncpg.Pool, dist: Path, page_url: str,
 
     @app.post("/api/auth/signout")
     async def sign_out(request: Request) -> Response:
-        """Ends this browser's session; a trusted device stays trusted."""
-        ended = await auth.sign_out(pool, cookie(request, auth.SESSION_COOKIE))
-        if ended is not None:
-            await cut(lambda s: s.id == ended)
+        """Sign out on the account page: this browser forgets the person.
+        The session ends, and a trusted device is forgotten too, so that
+        next time it is a code from email; that is also how one switches
+        to another account (from 0.0.10; until then the device stayed
+        trusted, which is now what eight hours away does)."""
+        ended = await auth.forget_browser(
+            pool, cookie(request, auth.SESSION_COOKIE),
+            cookie(request, auth.DEVICE_COOKIE))
+        if ended:
+            await cut(lambda s: s.id in ended)
         response = _json({"signedOut": True})
         clear_cookie(response, auth.SESSION_COOKIE)
+        clear_cookie(response, auth.DEVICE_COOKIE)
         return response
 
     @app.post("/api/auth/signout-everywhere")
     async def sign_out_everywhere(
             session: auth.Session = Depends(signed_in)) -> Response:
-        """Every session of the person ends and every device is forgotten."""
+        """Every session of the person ends and every device is forgotten:
+        "Forget all devices" on the account page."""
         await auth.sign_out_everywhere(pool, session.person.id)
         await cut(lambda s: s.person.id == session.person.id)
         response = _json({"signedOut": True})
@@ -409,11 +419,42 @@ def create_page_app(pool: asyncpg.Pool, dist: Path, page_url: str,
     @app.patch("/api/me")
     async def patch_me(change: MePatch,
                        session: auth.Session = Depends(signed_in)) -> Response:
-        try:
-            await accounts.set_theme(pool, session.person.id, change.theme)
-        except ValueError as exc:
-            return _json({"error": str(exc)}, 422)
-        return Response(status_code=204, headers=NO_STORE)
+        """The person's own settings: the theme, and from 0.0.10 the name.
+        A new name comes back as the page shows it; the theme alone, with
+        nothing."""
+        me = session.person
+        name = None
+        if change.name is not None:
+            name = auth.clean_name(change.name)
+            if name is None:
+                return _json({"error": "Enter your name: up to "
+                              f"{auth.NAME_MAX} characters."}, 422)
+        if change.theme is not None:
+            try:
+                await accounts.set_theme(pool, me.id, change.theme)
+            except ValueError as exc:
+                return _json({"error": str(exc)}, 422)
+        if name is None:
+            return Response(status_code=204, headers=NO_STORE)
+        await accounts.set_name(pool, me.id, name)
+        return _json({"name": name, "firstName": accounts.first_name(name),
+                      "initials": accounts.initials(name)})
+
+    @app.get("/api/account")
+    async def account(session: auth.Session = Depends(signed_in)) -> Response:
+        """The account page (0.0.10): the plan with what counts against its
+        limits, the trusted devices, and where the documents and support
+        are. The name, the address and the theme come with /api/state."""
+        me = session.person
+        plan = await accounts.plan_of(pool, me.id)
+        return _json({
+            "plan": {"id": plan["id"], "name": plan["name"],
+                     "limits": plan["limits"]},
+            "usage": {"machines": plan["machines"],
+                      "terminals": len(terminals.live(me.id)) if terminals else 0},
+            "devices": await auth.devices(pool, me.id, session.device_id),
+            "legal": legal,
+        })
 
     @app.post("/api/installs")
     async def new_install(request: InstallRequest,

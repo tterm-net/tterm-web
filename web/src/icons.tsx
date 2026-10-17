@@ -112,6 +112,30 @@ export const Computer = (p: Props) => (
   </Stroke>
 );
 
+/** A person: the account. */
+export const Person = (p: Props) => (
+  <Stroke {...p}>
+    <circle cx="12" cy="8" r="4" />
+    <path d="M4 21a8 8 0 0 1 16 0" />
+  </Stroke>
+);
+
+/** A phone or a tablet, among the devices of an account. */
+export const Phone = (p: Props) => (
+  <Stroke {...p}>
+    <rect x="7" y="2" width="10" height="20" rx="2" />
+    <path d="M11 18h2" />
+  </Stroke>
+);
+
+/** A screen on a stand: the theme of the system. */
+export const Monitor = (p: Props) => (
+  <Stroke {...p}>
+    <rect x="3" y="4" width="18" height="12" rx="2" />
+    <path d="M8 20h8M12 16v4" />
+  </Stroke>
+);
+
 export const Pin = (p: Props) => (
   <Stroke {...p}>
     <path d="M12 17v5" />

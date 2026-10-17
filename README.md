@@ -4,7 +4,11 @@ tTerm in the browser: a real terminal with command blocks, for people who work
 with servers and for their teams. Projects, roles, a journal of who ran what,
 and watching a colleague's terminal, always with them knowing.
 
-**Status:** early development. Version 0.0.9 lets everyone in: you sign up
+**Status:** early development. Version 0.0.10 adds the account page, opened
+from the account at the bottom of the sidebar: your name, which you can
+change, the plan and what counts against it, the trusted devices with Forget
+and Forget all devices, the theme, and Sign out, which makes the browser
+forget you. Version 0.0.9 let everyone in: you sign up
 with a code from email, your name and a yes to the Terms of Service, then sign
 in with a code from email, or on a device you trust with a four-digit quick
 code; each person sees only their own machines and terminals, as many as
@@ -235,10 +239,12 @@ there are limits per network and per day. Right after a code, the page
 offers a quick code for this device, four digits, or "Not now". A quick
 code works only together with a long random key the browser keeps, so it is
 no use anywhere else, and five wrong ones forget the device. A session ends
-after eight hours without anything done, on Sign out, or with its device;
-the terminals keep running, and the page asks to sign in again at once.
-Devices, in the menu of the account, lists the trusted browsers, forgets
-one, or signs out everywhere. Each sign-in from a browser tTerm Web does not
+after eight hours without anything done, and the quick code brings you back,
+or with its device; the terminals keep running, and the page asks to sign in
+again at once. Sign out, on the account page, makes the browser forget you
+as well: next time it is a code from email, which is also how you switch to
+another account. The account page lists the trusted browsers, forgets one,
+or forgets them all. Each sign-in from a browser tTerm Web does not
 know is told by email. Only hashes are kept: of the codes and quick codes
 with a secret of the server's that is not in the database (`auth.key`), and
 of the session and device keys, long and random, plain ones. The cookies are `HttpOnly` and
