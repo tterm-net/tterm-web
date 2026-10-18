@@ -123,8 +123,9 @@ export function Removed(props: {
         </div>
         <div className="confirm-body">
           <p>
-            tTerm Web no longer lists it or signs in to it. The server still
-            trusts tTerm Web's certificates, until you take that back there:
+            tTerm Web no longer lists it or signs in to it. The server did not
+            answer, so tTerm Web's access on it stays until you take it back
+            there:
           </p>
           <div className="command-box">
             <code>{props.cleanup}</code>

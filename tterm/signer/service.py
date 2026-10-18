@@ -3,8 +3,9 @@
 Talks over a Unix socket only, one JSON object per line each way:
 
     {"op": "keys"}
-        → {"ok": true, "cas": [{"id": …, "public_key": …, "active": true}]}
-    {"op": "sign", "public_key": …, "principal": "tterm", "key_id": …,
+        → {"ok": true, "cas": [{"id": …, "public_key": …, "active": true,
+                                "retired": false}]}
+    {"op": "sign", "public_key": …, "principal": "m-<uuid>", "key_id": …,
      "ttl": 120, "ca": optional}
         → {"ok": true, "certificate": …, "serial": 7, "ca": …,
            "valid_before": unix time}
@@ -21,6 +22,7 @@ import grp
 import json
 import logging
 import os
+import re
 import secrets
 import socket
 import time
@@ -31,14 +33,22 @@ import asyncssh
 
 log = logging.getLogger("tterm.signer")
 
-#: How long a certificate lives by default, and at most. It is needed only at
-#: the moment of connecting: an open connection outlives it.
+#: How long a certificate lives by default, and at most: what the core asks
+#: for. It is needed only at the moment of connecting: an open connection
+#: outlives it.
 DEFAULT_TTL = 120
-MAX_TTL = 300
+MAX_TTL = 120
 #: Slack for clocks that disagree a little.
 CLOCK_SKEW = 60
-#: The Unix user our installer creates on servers. Nothing else is signed.
-PRINCIPALS = frozenset({"tterm"})
+#: Whom a certificate is for: one server in tTerm Web, by the principal of
+#: its own that its line in authorized_keys names (from 0.0.12, the security
+#: audit of 18.10), so that a certificate for one server is useless on any
+#: other. Nothing else is signed, except for now the user tterm: the line a
+#: server got before 0.0.12 takes only that, and the core signs in with it
+#: once, to put in the server's own line. In 0.0.13 that goes too.
+PRINCIPAL_RE = re.compile(r"^m-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
+                          r"[0-9a-f]{4}-[0-9a-f]{12}$")
+OLD_PRINCIPAL = "tterm"
 #: Signatures allowed per minute. A burst of terminals opening is fine; a
 #: loop asking for thousands is not.
 PER_MINUTE = 120
@@ -54,13 +64,21 @@ class Signer:
     def __init__(self, directory: Path) -> None:
         self.dir = directory
         self.cas: dict[str, asyncssh.SSHKey] = {}
+        #: CAs that sign no more: their ids, from the file "retired".
+        self.retired: set[str] = set()
         self.active: str | None = None
         self._recent: deque[float] = deque()
 
     # ------------------------------------------------------------- the keys
 
     def load_or_create(self) -> None:
-        """Reads the CA keys; on the very first start makes the first one."""
+        """Reads the CA keys; on the very first start makes the first one,
+        and so it does when every CA there is has been retired.
+
+        A CA is retired by its id in the file "retired", one per line, and a
+        restart: it signs nothing from then on, not even for the servers
+        that still trust it. For a key that may have leaked; those servers
+        are then connected again, with the CA that signs now."""
         self.dir.mkdir(parents=True, exist_ok=True)
         os.chmod(self.dir, 0o700)
         cas_dir = self.dir / "cas"
@@ -68,12 +86,20 @@ class Signer:
         os.chmod(cas_dir, 0o700)
         for path in sorted(cas_dir.glob("*.key")):
             self.cas[path.stem] = asyncssh.read_private_key(str(path))
-        if not self.cas:
+        retired_file = self.dir / "retired"
+        if retired_file.exists():
+            self.retired = {line.split("#")[0].strip() for line in
+                            retired_file.read_text().splitlines()} - {""}
+        if not self.usable():
             self.create_ca()
         active_file = self.dir / "active"
         wanted = (active_file.read_text().strip()
                   if active_file.exists() else "")
-        self.active = wanted if wanted in self.cas else sorted(self.cas)[-1]
+        self.active = wanted if wanted in self.usable() else self.usable()[-1]
+
+    def usable(self) -> list[str]:
+        """The CAs that may sign, oldest first."""
+        return sorted(ca_id for ca_id in self.cas if ca_id not in self.retired)
 
     def create_ca(self, ca_id: str | None = None) -> str:
         """A new CA, named by its date and a few random letters:
@@ -108,13 +134,14 @@ class Signer:
             "public_key": key.export_public_key().decode().strip(),
             "fingerprint": key.get_fingerprint(),
             "active": ca_id == self.active,
+            "retired": ca_id in self.retired,
         } for ca_id, key in sorted(self.cas.items())]
 
     # ------------------------------------------------------------- signing
 
     def sign(self, public_key: str, principal: str, key_id: str,
              ttl: int = DEFAULT_TTL, ca: str | None = None) -> dict:
-        if principal not in PRINCIPALS:
+        if not (PRINCIPAL_RE.fullmatch(principal) or principal == OLD_PRINCIPAL):
             raise Refused(f"principal {principal!r} is not one we sign for")
         if not isinstance(ttl, int) or not 1 <= ttl <= MAX_TTL:
             raise Refused(f"ttl must be 1 to {MAX_TTL} seconds")
@@ -123,6 +150,8 @@ class Signer:
         ca_id = ca or self.active
         if ca_id not in self.cas:
             raise Refused(f"no such CA: {ca_id!r}")
+        if ca_id in self.retired:
+            raise Refused(f"CA {ca_id} is retired: it signs nothing")
         try:
             user_key = asyncssh.import_public_key(public_key)
         except Exception:

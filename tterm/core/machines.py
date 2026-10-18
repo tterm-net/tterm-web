@@ -5,10 +5,11 @@ How a server joins:
 1. The person asks for a command. The core makes a one-time token that
    works for ten minutes and keeps only its hash.
 2. On the server, `curl …/s/TOKEN | sudo sh` fetches the installer. It
-   creates the user tterm, trusts our CA and posts back the server's host
-   keys, hostname and SSH port.
+   creates the user tterm, trusts our CA for the command's own principal
+   (trust.py) and posts back the server's host keys, hostname and SSH port.
 3. The core signs in over SSH to the address the post came from, with a
-   fresh certificate and with the host keys just received pinned. If that
+   fresh certificate for that principal and with the host keys just
+   received pinned: only a server where the command ran takes it. If that
    works, it reads the passport and the machine is in. If not, the person
    sees why, and the same command can be run again until it expires.
 
@@ -35,7 +36,7 @@ from pathlib import Path
 import asyncpg
 import asyncssh
 
-from . import accounts, passport, ssh
+from . import accounts, passport, ssh, trust
 from .signer_client import SignerClient
 
 log = logging.getLogger("tterm.machines")
@@ -50,7 +51,7 @@ KEY_RE = re.compile(r"^[A-Za-z0-9_-]{32,64}$")
 #: A CA's name as the signer makes them, ca-20261012-ffcd: safe to put in a
 #: command for a person to run.
 CA_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
-LOGIN = "tterm"
+LOGIN = trust.LOGIN
 TEMPLATE = Path(__file__).resolve().parent.parent / "templates" / "install.sh"
 COMPUTER_TEMPLATE = (Path(__file__).resolve().parent.parent / "templates"
                      / "install_computer.sh")
@@ -158,14 +159,24 @@ def render_computer_installer(*, token: str, connect_url: str) -> str:
             .replace("{{TOKEN}}", token))
 
 
-def server_cleanup(ca_id: str | None) -> str | None:
+def server_cleanup(principal: str | None, ca_id: str | None = None,
+                   own_line: bool = True) -> str | None:
     """The command that takes tTerm Web's access back on a server that was
-    removed: the line of its CA in tterm's authorized_keys. The user and
-    the sudo rule stay, the bot may use them; the installer's header says
-    how to remove those too."""
+    removed, when tTerm Web could not do it there itself: the server's line
+    in tterm's authorized_keys, by its principal. For a server that still
+    has the line from before 0.0.12, that line of its CA, which has no
+    principal; the lines of the same server in other projects stay. The
+    user and the sudo rule stay too, the bot may use them; the installer's
+    header says how to remove those."""
+    if own_line:
+        if not principal or not trust.PRINCIPAL_RE.fullmatch(principal):
+            return None
+        return (f"sudo sed -i '/^cert-authority,principals=\"{principal}\" /d' "
+                f"~{LOGIN}/.ssh/authorized_keys")
     if not ca_id or not CA_ID_RE.match(ca_id):
         return None
-    return f"sudo sed -i '/ tterm-web {ca_id}$/d' ~{LOGIN}/.ssh/authorized_keys"
+    return (f"sudo sed -i '/^cert-authority [^,]* tterm-web {ca_id}$/d' "
+            f"~{LOGIN}/.ssh/authorized_keys")
 
 
 def machine_name(hostname: str, default: str = "server") -> str:
@@ -186,15 +197,16 @@ def free_name(wanted: str, taken: set[str]) -> str:
     return f"{wanted[:24]}-{secrets.token_hex(4)}"
 
 
-def render_installer(*, token: str, ca_key: str, ca_id: str,
+def render_installer(*, token: str, ca_key: str, ca_id: str, principal: str,
                      connect_url: str) -> str:
     if not TOKEN_RE.match(token):
         raise ValueError("bad token")
-    key = " ".join(ca_key.split()[:2])         # type and key, no comment
+    line = trust.line(principal, ca_key, ca_id)  # checks both, too
     return (TEMPLATE.read_text(encoding="utf-8")
             .replace("{{SSH_USER}}", LOGIN)
-            .replace("{{CA_KEY}}", key)
             .replace("{{CA_ID}}", ca_id)
+            .replace("{{PRINCIPAL}}", principal)
+            .replace("{{LINE}}", line)
             .replace("{{API_URL}}", connect_url)
             .replace("{{TOKEN}}", token))
 
@@ -236,9 +248,10 @@ async def create_install(pool: asyncpg.Pool, *, project_id: uuid.UUID,
         token = new_token(kind)
         row = await conn.fetchrow(
             "INSERT INTO install_tokens (project_id, kind, token_hash, "
-            "created_by, expires_at) VALUES ($1, $2, $3, $4, "
-            "now() + make_interval(mins => $5)) RETURNING id, expires_at",
-            project_id, kind, token_hash(token), user_id, INSTALL_MINUTES)
+            "created_by, expires_at, principal) VALUES ($1, $2, $3, $4, "
+            "now() + make_interval(mins => $5), $6) RETURNING id, expires_at",
+            project_id, kind, token_hash(token), user_id, INSTALL_MINUTES,
+            trust.new_principal() if kind == "server" else None)
         await accounts.journal(conn, "install.command", project_id=project_id,
                                user_id=user_id, details={"kind": kind})
     if kind == "computer":
@@ -297,7 +310,7 @@ async def claim(pool: asyncpg.Pool, token: str) -> asyncpg.Record:
           AND (state IN ('waiting', 'failed')
                OR (state = 'connecting'
                    AND updated_at < now() - interval '2 minutes'))
-        RETURNING id, project_id, created_by, kind
+        RETURNING id, project_id, created_by, kind, principal
         """, token_hash(token))
     if row is not None:
         return row
@@ -340,6 +353,14 @@ async def check_token(pool: asyncpg.Pool, token: str,
         return ("This command has expired: it works for 10 minutes. Get a "
                 "new one in tTerm Web.")
     return None
+
+
+async def install_principal(pool: asyncpg.Pool, token: str) -> str:
+    """The principal a server's command puts in its line."""
+    return await pool.fetchval(
+        "UPDATE install_tokens SET principal = COALESCE(principal, $2) "
+        "WHERE token_hash = $1 RETURNING principal",
+        token_hash(token), trust.new_principal())
 
 
 async def fail_install(pool: asyncpg.Pool, install_id: uuid.UUID,
@@ -446,18 +467,35 @@ async def confirm_install(pool: asyncpg.Pool, token: str,
     return True
 
 
+@dataclass
+class Removal:
+    """A machine just taken out of tTerm Web."""
+    #: What the page is told: id, name, kind.
+    answer: dict
+    #: A server: how to sign in there and take its line out (take_back).
+    server: trust.Server | None = None
+    #: The command that does it on the server itself, if tTerm Web cannot.
+    cleanup: str | None = None
+    #: A server with the line from before 0.0.12, which the same server in
+    #: another project still goes by: the line stays.
+    shared: bool = False
+
+
 async def remove(pool: asyncpg.Pool, user_id: uuid.UUID,
-                 machine_id: uuid.UUID) -> dict | None:
+                 machine_id: uuid.UUID) -> Removal | None:
     """Takes a machine out of tTerm Web: it is no longer listed, and a
     computer's key stops working for good. Its terminals' blocks stay, so
     does the history. None if there is no such machine for this person;
-    only the owner and admins may remove one."""
+    only the owner and admins may remove one. A server's line on the server
+    itself is take_back's."""
     async with pool.acquire() as conn, conn.transaction():
         row = await conn.fetchrow(
             """
             SELECT m.id, m.name, m.kind, m.project_id, m.ca_id, m.host_keys,
+                   m.host, m.port, m.login, m.principal, m.own_line, p.code,
                    pm.role
             FROM machines m
+            JOIN projects p ON p.id = m.project_id
             JOIN project_members pm ON pm.project_id = m.project_id
              AND pm.user_id = $2 AND (pm.until IS NULL OR pm.until > now())
             WHERE m.id = $1 AND m.removed_at IS NULL
@@ -473,27 +511,54 @@ async def remove(pool: asyncpg.Pool, user_id: uuid.UUID,
         # refused (see key_retired).
         await conn.execute(
             "UPDATE machines SET removed_at = now() WHERE id = $1", machine_id)
-        # The same server in another project shares tTerm Web's line in its
-        # authorized_keys: then that line stays. Removals of such servers go
+        # A server with a line of its own takes only that line along. The
+        # line from before 0.0.12 is shared with the same server in another
+        # project still on it: then it stays. Removals of such servers go
         # one at a time, so that the last one gives the command.
         if row["kind"] == "server" and row["ca_id"]:
             await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))",
                                f"server-ca:{row['ca_id']}")
-        shared = row["kind"] == "server" and await conn.fetchval(
-            "SELECT EXISTS (SELECT 1 FROM machines WHERE removed_at IS NULL "
-            "AND kind = 'server' AND ca_id = $1 AND host_keys && $2::text[])",
-            row["ca_id"], row["host_keys"])
+        shared = (row["kind"] == "server" and not row["own_line"]
+                  and await conn.fetchval(
+                      "SELECT EXISTS (SELECT 1 FROM machines WHERE "
+                      "removed_at IS NULL AND kind = 'server' AND NOT own_line "
+                      "AND ca_id = $1 AND host_keys && $2::text[])",
+                      row["ca_id"], row["host_keys"]))
         await accounts.journal(conn, "machine.removed",
                                project_id=row["project_id"], user_id=user_id,
                                machine_id=machine_id,
                                details={"name": row["name"], "kind": row["kind"]})
     log.info("machine.removed: %s %s", row["kind"], row["name"])
-    out = {"id": str(machine_id), "name": row["name"], "kind": row["kind"]}
+    removal = Removal({"id": str(machine_id), "name": row["name"],
+                       "kind": row["kind"]})
     if row["kind"] == "server":
-        if shared:
-            out["shared"] = True
-        else:
-            out["cleanup"] = server_cleanup(row["ca_id"])
+        removal.server = trust.Server(
+            row["id"], f"{row['code']}/{row['name']}", row["host"], row["port"],
+            list(row["host_keys"]), row["ca_id"], row["principal"],
+            row["own_line"], row["login"] or LOGIN)
+        removal.cleanup = server_cleanup(row["principal"], row["ca_id"],
+                                         row["own_line"])
+        removal.shared = bool(shared)
+    return removal
+
+
+async def take_back(pool: asyncpg.Pool, signer: SignerClient | None,
+                    removal: Removal, who: str) -> dict:
+    """After a server is removed, tTerm Web takes its line out of the
+    server's authorized_keys itself, if the server answers within seconds
+    (from 0.0.12). If not, the answer has the command that does it there,
+    unless the line is shared. What the page is told."""
+    out = dict(removal.answer)
+    server = removal.server
+    if server is None:
+        return out
+    if (signer is not None and server.host and server.port and server.ca_id
+            and await trust.take_back(pool, signer, server, who)):
+        out["accessRemoved"] = True
+    elif removal.shared:
+        out["shared"] = True
+    else:
+        out["cleanup"] = removal.cleanup
     return out
 
 
@@ -547,13 +612,16 @@ class Enrollment:
 async def remember_cas(pool: asyncpg.Pool, cas: list[dict]) -> None:
     """Copies the signer's CA public keys into the database: machines refer
     to the CA they trust. A known id with a different key is an alarm, not
-    something to overwrite."""
+    something to overwrite. A CA the signer retired is marked so."""
     async with pool.acquire() as conn:
         for ca in cas:
             stored = await conn.fetchval(
-                "INSERT INTO cas (id, public_key) VALUES ($1, $2) "
-                "ON CONFLICT (id) DO UPDATE SET id = cas.id "
-                "RETURNING public_key", ca["id"], ca["public_key"])
+                "INSERT INTO cas (id, public_key, retired_at) VALUES ($1, $2, "
+                "CASE WHEN $3::boolean THEN now() END) "
+                "ON CONFLICT (id) DO UPDATE SET retired_at = CASE WHEN "
+                "$3::boolean THEN COALESCE(cas.retired_at, now()) END "
+                "RETURNING public_key", ca["id"], ca["public_key"],
+                bool(ca.get("retired")))
             if stored.split()[:2] != ca["public_key"].split()[:2]:
                 raise RuntimeError(
                     f"CA {ca['id']} in the database has a different key than "
@@ -579,6 +647,7 @@ async def enroll(pool: asyncpg.Pool, signer: SignerClient, e: Enrollment,
                                  "the agent, not by this installer.")
     owner = await accounts.person(pool, claimed["created_by"])
     project_id = claimed["project_id"]
+    principal = claimed["principal"] or await install_principal(pool, e.token)
     name = machine_name(e.hostname) if e.hostname else "server"
     failure = "The check was interrupted. Run the command again."
     try:
@@ -593,8 +662,9 @@ async def enroll(pool: asyncpg.Pool, signer: SignerClient, e: Enrollment,
         if problem is not None:
             raise EnrollRefused(403, problem)
         try:
-            details = await asyncio.wait_for(
-                _check_server(signer, e, ca_id, owner, name), CHECK_TIMEOUT)
+            conn, details = await asyncio.wait_for(
+                _check_server(signer, e, ca_id, owner, name, principal),
+                CHECK_TIMEOUT)
         except (EnrollRefused, asyncio.CancelledError):
             raise
         except Exception as exc:
@@ -614,37 +684,59 @@ async def enroll(pool: asyncpg.Pool, signer: SignerClient, e: Enrollment,
                 "updated_at = now() WHERE id = $1", install_id, failure)
 
     try:
-        return await _register_server(pool, e, project_id, install_id, owner,
-                                      name, ca_id, details)
-    except LimitReached as exc:
-        # Another machine came in while this one was being checked.
-        await fail_install(pool, install_id, str(exc))
-        raise EnrollRefused(403, str(exc)) from None
+        try:
+            message, replaced = await _register_server(
+                pool, e, project_id, install_id, owner, name, ca_id, details,
+                principal)
+        except LimitReached as exc:
+            # Another machine came in while this one was being checked.
+            await fail_install(pool, install_id, str(exc))
+            raise EnrollRefused(403, str(exc)) from None
+        # The machine goes by this command's line now. Still signed in, the
+        # lines are put in order (trust.adopt): the one it had before goes,
+        # only now, so that it works until the database knows the new one;
+        # the same server in other projects gets lines of its own if it
+        # still had the old one, and the old one goes.
+        try:
+            await trust.adopt(pool, conn, ca_id=ca_id, drop=[replaced]
+                              if replaced and replaced != principal else [])
+        except Exception as exc:   # noqa: BLE001 - the server is in all the same
+            log.warning("could not put the lines in order on %s: %s",
+                        name, exc)
+        return message
+    finally:
+        conn.close()
 
 
 async def _register_server(pool: asyncpg.Pool, e: Enrollment,
                            project_id: uuid.UUID, install_id: uuid.UUID,
                            owner: accounts.Person, name: str, ca_id: str,
-                           details: dict) -> str:
+                           details: dict, principal: str
+                           ) -> tuple[str, str | None]:
+    """The machine in the database: the line for the installer, and the
+    principal the machine had before if it was here already."""
     async with pool.acquire() as conn, conn.transaction():
         # One registration at a time per project, so that the same server
         # run twice at once still ends up as one machine.
         await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))",
                            str(project_id))
         machine = await conn.fetchrow(
-            "SELECT id, name FROM machines WHERE project_id = $1 AND "
-            "removed_at IS NULL AND host_keys && $2::text[]",
+            "SELECT id, name, principal FROM machines WHERE project_id = $1 "
+            "AND removed_at IS NULL AND host_keys && $2::text[]",
             project_id, e.host_keys)
+        replaced = None
         if machine is not None:
             machine_id, final = machine["id"], machine["name"]
+            replaced = machine["principal"]
+            # The line of this command from now on.
             await conn.execute(
                 """
                 UPDATE machines SET host = $2, port = $3, login = $4,
                        host_keys = $5, ca_id = $6, passport = $7::jsonb,
-                       last_seen_at = now()
+                       principal = $8, own_line = true, last_seen_at = now()
                 WHERE id = $1
                 """, machine_id, e.ip, e.ssh_port, LOGIN, e.host_keys, ca_id,
-                json.dumps(details))
+                json.dumps(details), principal)
             kind = "machine.reconnected"
         else:
             await _make_room(conn, project_id)
@@ -656,11 +748,12 @@ async def _register_server(pool: asyncpg.Pool, e: Enrollment,
                 """
                 INSERT INTO machines (project_id, kind, name, host, port, login,
                                       host_keys, ca_id, passport, created_by,
-                                      last_seen_at)
-                VALUES ($1, 'server', $2, $3, $4, $5, $6, $7, $8::jsonb, $9, now())
+                                      last_seen_at, principal, own_line)
+                VALUES ($1, 'server', $2, $3, $4, $5, $6, $7, $8::jsonb, $9,
+                        now(), $10, true)
                 RETURNING id
                 """, project_id, final, e.ip, e.ssh_port, LOGIN, e.host_keys,
-                ca_id, json.dumps(details), owner.id)
+                ca_id, json.dumps(details), owner.id, principal)
             kind = "machine.added"
         await conn.execute(
             "UPDATE install_tokens SET state = 'connected', used_at = now(), "
@@ -672,25 +765,31 @@ async def _register_server(pool: asyncpg.Pool, e: Enrollment,
                                         "port": e.ssh_port,
                                         "os": details.get("os")})
     log.info("%s: %s at %s:%s", kind, final, e.ip, e.ssh_port)
-    return f"{final} is connected. Go back to tTerm Web."
+    return f"{final} is connected. Go back to tTerm Web.", replaced
 
 
 async def _check_server(signer: SignerClient, e: Enrollment, ca_id: str,
-                        owner: accounts.Person, name: str) -> dict:
-    """Signs in once, the way terminals will, and reads the passport."""
+                        owner: accounts.Person, name: str, principal: str
+                        ) -> tuple[asyncssh.SSHClientConnection, dict]:
+    """Signs in once, the way terminals will, with a certificate for the
+    command's principal: a server where the command did not run, even at
+    the same address, refuses it. Reads the passport. The connection stays
+    open for the lines to be put in order once the machine is in."""
     conn = await ssh.connect(signer, host=e.ip, port=e.ssh_port, login=LOGIN,
                              host_keys=e.host_keys, ca=ca_id,
+                             principal=principal,
                              who=ssh.key_id(owner.name, str(owner.id), name))
     try:
         result = await conn.run(passport.SCRIPT, check=False, timeout=20)
-    finally:
+    except BaseException:
         conn.close()
+        raise
     output = result.stdout if isinstance(result.stdout, str) else ""
     details = passport.parse(output)
     details["checked_at"] = dt.datetime.now(dt.UTC).isoformat(timespec="seconds")
     if e.os and "os" not in details:
         details["os"] = e.os[:200]
-    return details
+    return conn, details
 
 
 async def machine_details(pool: asyncpg.Pool, user_id: uuid.UUID,
@@ -702,6 +801,7 @@ async def machine_details(pool: asyncpg.Pool, user_id: uuid.UUID,
         FROM machines m
         JOIN projects p ON p.id = m.project_id
         JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = $1
+         AND (pm.until IS NULL OR pm.until > now())
         WHERE m.id = $2 AND m.removed_at IS NULL
         """, user_id, machine_id)
     if row is None:

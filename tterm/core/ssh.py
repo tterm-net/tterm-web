@@ -52,11 +52,12 @@ def known_hosts(host: str, port: int, keys: list[str]) -> bytes:
 
 
 async def connect(signer: SignerClient, *, host: str, port: int, login: str,
-                  host_keys: list[str], who: str, ca: str | None = None,
-                  ) -> asyncssh.SSHClientConnection:
-    """Signs in with a new certificate; refuses a server whose key changed."""
+                  host_keys: list[str], who: str, principal: str,
+                  ca: str | None = None) -> asyncssh.SSHClientConnection:
+    """Signs in as `login` with a new certificate made out to `principal`,
+    the server's own (trust.py); refuses a server whose key changed."""
     pinned = known_hosts(host, port, host_keys)
-    key, cert = await signer.credentials(login, who, ca=ca)
+    key, cert = await signer.credentials(principal, who, ca=ca)
     return await asyncssh.connect(
         host, port=port, username=login,
         client_keys=[(key, cert)],

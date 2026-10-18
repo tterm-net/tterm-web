@@ -69,6 +69,8 @@ PIN_DIGITS = 4
 PIN_TRIES = 5
 #: How long after signing in with a code from email a quick code may be set.
 PIN_OFFER = dt.timedelta(minutes=15)
+#: A device not signed in with for this long is not trusted any more, and
+#: the sweep deletes it, as it does one forgotten (the Privacy Policy).
 DEVICE_DAYS = 90
 #: A session ends after this long without anything done.
 IDLE = dt.timedelta(hours=8)
@@ -811,12 +813,28 @@ async def sign_out_everywhere(pool: asyncpg.Pool, user_id: uuid.UUID) -> None:
 
 
 async def sweep(pool: asyncpg.Pool) -> None:
-    """Old codes and long-ended sessions go, and so does what is kept only
+    """Old codes and long-ended sessions go, and devices forgotten or not
+    signed in with for DEVICE_DAYS (0.0.12). So does what is kept only
     for a while: commands with their output (30 days unless the project
     says less) and the journal (a year)."""
     await pool.execute("DELETE FROM login_codes "
                        "WHERE created_at < now() - interval '2 days'")
     await pool.execute("DELETE FROM sessions WHERE ended_at < now() - interval "
                        "'30 days' OR last_seen_at < now() - interval '30 days'")
+    # Such a device signs no one in again, so nothing new starts on it. Its
+    # sessions keep their own 30 days without it, and one still on goes on
+    # as if signed in with a code from email (deleting the device alone
+    # would take them along, ON DELETE CASCADE, and the usage counts would
+    # miss them).
+    async with pool.acquire() as conn, conn.transaction():
+        gone = [r["id"] for r in await conn.fetch(
+            "SELECT id FROM devices WHERE forgotten_at IS NOT NULL "
+            "OR last_used_at < now() - make_interval(days => $1) FOR UPDATE",
+            DEVICE_DAYS)]
+        if gone:
+            await conn.execute("UPDATE sessions SET device_id = NULL "
+                               "WHERE device_id = ANY($1::uuid[])", gone)
+            await conn.execute("DELETE FROM devices WHERE id = ANY($1::uuid[])",
+                               gone)
     await pool.execute("DELETE FROM blocks WHERE expires_at <= now()")
     await pool.execute("DELETE FROM journal WHERE expires_at <= now()")

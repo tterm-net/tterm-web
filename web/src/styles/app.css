@@ -1810,6 +1810,33 @@ code {
   background: var(--live);
 }
 
+/* A finished block under the mouse stands out a little (0.0.12, variant B
+ * of 18.10): the ground of a surface, as wide as the running block's,
+ * drawn under the block, so nothing in the feed moves. */
+.block:not(.live) {
+  position: relative;
+  isolation: isolate;
+}
+
+.block:not(.live)::before {
+  content: "";
+  position: absolute;
+  inset: -12px -16px;
+  z-index: -1;
+  border-radius: 12px;
+  background: var(--surface);
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  pointer-events: none;
+}
+
+/* Under a mouse only: on a touch screen a tap would leave it on. */
+@media (hover: hover) {
+  .block:not(.live):hover::before {
+    opacity: 1;
+  }
+}
+
 .block.flash {
   border-radius: 10px;
   box-shadow: 0 0 0 2px var(--amber-ring);
@@ -2449,6 +2476,17 @@ code {
 @media (max-width: 720px) {
   .feed {
     padding: 18px 14px 14px;
+  }
+
+  /* The feed's sides are 14px here: the grounds of the blocks stay inside
+   * them, or the feed would scroll sideways by a few pixels. */
+  .block.live {
+    margin: 0 -14px;
+    padding: 14px 14px 16px;
+  }
+
+  .block:not(.live)::before {
+    inset: -12px -14px;
   }
 
   .input-footer {

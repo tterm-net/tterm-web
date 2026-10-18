@@ -315,6 +315,9 @@ export function App() {
     else if (result.shared) {
       notYet(`${result.name} is removed from tTerm Web. The same server is in ` +
         "another project too, so tTerm Web's access on it stays.");
+    } else if (result.accessRemoved) {
+      notYet(`${result.name} is removed from tTerm Web, and tTerm Web's ` +
+        "access on the server is taken back.");
     } else notYet(`${result.name} is removed from tTerm Web.`);
   }, [refresh, notYet]);
   const end = useCallback(async (terminal: TerminalInfo) => {
@@ -730,9 +733,9 @@ export function App() {
             </p>
           ) : (
             <p className="hint">
-              tTerm Web stops signing in to it. On the server itself, tTerm
-              Web's access stays until you take it back there: the command for
-              that comes next, unless the server is in another project too.
+              tTerm Web stops signing in to it and takes its access back on
+              the server itself. If the server does not answer, the command
+              for that comes next.
             </p>
           )}
         </Confirm>

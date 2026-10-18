@@ -70,7 +70,8 @@ class SignerClient:
     async def credentials(self, principal: str, key_id: str,
                           ca: str | None = None, ttl: int = CERT_TTL
                           ) -> tuple[asyncssh.SSHKey, asyncssh.SSHCertificate]:
-        """A fresh key pair with a certificate for it, ready for asyncssh."""
+        """A fresh key pair with a certificate for it, made out to one
+        server's principal, ready for asyncssh."""
         key = asyncssh.generate_private_key("ssh-ed25519")
         reply = await self.call({
             "op": "sign",

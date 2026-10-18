@@ -277,7 +277,8 @@ export function AddMachine(props: Props) {
                 <li>Creates the user tterm, with no password. If the tTerm
                   bot already made it, it is reused.</li>
                 <li>Lets tTerm Web sign in as tterm with certificates that live
-                  two minutes. No keys stay on the server.</li>
+                  two minutes and are made for this server alone. No keys stay
+                  on the server.</li>
                 <li>Gives tterm sudo, so you can manage the server. One command
                   takes it back.</li>
                 <li>Never touches sshd_config and opens no ports. Running it

@@ -118,7 +118,13 @@ rsyslog's `/var/log/syslog`, which would hold them five weeks.
 
 - **The CA keys,** `/var/lib/tterm-signer/cas`. Every server trusts them.
   Lost, each server has to be connected again; leaked, whoever has them can
-  sign in to those servers: remove the CA from them.
+  sign in to those servers. Then retire the CA: put its id on a line of
+  `/var/lib/tterm-signer/retired` and run
+  `sudo systemctl restart tterm-signer tterm-web`. It signs nothing from
+  then on, and if no other CA is left, the signer makes a new one. Connect
+  each server again with Add a machine, and take the old CA's lines out on
+  it: `sudo sed -i '/ tterm-web CA-ID$/d' ~tterm/.ssh/authorized_keys`, with
+  the retired CA's id for CA-ID.
 - **`auth.key`.** Lost, quick codes stop working and every device signs in
   with a code from email once. The database alone, without it, guesses no
   code.

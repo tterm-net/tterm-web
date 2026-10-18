@@ -56,16 +56,19 @@ export interface Machine {
   lastSeen?: number | null;
 }
 
-/** A machine taken out of tTerm Web. For a server, the command that takes
- * tTerm Web's access back on the server itself. */
+/** A machine taken out of tTerm Web. For a server, whether tTerm Web took
+ * its access back on the server itself, or the command that does. */
 export interface Removed {
   id: string;
   name: string;
   kind: MachineKind;
-  /** For a server: the command that takes tTerm Web's access back there. */
+  /** For a server that did not answer: the command that takes tTerm Web's
+   * access back there. */
   cleanup?: string | null;
   /** The same server is in another project too: its access stays. */
   shared?: boolean;
+  /** For a server: tTerm Web took its access back there itself (0.0.12). */
+  accessRemoved?: boolean;
 }
 
 export interface Project {

@@ -739,6 +739,51 @@ async def test_devices_are_listed_and_forgotten(h):
         assert (await phone.call("GET", "/api/state")).status == 401
 
 
+async def test_the_sweep_deletes_devices_forgotten_or_not_used(h):
+    # The Privacy Policy: a device is kept until it is forgotten, but no
+    # longer than 90 days without a sign-in; a session up to 30 days after
+    # it ends, with its device or without.
+    async with h.core(owner_email="") as core:
+        laptop = Browser(core.page_port)
+        await sign_in(core, laptop, "anna@example.com")
+        assert (await laptop.call("POST", "/api/auth/pin", {"pin": "2741"})).status == 200
+        phone = Browser(core.page_port, agent=SAFARI_IPHONE)
+        await codes_are_old(core)
+        await sign_in(core, phone, "anna@example.com")
+        assert (await phone.call("POST", "/api/auth/pin", {"pin": "5824"})).status == 200
+        # Sign out forgets the laptop; the phone's quick code was last used
+        # 91 days ago, though the session it began is still on.
+        assert (await laptop.call("POST", "/api/auth/signout")).status == 200
+        await core.pool.execute(
+            "UPDATE devices SET last_used_at = now() - make_interval(days => $1) "
+            "WHERE label = 'Safari on iPhone'", auth.DEVICE_DAYS + 1)
+        await auth.sweep(core.pool)
+        assert await core.pool.fetchval("SELECT count(*) FROM devices") == 0
+        # Their sessions stay, without them: the laptop's ended, the phone's
+        # still on, as if begun with a code from email.
+        rows = await core.pool.fetch(
+            "SELECT device_id IS NULL AS alone, ended_at IS NOT NULL AS ended "
+            "FROM sessions ORDER BY created_at")
+        assert [(r["alone"], r["ended"]) for r in rows] == [
+            (True, True), (True, False)], rows
+        assert (await phone.call("GET", "/api/state")).status == 200
+        # When it ends, the quick code does not bring anyone back: next
+        # time, a code from email.
+        await away_for_hours(core)
+        assert (await phone.call("GET", "/api/state")).status == 401
+        assert await core.pool.fetchval("SELECT count(*) FROM sessions") == 2
+        r = await phone.call("GET", "/api/auth/state")
+        assert r.json()["signedIn"] is False and r.json()["device"] is None, r.text
+        # A device in use stays.
+        await codes_are_old(core)
+        await sign_in(core, laptop, "anna@example.com")
+        assert (await laptop.call("POST", "/api/auth/pin", {"pin": "3916"})).status == 200
+        await away_for_hours(core)
+        await auth.sweep(core.pool)
+        r = await laptop.call("GET", "/api/auth/state")
+        assert r.json()["device"]["label"] == "Chrome on macOS", r.text
+
+
 async def test_cookies_on_https_are_host_only_and_secure(h):
     async with h.core(owner_email="", environ={
             "TTERM_PAGE_URL": "https://app.example.test"}) as core:
@@ -844,6 +889,20 @@ async def test_each_person_sees_only_their_own(h):
                                               "id": str(terminal)}))
                     gone = json.loads(await asyncio.wait_for(ws.recv(), 5))
                     assert gone == {"op": "gone", "ch": 1, "terminal": None}, gone
+            # A member sees the server until the membership ends, and then
+            # not even its details (the security audit of 18.10, #2).
+            await core.pool.execute(
+                "INSERT INTO project_members (project_id, user_id, role) "
+                "VALUES ($1, $2, 'member')", project, anna_id)
+            r = await request(core.page_port, "GET", f"/api/machines/{machine}",
+                              headers=as_anna)
+            assert r.status == 200, r.status
+            await core.pool.execute(
+                "UPDATE project_members SET until = now() - interval '1 minute' "
+                "WHERE user_id = $1", anna_id)
+            r = await request(core.page_port, "GET", f"/api/machines/{machine}",
+                              headers=as_anna)
+            assert r.status == 404, r.status
             # The owner still has it all.
             r = await request(core.page_port, "GET", f"/api/machines/{machine}")
             assert r.status == 200

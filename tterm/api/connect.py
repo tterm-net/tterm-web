@@ -98,6 +98,7 @@ def create_connect_app(pool: asyncpg.Pool, signer: SignerClient,
                 "a minute."), headers=SCRIPT_HEADERS)
         script = machines.render_installer(
             token=token, ca_key=ca["public_key"], ca_id=ca["id"],
+            principal=await machines.install_principal(pool, token),
             connect_url=connect_url)
         return PlainTextResponse(script, headers=SCRIPT_HEADERS)
 

@@ -46,7 +46,7 @@ from typing import Awaitable, Callable
 
 import asyncpg
 
-from . import accounts, complete, shell, ssh, transport
+from . import accounts, complete, shell, ssh, transport, trust
 from .accounts import Person
 from .signer_client import SignerClient
 from .transport import LinkError
@@ -138,6 +138,10 @@ class Machine:
     ca_id: str | None
     #: A server is reached over SSH, a computer through its agent.
     kind: str = "server"
+    #: A server's own principal, and whether its line is on the server yet
+    #: (trust.py, from 0.0.12).
+    principal: str | None = None
+    own_line: bool = False
 
     @property
     def label(self) -> str:
@@ -352,10 +356,12 @@ class Terminal:
                     return
                 self._link = link
             else:
-                self._link = transport.SshLink(await ssh.connect(
-                    self.signer, host=m.host, port=m.port, login=m.login,
-                    host_keys=m.host_keys, ca=m.ca_id,
-                    who=ssh.key_id(self.owner.name, str(self.owner.id), m.name)))
+                self._link = transport.SshLink(await trust.sign_in(
+                    self.pool, self.signer,
+                    trust.Server(m.id, m.label, m.host, m.port, m.host_keys,
+                                 m.ca_id, m.principal, m.own_line,
+                                 m.login or trust.LOGIN),
+                    ssh.key_id(self.owner.name, str(self.owner.id), m.name)))
             how = await self._deploy()
             self.shell = how.shell
             self.blocks = how.blocks
@@ -930,7 +936,7 @@ class Terminals:
         row = await self.pool.fetchrow(
             """
             SELECT m.id, m.project_id, p.code, m.name, m.host, m.port, m.login,
-                   m.host_keys, m.ca_id, m.kind
+                   m.host_keys, m.ca_id, m.kind, m.principal, m.own_line
             FROM machines m
             JOIN projects p ON p.id = m.project_id
             JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = $2
@@ -942,7 +948,8 @@ class Terminals:
             raise NotAllowed("No such machine.")
         return Machine(row["id"], row["project_id"], row["code"], row["name"],
                        row["host"], row["port"], row["login"],
-                       list(row["host_keys"]), row["ca_id"], row["kind"])
+                       list(row["host_keys"]), row["ca_id"], row["kind"],
+                       row["principal"], row["own_line"])
 
     def get(self, terminal_id: uuid.UUID, user_id: uuid.UUID) -> Terminal | None:
         """The person's terminal: someone else's is as if it were not."""

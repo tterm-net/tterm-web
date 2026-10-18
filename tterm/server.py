@@ -212,8 +212,8 @@ class Core:
         self.active_ca = next((ca for ca in cas if ca["active"]), None)
 
     async def _sweep(self) -> None:
-        """Now and every hour: old codes and long-ended sessions go, and the
-        usage counts are written down."""
+        """Now and every hour: old codes, long-ended sessions and devices no
+        longer trusted go, and the usage counts are written down."""
         while True:
             try:
                 await auth.sweep(self.pool)

@@ -5,6 +5,7 @@ import shutil
 import stat
 import tempfile
 import time
+import uuid
 from pathlib import Path
 
 import asyncssh
@@ -23,6 +24,10 @@ def _signer() -> tuple[Signer, Path]:
 
 def _public() -> str:
     return asyncssh.generate_private_key("ssh-ed25519").export_public_key().decode()
+
+
+#: A server's own principal, as the core makes them (from 0.0.12).
+LAB = f"m-{uuid.uuid4()}"
 
 
 def test_first_start_makes_one_ca_and_keeps_it():
@@ -46,10 +51,10 @@ def test_first_start_makes_one_ca_and_keeps_it():
 def test_certificate_is_short_and_narrow():
     signer, tmp = _signer()
     try:
-        reply = signer.sign(_public(), "tterm", "Denis via tTerm Web", ttl=120)
+        reply = signer.sign(_public(), LAB, "Denis via tTerm Web", ttl=120)
         cert = asyncssh.import_certificate(reply["certificate"])
         assert reply["serial"] == 1 and reply["ca"] == signer.active
-        assert cert.principals == ["tterm"]
+        assert cert.principals == [LAB], "one server's, and nothing else"
         # asyncssh keeps these fields private; read them anyway, they are
         # exactly what sshd checks.
         assert cert._key_id == "Denis via tTerm Web" and cert._serial == 1
@@ -60,12 +65,17 @@ def test_certificate_is_short_and_narrow():
             signer.cas[signer.active].get_fingerprint(), "signed by our CA"
         # Only a terminal: no forwarding of agents, ports or X11, no rc.
         assert cert.options == {"permit-pty": True}, cert.options
-        second = signer.sign(_public(), "tterm", "x", ttl=60)
+        second = signer.sign(_public(), LAB, "x", ttl=60)
         assert second["serial"] == 2, "serials go up"
         restarted = Signer(tmp / "signer")
         restarted.load_or_create()
-        assert restarted.sign(_public(), "tterm", "x")["serial"] == 3, \
+        assert restarted.sign(_public(), LAB, "x")["serial"] == 3, \
             "and survive a restart"
+        # For now also the user tterm: the line of a server connected
+        # before 0.0.12 takes only that, until the core puts in its own.
+        old = signer.sign(_public(), "tterm", "x")
+        assert asyncssh.import_certificate(old["certificate"]).principals == [
+            "tterm"]
     finally:
         shutil.rmtree(tmp)
 
@@ -75,13 +85,17 @@ def test_signer_refuses_what_it_should():
     try:
         for args, words in (
             ((_public(), "root", "x"), "principal"),
-            ((_public(), "tterm", "x", 0), "ttl"),
-            ((_public(), "tterm", "x", 301), "ttl"),
-            (("not a key", "tterm", "x"), "public key"),
-            ((_public(), "tterm", ""), "key_id"),
-            ((_public(), "tterm", "x" * 201), "key_id"),
-            ((_public(), "tterm", "bad\nline"), "key_id"),
-            ((_public(), "tterm", "x", 120, "ca-nope"), "no such CA"),
+            ((_public(), "m-lab", "x"), "principal"),
+            ((_public(), LAB + "\n", "x"), "principal"),
+            ((_public(), f"{LAB},root", "x"), "principal"),
+            ((_public(), LAB.upper(), "x"), "principal"),
+            ((_public(), LAB, "x", 0), "ttl"),
+            ((_public(), LAB, "x", 121), "ttl"),
+            (("not a key", LAB, "x"), "public key"),
+            ((_public(), LAB, ""), "key_id"),
+            ((_public(), LAB, "x" * 201), "key_id"),
+            ((_public(), LAB, "bad\nline"), "key_id"),
+            ((_public(), LAB, "x", 120, "ca-nope"), "no such CA"),
         ):
             try:
                 signer.sign(*args)
@@ -93,15 +107,45 @@ def test_signer_refuses_what_it_should():
         shutil.rmtree(tmp)
 
 
+def test_a_retired_ca_signs_nothing():
+    signer, tmp = _signer()
+    try:
+        first = signer.active
+        second = signer.create_ca("ca-20261018-beef")
+        (tmp / "signer" / "active").write_text(f"{first}\n")
+        # Retired by its id in the file and a restart: the other one signs.
+        (tmp / "signer" / "retired").write_text(f"{first}  # may have leaked\n")
+        again = Signer(tmp / "signer")
+        again.load_or_create()
+        assert again.active == second, again.active
+        try:
+            again.sign(_public(), LAB, "x", ca=first)
+        except Refused as exc:
+            assert "retired" in str(exc), exc
+        else:
+            raise AssertionError("signed with a retired CA")
+        assert again.sign(_public(), LAB, "x")["ca"] == second
+        assert {k["id"]: (k["active"], k["retired"])
+                for k in again.public_keys()} == {
+            first: (False, True), second: (True, False)}
+        # Every CA retired: a new one, as on the very first start.
+        (tmp / "signer" / "retired").write_text(f"{first}\n{second}\n")
+        last = Signer(tmp / "signer")
+        last.load_or_create()
+        assert last.active not in (first, second) and len(last.cas) == 3
+    finally:
+        shutil.rmtree(tmp)
+
+
 def test_signer_limits_signatures_per_minute():
     signer, tmp = _signer()
     old = service.PER_MINUTE
     service.PER_MINUTE = 3
     try:
         for _ in range(3):
-            signer.sign(_public(), "tterm", "x")
+            signer.sign(_public(), LAB, "x")
         try:
-            signer.sign(_public(), "tterm", "x")
+            signer.sign(_public(), LAB, "x")
         except Refused as exc:
             assert "too many" in str(exc)
         else:
@@ -114,12 +158,12 @@ def test_signer_limits_signatures_per_minute():
 def test_signer_keeps_its_own_journal():
     signer, tmp = _signer()
     try:
-        signer.sign(_public(), "tterm", "Denis via tTerm Web")
+        signer.sign(_public(), LAB, "Denis via tTerm Web")
         lines = [json.loads(line) for line in
                  (tmp / "signer" / "journal.jsonl").read_text().splitlines()]
         assert [entry["event"] for entry in lines] == ["ca.created", "signed"]
         assert lines[1]["key_id"] == "Denis via tTerm Web"
-        assert lines[1]["serial"] == 1 and lines[1]["principal"] == "tterm"
+        assert lines[1]["serial"] == 1 and lines[1]["principal"] == LAB
         journal = tmp / "signer" / "journal.jsonl"
         assert stat.S_IMODE(journal.stat().st_mode) == 0o600
     finally:
@@ -146,9 +190,9 @@ async def test_core_gets_certificates_over_the_socket(h):
         assert stat.S_IMODE(os.stat(client.path).st_mode) == 0o600
         keys = await client.keys()
         assert [k["id"] for k in keys] == [signer.active]
-        key, cert = await client.credentials("tterm", "Denis via tTerm Web")
+        key, cert = await client.credentials(LAB, "Denis via tTerm Web")
         assert cert.key.export_public_key() == key.export_public_key()
-        assert cert.principals == ["tterm"]
+        assert cert.principals == [LAB]
         try:
             await client.credentials("root", "x")
         except SignerRefused as exc:

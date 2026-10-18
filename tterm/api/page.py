@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel
 
 from .. import __version__
-from ..core import accounts, auth, letters, machines
+from ..core import accounts, auth, letters, machines, ssh
 from ..core.mail import Mailer
 from ..core.terminals import NotAllowed, NotOpen, Terminal, Terminals
 from .connect import client_ip
@@ -501,20 +501,24 @@ def create_page_app(pool: asyncpg.Pool, dist: Path, page_url: str,
                              session: auth.Session = Depends(signed_in)) -> Response:
         """Takes the machine out of tTerm Web. Its terminals end, a
         computer's agent hears it is removed and stops; the history stays.
-        For a server, the answer carries the command that takes tTerm
-        Web's access back on the server itself."""
+        From a server tTerm Web takes its line out itself, if it answers;
+        if not, the answer carries the command that does it there."""
         try:
             removed = await machines.remove(pool, session.person.id, machine_id)
         except PermissionError as exc:
             return _json({"error": str(exc)}, 403)
         if removed is None:
             return _json({"error": "no such machine"}, 404)
-        ending = f"{removed['name']} was removed from tTerm Web."
-        if agents is not None and removed["kind"] == "computer":
+        name = removed.answer["name"]
+        ending = f"{name} was removed from tTerm Web."
+        if agents is not None and removed.answer["kind"] == "computer":
             agents.revoke(machine_id, ending)
         if terminals is not None:
             await terminals.end_machine(machine_id, ending)
-        return _json(removed)
+        who = ssh.key_id(session.person.name, str(session.person.id), name)
+        return _json(await machines.take_back(
+            pool, terminals.signer if terminals is not None else None,
+            removed, who))
 
     @app.post("/api/terminals")
     async def open_terminal(request: TerminalRequest,

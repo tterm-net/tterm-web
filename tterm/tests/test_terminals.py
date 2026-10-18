@@ -25,9 +25,9 @@ from pathlib import Path
 import asyncssh
 import websockets
 
-from ..core import machines, shell, terminals
+from ..core import machines, shell, ssh, terminals, trust
 from ..core.machines import remember_cas
-from .harness import page_socket, request, shell_server
+from .harness import old_line, page_socket, request, shell_server
 
 KEY = "0123456789abcdef" * 2
 CHANGE = {"x-tterm": "1", "content-type": "application/json"}
@@ -428,8 +428,9 @@ async def test_a_terminal_runs_over_ssh_and_keeps_blocks(h):
 async def test_a_server_is_removed(h):
     """Remove machine (0.0.8), a server: its terminals end and say why, it is
     no longer listed nor signed in to, its commands stay in the history,
-    and the answer has the command that takes tTerm Web's line out of the
-    server. Only the owner and admins may remove it."""
+    and tTerm Web takes its line out of the server (0.0.12); if the server
+    does not answer, the answer has the command that does it there. Only
+    the owner and admins may remove it."""
     login, full = _login_shell()
     home = _home()
     try:
@@ -459,17 +460,25 @@ async def test_a_server_is_removed(h):
             assert await machines.remove(core.pool, stranger, machine_id) is None, \
                 "not even seen by someone outside the project"
 
+            # The first terminal gave the server a line of its own.
+            keys_file = home / ".ssh" / "authorized_keys"
+            row = await core.pool.fetchrow(
+                "SELECT principal, own_line, ca_id FROM machines WHERE id = $1",
+                machine_id)
+            assert row["own_line"] and f'principals="{row["principal"]}"' \
+                in keys_file.read_text()
+            ca_id = row["ca_id"]
             r = await request(core.page_port, "DELETE",
                               f"/api/machines/{machine_id}", headers=CHANGE)
             assert r.status == 200, r.text
-            ca_id = await core.pool.fetchval(
-                "SELECT ca_id FROM machines WHERE id = $1", machine_id)
             assert r.json() == {"id": str(machine_id), "name": "lab",
-                                "kind": "server",
-                                "cleanup": machines.server_cleanup(ca_id)}, r.json()
-            assert ca_id in r.json()["cleanup"]
-            # The same server in two projects: removed from one, it keeps
-            # tTerm Web's line for the other, and no command says otherwise.
+                                "kind": "server", "accessRemoved": True}, r.json()
+            assert "cert-authority" not in keys_file.read_text(), \
+                "the server answered: its line is out"
+            # The same server in two projects, still with the line from
+            # before 0.0.12: removed from one, it gets a line of its own for
+            # the other, and the old line goes.
+            old_line(home, await _ca_public(core))
             async with core.pool.acquire() as conn:
                 other = await conn.fetchval(
                     "INSERT INTO projects (owner_id, name, code) VALUES ($1, "
@@ -485,12 +494,24 @@ async def test_a_server_is_removed(h):
                 for where in (project, other)]
             r = await request(core.page_port, "DELETE",
                               f"/api/machines/{pair[0]}", headers=CHANGE)
-            assert r.status == 200 and "cleanup" not in r.json() and \
-                r.json()["shared"] is True, r.json()
+            assert r.status == 200 and r.json()["accessRemoved"] is True, r.json()
+            left = await core.pool.fetchrow(
+                "SELECT principal, own_line FROM machines WHERE id = $1", pair[1])
+            assert left["own_line"], "the other one has a line of its own now"
+            assert [line.split()[0] for line in keys_file.read_text().splitlines()
+                    if "cert-authority" in line] == [
+                f'cert-authority,principals="{left["principal"]}"'], \
+                keys_file.read_text()
+            # A server that does not answer: the command for the server itself.
+            dead = socket.socket()
+            dead.bind(("127.0.0.1", 0))
+            await core.pool.execute("UPDATE machines SET port = $2 WHERE id = $1",
+                                    pair[1], dead.getsockname()[1])
+            dead.close()
             r = await request(core.page_port, "DELETE",
                               f"/api/machines/{pair[1]}", headers=CHANGE)
-            assert r.status == 200 and r.json()["cleanup"], \
-                "the last one gives the command"
+            assert r.status == 200 and r.json()["cleanup"] == \
+                machines.server_cleanup(left["principal"]), r.json()
             await _until(lambda: t.state == "ended", what="its end")
             assert t.reason == "lab was removed from tTerm Web.", t.reason
             state = (await request(core.page_port, "GET", "/api/state")).json()
@@ -511,6 +532,93 @@ async def test_a_server_is_removed(h):
                     in (history or []), history
     finally:
         shutil.rmtree(home, ignore_errors=True)
+
+
+async def test_an_old_line_is_rewritten_at_the_first_sign_in(h):
+    """0.0.12: a server connected before has the line that takes any
+    certificate of the CA for the user tterm. The first terminal there puts
+    in a line of its own for each machine that is this server, in every
+    project, and takes the old line out; from then on a certificate for the
+    user tterm gets nowhere there, nor does one for another principal."""
+    login, _ = _login_shell()
+    home = _home()
+    try:
+        async with h.core() as core, \
+                shell_server(await _ca_public(core), home, login) \
+                as (port, host_key):
+            mine = await _machine(core, port, host_key)
+            other = await core.pool.fetchval(
+                "INSERT INTO projects (owner_id, name, code) VALUES ($1, "
+                "'Work', 'W') RETURNING id", core.owner.id)
+            await core.pool.execute(
+                "INSERT INTO project_members (project_id, user_id, role) "
+                "VALUES ($1, $2, 'owner')", other, core.owner.id)
+            ca_id = await core.pool.fetchval(
+                "SELECT ca_id FROM machines WHERE id = $1", mine)
+            theirs = await core.pool.fetchval(
+                "INSERT INTO machines (project_id, kind, name, host, port, login, "
+                "host_keys, ca_id, principal) VALUES ($1, 'server', 'lab', "
+                "'127.0.0.1', $2, 'tterm', $3, $4, $5) RETURNING id", other,
+                port, [host_key.export_public_key().decode().strip()], ca_id,
+                trust.new_principal())
+            keys_file = home / ".ssh" / "authorized_keys"
+            assert keys_file.read_text().startswith("cert-authority ssh-ed25519 ")
+            opened: list[terminals.Terminal] = []
+            try:
+                await _old_line_rewritten(core, mine, theirs, ca_id, port,
+                                          host_key, keys_file, opened)
+            finally:
+                for terminal in opened:
+                    await terminal.close()
+    finally:
+        shutil.rmtree(home, ignore_errors=True)
+
+
+async def _old_line_rewritten(core, mine, theirs, ca_id, port, host_key,
+                              keys_file, opened) -> None:
+    t = await core.terminals.open(core.owner, mine, 80, 24)
+    opened.append(t)
+    await _until(lambda: _prompts(t) >= 1, what="the first prompt")
+    rows = await core.pool.fetch(
+        "SELECT id, principal, own_line FROM machines ORDER BY created_at")
+    assert all(r["own_line"] and r["principal"] for r in rows), rows
+    lines = keys_file.read_text().splitlines()
+    ca_key = await _ca_public(core)
+    assert sorted(lines) == sorted(
+        trust.line(r["principal"], ca_key, ca_id) for r in rows), lines
+    assert stat_mode(keys_file) == 0o600
+    # The other project's machine is the same server: its terminal
+    # comes in with a certificate for it alone.
+    u = await core.terminals.open(core.owner, theirs, 80, 24)
+    opened.append(u)
+    await _until(lambda: _prompts(u) >= 1, what="the other project")
+    # A certificate for the user tterm gets nowhere now, nor does
+    # one for some other server.
+    for principal in ("tterm", trust.new_principal()):
+        try:
+            conn = await ssh.connect(
+                core.signer, host="127.0.0.1", port=port, login="tterm",
+                host_keys=[host_key.export_public_key().decode().strip()],
+                who="x", principal=principal, ca=ca_id)
+        except asyncssh.PermissionDenied:
+            pass
+        else:
+            conn.close()
+            raise AssertionError(f"{principal} got in")
+    # The database missed it (the line was put in, the core stopped
+    # before writing so): the machine's own certificate gets in.
+    await core.pool.execute(
+        "UPDATE machines SET own_line = false WHERE id = $1", theirs)
+    w = await core.terminals.open(core.owner, theirs, 80, 24)
+    opened.append(w)
+    await _until(lambda: _prompts(w) >= 1, what="the own line")
+    assert await core.pool.fetchval(
+        "SELECT own_line FROM machines WHERE id = $1", theirs) is True
+    assert sorted(keys_file.read_text().splitlines()) == sorted(lines)
+
+
+def stat_mode(path: Path) -> int:
+    return path.stat().st_mode & 0o777
 
 
 async def _ca_public(core) -> str:

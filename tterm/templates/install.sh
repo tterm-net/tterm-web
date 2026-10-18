@@ -5,8 +5,10 @@
 #   1. creates the user {{SSH_USER}}, with no password. If it already exists,
 #      for instance from the tTerm bot, it is reused as it is;
 #   2. adds one line to that user's authorized_keys: tTerm Web's certificate
-#      authority, {{CA_ID}}. tTerm Web signs in with certificates that live
-#      two minutes, so no keys stay on this server;
+#      authority, {{CA_ID}}, for this server's own principal,
+#      {{PRINCIPAL}}. tTerm Web signs in with certificates that live
+#      two minutes, made out to that principal: no keys stay on this server,
+#      and a certificate made for another server is of no use here;
 #   3. gives {{SSH_USER}} sudo without a password, in /etc/sudoers.d/{{SSH_USER}},
 #      so that you can manage the server from tTerm Web;
 #   4. tells tTerm Web the server is ready. tTerm Web then signs in once
@@ -15,16 +17,18 @@
 # What it does not do: it never edits /etc/ssh/sshd_config, never restarts
 # sshd and opens no ports. Running it twice is safe.
 #
-# To take tTerm Web's access back: delete the line ending in "{{CA_ID}}"
-# from ~{{SSH_USER}}/.ssh/authorized_keys. To remove everything, the bot's
-# access included if you use the bot:
+# Removing the server in tTerm Web takes that line out again, or gives the
+# command for it if the server does not answer. By hand: delete the line
+# with "{{PRINCIPAL}}" from ~{{SSH_USER}}/.ssh/authorized_keys. To remove
+# everything, the bot's access included if you use the bot:
 #   sudo userdel -r {{SSH_USER}} && sudo rm -f /etc/sudoers.d/{{SSH_USER}}
 
 set -eu
 
 SSH_USER="{{SSH_USER}}"
-CA_KEY="{{CA_KEY}}"
 CA_ID="{{CA_ID}}"
+PRINCIPAL="{{PRINCIPAL}}"
+LINE='{{LINE}}'
 API_URL="{{API_URL}}"
 TOKEN="{{TOKEN}}"
 
@@ -75,15 +79,18 @@ HOME_DIR=$(getent passwd "$SSH_USER" | cut -d: -f6)
 
 # cert-authority in authorized_keys rather than TrustedUserCAKeys in
 # sshd_config: the same trust in our certificates, but local to this user,
-# and sshd needs no restart, so nobody can be locked out.
+# and sshd needs no restart, so nobody can be locked out. principals= takes
+# only certificates made out to this server.
 mkdir -p "$HOME_DIR/.ssh"
 AUTH_KEYS="$HOME_DIR/.ssh/authorized_keys"
 touch "$AUTH_KEYS"
-if grep -qF "$CA_KEY" "$AUTH_KEYS" 2>/dev/null; then
-    say "tTerm Web's CA is already trusted"
+if grep -qF "principals=\"$PRINCIPAL\"" "$AUTH_KEYS" 2>/dev/null; then
+    say "tTerm Web's CA is already trusted for this server"
 else
-    printf 'cert-authority %s tterm-web %s\n' "$CA_KEY" "$CA_ID" >> "$AUTH_KEYS"
-    say "tTerm Web's CA $CA_ID added"
+    # A last line without its newline would run into ours.
+    [ -z "$(tail -c 1 "$AUTH_KEYS")" ] || printf '\n' >> "$AUTH_KEYS"
+    printf '%s\n' "$LINE" >> "$AUTH_KEYS"
+    say "tTerm Web's CA $CA_ID added, for this server only"
 fi
 chown -R "$SSH_USER:$(id -gn "$SSH_USER")" "$HOME_DIR/.ssh"
 chmod 700 "$HOME_DIR/.ssh"

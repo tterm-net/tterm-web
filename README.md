@@ -4,9 +4,15 @@ tTerm in the browser: a real terminal with command blocks, for people who work
 with servers and for their teams. Projects, roles, a journal of who ran what,
 and watching a colleague's terminal, always with them knowing.
 
-**Status:** early development. Version 0.0.11 dresses the two emails, the
-code for signing in and the note about a new sign-in, in tTerm's look: HTML
-with the logo and the code large, the same words as plain text beside it.
+**Status:** early development. Version 0.0.12 makes a certificate for one
+server useless on any other: each server trusts tTerm Web only for
+certificates made out to it, a server connected earlier is moved over at
+tTerm Web's next sign-in there, and removing a server takes tTerm Web's
+access back on the server itself. The block under the mouse stands out a
+little, and a device is deleted once forgotten or after 90 days without a
+sign-in. Version 0.0.11 dressed the two emails, the code for signing in and
+the note about a new sign-in, in tTerm's look: HTML with the logo and the
+code large, the same words as plain text beside it.
 Version 0.0.10 added the account page, opened
 from the account at the bottom of the sidebar: your name, which you can
 change, the plan and what counts against it, the trusted devices with Forget
@@ -114,12 +120,13 @@ deploy/          a server: the setup script, systemd, nginx, backups
 **How a server connects.** "Add a machine" makes a one-time command that
 works for ten minutes. On the server it creates the user `tterm` with no
 password, adds our certificate authority to that user's `authorized_keys`
-(never touching `sshd_config`), gives it sudo in `/etc/sudoers.d/tterm` and
-reports the server's host keys back. tTerm Web then signs in once over SSH,
-with those host keys pinned, and reads what the server is: system, shell,
-package manager, the commands it has. If anything fails, the reason shows
-in the page and in the installer's output, and the same command can be run
-again.
+for the server's own principal only (never touching `sshd_config`), gives
+it sudo in `/etc/sudoers.d/tterm` and reports the server's host keys back.
+tTerm Web then signs in once over SSH, with those host keys pinned and a
+certificate for that principal, so only a server where the command ran lets
+it in, and reads what the server is: system, shell, package manager, the
+commands it has. If anything fails, the reason shows in the page and in the
+installer's output, and the same command can be run again.
 
 **A terminal** is a real login shell in a real terminal on the server,
 bash or zsh as the server has it, reached over SSH with a certificate of its
@@ -199,9 +206,9 @@ its card or from the sidebar, after a question. Its terminals end and say
 why, and it leaves the lists; the journal keeps what happened. A computer's
 agent is told, forgets its key and stops; that key never works again, so a
 key that leaked is dead once its computer is removed. A server
-stops being signed in to, and the page gives the command that takes tTerm
-Web's certificate authority out of its `authorized_keys`, unless the same
-server is in another project too. Ending a terminal
+stops being signed in to, and tTerm Web takes its line out of the server's
+`authorized_keys` itself; if the server does not answer, the page gives the
+command that does it there. Ending a terminal
 from the sidebar or the palette ends its shell, after a question too.
 
 The machines' side is open to the internet, so `/agent` keeps strangers
@@ -223,9 +230,12 @@ loses tTerm Web, a strip says so until it is back.
 
 **The signer** holds the CA keys and nothing else, in a process of its own.
 For every connection the core makes a throwaway key pair and asks the
-signer to certify the public half for two minutes, for the user `tterm`
-only, with a key id that names the person: the server's own `auth.log` then
-shows who signed in. The signer keeps its own journal of every certificate.
+signer to certify the public half for two minutes, made out to the one
+server it connects to: each server's line in `authorized_keys` names a
+principal of its own, `m-` and a UUID, so a certificate for one server is
+of no use on another. The key id names the person: the server's own
+`auth.log` then shows who signed in. The signer keeps its own journal of
+every certificate, and a CA it is told to retire signs nothing more.
 
 The page and the machines' side are separate apps on separate ports, as they
 will be separate addresses on the server: `app.tterm.net` for people and

@@ -60,35 +60,91 @@ systemctl
 """
 
 
+class Sshd(asyncssh.SSHServer):
+    """Reads the user's ~/.ssh/authorized_keys at every sign-in, as sshd
+    does, so that what the core changes there counts at once.
+
+    asyncssh goes by the first line whose CA fits, where sshd tries every
+    line: lines with principals= go first here, so that a certificate gets
+    in or not as it would with sshd."""
+
+    def __init__(self, keys: Path) -> None:
+        self.keys = keys
+        self.conn: asyncssh.SSHServerConnection | None = None
+
+    def connection_made(self, conn: asyncssh.SSHServerConnection) -> None:
+        self.conn = conn
+
+    def begin_auth(self, username: str) -> bool:
+        try:
+            lines = [line for line in self.keys.read_text().splitlines()
+                     if line.strip()]
+        except OSError:
+            lines = []
+        lines.sort(key=lambda line: not line.startswith("cert-authority,"))
+        assert self.conn is not None
+        self.conn.set_authorized_keys(
+            asyncssh.import_authorized_keys("\n".join(lines) + "\n"))
+        return True
+
+
+def old_line(home: Path, ca_public_key: str) -> None:
+    """The line a server got from the installer before 0.0.12: any
+    certificate of the CA for the user tterm."""
+    keys = home / ".ssh" / "authorized_keys"
+    keys.parent.mkdir(parents=True, exist_ok=True)
+    with keys.open("a") as f:
+        f.write(f"cert-authority {ca_public_key}\n")
+
+
 @contextlib.asynccontextmanager
-async def ssh_server(ca_public_key: str, *, host_key=None):
-    """A small SSH server in this process that trusts our CA, the way the
-    installer sets a real one up, and answers the passport script.
+async def ssh_server(ca_public_key: str, *, host_key=None,
+                     home: Path | None = None):
+    """A small SSH server in this process, set up the way the installer sets
+    a real one up: with `home`, it trusts what that home's authorized_keys
+    says, and the installer's line is the check's to put in there; without,
+    the line of before 0.0.12. It answers the passport script, and runs
+    anything else with sh in that home.
 
     Yields (port, host_key, sign_ins): sign_ins collects the user name of
     every session that got in.
     """
     host_key = host_key or asyncssh.generate_private_key("ssh-ed25519")
-    authorized = asyncssh.import_authorized_keys(
-        f"cert-authority {ca_public_key}\n")
+    own_home = home is None
+    home = home or Path(tempfile.mkdtemp(prefix="ttsrv"))
+    (home / ".ssh").mkdir(parents=True, exist_ok=True)
+    if own_home:
+        old_line(home, ca_public_key)
     sign_ins: list[str] = []
 
     async def handle(process: asyncssh.SSHServerProcess) -> None:
         sign_ins.append(process.get_extra_info("username") or "")
         if passport.MARKER in (process.command or ""):
             process.stdout.write(PASSPORT_OUTPUT)
-        process.exit(0)
+            process.exit(0)
+            return
+        data = await process.stdin.read()
+        proc = await asyncio.create_subprocess_exec(
+            "sh", "-c", process.command or "", stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            cwd=home,
+            env={"HOME": str(home), "PATH": os.environ.get("PATH", "/usr/bin:/bin")})
+        out, err = await proc.communicate(data.encode())
+        process.stdout.write(out.decode())
+        process.stderr.write(err.decode())
+        process.exit(proc.returncode or 0)
 
     server = await asyncssh.create_server(
-        asyncssh.SSHServer, "127.0.0.1", 0, server_host_keys=[host_key],
-        authorized_client_keys=authorized, process_factory=handle,
-        encoding="utf-8")
+        lambda: Sshd(home / ".ssh" / "authorized_keys"), "127.0.0.1", 0,
+        server_host_keys=[host_key], process_factory=handle, encoding="utf-8")
     port = server.sockets[0].getsockname()[1]
     try:
         yield port, host_key, sign_ins
     finally:
         server.close()
         await server.wait_closed()
+        if own_home:
+            shutil.rmtree(home, ignore_errors=True)
 
 
 @contextlib.asynccontextmanager
@@ -102,8 +158,11 @@ async def shell_server(ca_public_key: str, home: Path, login_shell: str):
     reach it. Yields (port, host_key).
     """
     host_key = asyncssh.generate_private_key("ssh-ed25519")
-    authorized = asyncssh.import_authorized_keys(
-        f"cert-authority {ca_public_key}\n")
+    # A server as it was connected before 0.0.12, unless the check set up
+    # its authorized_keys already: the core rewrites the line at its first
+    # sign-in (trust.py).
+    if not (home / ".ssh" / "authorized_keys").exists():
+        old_line(home, ca_public_key)
     env = {"HOME": str(home), "SHELL": login_shell, "USER": "tterm",
            "LOGNAME": "tterm",
            "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")}
@@ -123,9 +182,8 @@ async def shell_server(ca_public_key: str, home: Path, login_shell: str):
                 tasks.discard(task)
 
     server = await asyncssh.create_server(
-        asyncssh.SSHServer, "127.0.0.1", 0, server_host_keys=[host_key],
-        authorized_client_keys=authorized, process_factory=handle,
-        encoding=None)
+        lambda: Sshd(home / ".ssh" / "authorized_keys"), "127.0.0.1", 0,
+        server_host_keys=[host_key], process_factory=handle, encoding=None)
     port = server.sockets[0].getsockname()[1]
     try:
         yield port, host_key
