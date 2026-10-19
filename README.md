@@ -4,7 +4,14 @@ tTerm in the browser: a real terminal with command blocks, for people who work
 with servers and for their teams. Projects, roles, a journal of who ran what,
 and watching a colleague's terminal, always with them knowing.
 
-**Status:** early development. Version 0.0.12 makes a certificate for one
+**Status:** early development. Version 0.1.0 adds notes: each project keeps
+them in folders, the way terminals live on machines, with Markdown as you
+type, checklists that say who ticked an item and when, and code with Copy. A
+note written on two devices at once keeps the changes of both, and asks only
+when the same place changed both ways. The sidebar shows each project's
+machines and notes; a click on a machine or a folder only folds it, its "+"
+opens a terminal or starts a note, and a project's name opens its page.
+Version 0.0.12 makes a certificate for one
 server useless on any other: each server trusts tTerm Web only for
 certificates made out to it, a server connected earlier is moved over at
 tTerm Web's next sign-in there, and removing a server takes tTerm Web's
@@ -35,8 +42,8 @@ since 0.0.5 a terminal is a feed of blocks, one per command, typed into
 tTerm's own input line: history from all your devices, Tab that asks the
 machine, the directory and the git branch as buttons, and a question before
 a command that would destroy something. The classic terminal is one click
-away. Accounts and a server of its own came early, in 0.0.9, ahead of the
-first stage's end with version 0.1; then come teams, then a public launch.
+away. Accounts and a server of its own came early, in 0.0.9; next come
+teams, then a public launch.
 
 Related:
 
@@ -100,6 +107,7 @@ tterm/
                  machines, SSH, the server passport, terminals and the shell
                  on the other end of them, Tab, the commands held back
   core/auth.py   signing in: codes from email, trusted devices, sessions
+  core/notes.py  notes in folders: saving, merging, ticks, who may do what
   core/mail.py   the emails, through Brevo or into the log
   core/letters.py  what the emails say, as HTML and as text
   api/page.py    the page and its API, for people, each within a session
@@ -202,7 +210,8 @@ terminal the agent no longer has (it was restarted) ends and says why; one
 stopped with Ctrl+C says goodbye, and its terminals end at once.
 
 **Removing.** The owner and admins of a project can remove a machine, from
-its card or from the sidebar, after a question. Its terminals end and say
+its card on the machines page or from its menu on the project's page, after
+a question. Its terminals end and say
 why, and it leaves the lists; the journal keeps what happened. A computer's
 agent is told, forgets its key and stops; that key never works again, so a
 key that leaked is dead once its computer is removed. A server
@@ -216,17 +225,37 @@ short: the hello is small and comes at once, only a few connections from
 one address may wait to say it, an address whose unknown tokens keep failing
 waits a while, and no message is larger than a script's answer.
 
-**The page** keeps tabs of the terminals you work with, from any project,
-in this browser. Every tab's terminal is on the page at once, the others
-hidden behind the one in front, so switching is instant and none of them is
-told of a new size. Closing a tab leaves its terminal running, in the
-sidebar under its machine, where a click brings the tab back. "+" opens a
-terminal on any machine, and Cmd+K on a Mac, Ctrl+Shift+K elsewhere, jumps
-to any terminal or machine or does what the page can; plain Ctrl stays the
-terminal's. Folded blocks, and a feed cleared with `clear` or Ctrl+L, stay
+**The page** keeps tabs of the terminals and notes you work with, and of
+projects' pages, from any project, in this browser. Every tab's terminal or
+note is on the page at once, the others hidden behind the one in front, so
+switching is instant and none of them is told of a new size. Closing a tab
+leaves its terminal running, in the sidebar under its machine, where a click
+brings the tab back; a note stays in its folder. In the sidebar a click on a
+machine or a folder folds or unfolds it, and what is folded stays so in this
+browser; the "+" beside it opens a terminal there or starts a note. "+" on
+the line of tabs opens a terminal on any machine, and Cmd+K on a Mac,
+Ctrl+Shift+K elsewhere, jumps to any terminal, note or machine or does what
+the page can; plain Ctrl stays the terminal's. Folded blocks, and a feed cleared with `clear` or Ctrl+L, stay
 so after Classic and back or a reload, in this browser. A tab's dot is its machine: green on line, a turning ring while
 a command runs, a hollow ring while the computer is away. When the page
 loses tTerm Web, a strip says so until it is back.
+
+**Notes** live in folders of a project, the way terminals live on its
+machines: everyone in the project reads and writes them, an observer only
+reads, and a note is deleted by its author, the owner and admins, a folder
+with its notes by the owner and admins. A note is a title and blocks: text,
+headings, list and checklist items, code and dividers. Markdown typed at the
+start of a block turns it into what it means, "/" offers the same from a
+list, and text pasted with several lines becomes blocks. The core keeps the
+blocks as JSON and the page shows them only as text, so nothing written in a
+note runs on the page. A note is saved a moment after typing stops, naming
+the version it was made from; one made from an older version is merged with
+what was saved since, block by block, and only the same block changed both
+ways asks whose change to keep there, everything else staying from both.
+The last 50 versions of a note are kept for that. What is typed and not
+saved yet, with no connection say, stays in the browser until it is, and
+comes back when the note is opened again. A tick in a checklist is saved at
+once, and who ticked and when come from the core, never from the page.
 
 **The signer** holds the CA keys and nothing else, in a process of its own.
 For every connection the core makes a throwaway key pair and asks the

@@ -393,8 +393,8 @@ code {
 
 .chevron {
   flex: none;
-  width: 26px;
-  height: 36px;
+  width: 24px;
+  height: 34px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -419,8 +419,8 @@ code {
   display: flex;
   align-items: center;
   gap: 10px;
-  height: 36px;
-  padding: 0 6px 0 2px;
+  height: 34px;
+  padding: 0 8px 0 2px;
   border: 0;
   border-radius: 8px;
   background: transparent;
@@ -429,7 +429,8 @@ code {
   cursor: pointer;
 }
 
-.project-name:hover {
+.project-name:hover,
+.project-name[aria-current="page"] {
   background: var(--raised);
 }
 
@@ -458,33 +459,6 @@ code {
   font-size: 11px;
   font-weight: 600;
   color: var(--faint);
-}
-
-.empty-machines {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  margin: 2px 2px 8px 26px;
-  padding: 14px;
-  border: 1px dashed var(--line);
-  border-radius: 10px;
-}
-
-.empty-machines p {
-  margin: 0;
-  font-size: 13px;
-  color: var(--dim);
-}
-
-.machine-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  height: 32px;
-  margin-left: 28px;
-  padding: 0 8px;
-  border-radius: 8px;
-  font-size: 13px;
 }
 
 .button-accent {
@@ -602,27 +576,114 @@ code {
   color: var(--faint);
 }
 
-/* ------------------------------------------------------- tree of machines */
+/* ----------------------------------------- inside a project, in the sidebar */
 
-.tree {
-  list-style: none;
-  margin: 2px 0 8px;
-  padding: 0 0 0 22px;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
+/* As on the canvas of 19.10: machines and folders are the same kind of row,
+ * with a chevron, an icon, the name, how many are inside while folded, and
+ * "+" on the right; terminals and notes under them are the same kind of
+ * leaf, in line with each other. */
+.sb-project + .sb-project {
+  margin-top: 6px;
 }
 
-.tree-machine,
-.tree-add {
-  width: 100%;
+.sb-inside {
+  padding: 0 0 6px 16px;
+}
+
+.sb-label {
   display: flex;
   align-items: center;
-  gap: 10px;
-  height: 36px;
-  padding: 0 10px;
+  gap: 6px;
+  height: 28px;
+  margin-top: 4px;
+  padding: 0 2px 0 8px;
+}
+
+.sb-label > span {
+  flex: 1 1 auto;
+  font: 700 10.5px var(--font-ui);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.sb-plus {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
   border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+}
+
+.sb-plus:hover {
+  color: var(--ink);
+  background: var(--line);
+}
+
+.sb-none {
+  padding: 2px 8px 6px;
+  font-size: 12px;
+  color: var(--faint);
+}
+
+.sb-none.deep {
+  height: 30px;
+  display: flex;
+  align-items: center;
+  padding: 0 8px 0 55px;
+}
+
+.sb-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
   border-radius: 8px;
+}
+
+.sb-row:hover {
+  background: var(--raised);
+}
+
+.sb-chevron {
+  flex: none;
+  width: 22px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+}
+
+.sb-chevron svg {
+  transition: transform 0.15s ease;
+}
+
+.sb-chevron[data-open="false"] svg {
+  transform: rotate(-90deg);
+}
+
+.sb-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 4px 0 0;
+  border: 0;
+  border-radius: 6px;
   background: transparent;
   color: var(--ink);
   font: 600 13px var(--font-ui);
@@ -630,81 +691,118 @@ code {
   cursor: pointer;
 }
 
-.tree-machine svg {
+.sb-name svg {
   flex: none;
   color: var(--dim);
 }
 
-.tree-machine span {
-  flex: 1 1 auto;
+/* A computer whose agent is not running: there, but not reachable. */
+.sb-name.offline {
+  color: var(--dim);
+}
+
+.sb-name.offline svg {
+  opacity: 0.6;
+}
+
+.sb-text {
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.tree-add {
-  height: 34px;
+.sb-text.untitled {
   color: var(--faint);
 }
 
-/* A computer whose agent is not running: there, but not reachable. */
-.tree-machine.offline {
-  color: var(--dim);
+.sb-count {
+  flex: none;
+  font: 500 11px var(--font-ui);
+  color: var(--faint);
 }
 
-.tree-machine.offline svg {
-  opacity: 0.6;
+.sb-state {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
 }
 
-.tree-machine:hover,
-.tree-add:hover {
-  background: var(--raised);
+.sb-state.on {
+  background: var(--green);
 }
 
-.tree-terminals {
-  list-style: none;
-  margin: 0 0 2px;
-  padding: 0 0 0 26px;
+.sb-state.away {
+  border: 1.5px solid var(--faint);
 }
 
-.tree-terminal {
+.sb-leaf {
   width: 100%;
   display: flex;
   align-items: center;
   gap: 9px;
   height: 30px;
-  padding: 0 10px;
+  padding: 0 8px 0 28px;
   border: 0;
-  border-radius: 7px;
+  border-radius: 8px;
   background: transparent;
-  color: var(--dim);
-  font: 600 12.5px var(--font-ui);
+  color: var(--ink);
+  font: 500 13px var(--font-ui);
   text-align: left;
   cursor: pointer;
 }
 
-.tree-terminal:hover {
-  background: var(--raised);
-  color: var(--ink);
-}
-
-.tree-terminal[aria-current="page"] {
-  color: var(--ink);
+.sb-leaf:hover,
+.sb-leaf[aria-current="page"] {
   background: var(--raised);
 }
 
-/* A machine or a terminal with its one action, shown when pointed at:
- * Remove for a machine, End for a terminal. It covers the end of the name
- * rather than moving it. */
-.tree-row {
+.sb-leaf .sb-text {
+  flex: 1 1 auto;
+}
+
+.sb-leaf .dot.busy {
+  width: 9px;
+  height: 9px;
+}
+
+.sb-leaf .dot.away {
+  width: 7px;
+  height: 7px;
+  border-width: 1.5px;
+  border-color: var(--faint);
+}
+
+.sb-leaf .dot.ended {
+  width: 7px;
+  height: 7px;
+}
+
+.sb-leaf-icon {
+  flex: none;
+  width: 18px;
+  display: flex;
+  justify-content: center;
+  color: var(--dim);
+}
+
+.sb-progress {
+  flex: none;
+  font: 500 11px var(--font-mono);
+  color: var(--faint);
+}
+
+/* A terminal with End on it, shown when pointed at. It covers the end of the
+ * row rather than moving the name. */
+.sb-leaf-row {
   position: relative;
   display: flex;
   align-items: center;
 }
 
-.tree-row > .tree-machine,
-.tree-row > .tree-terminal {
+.sb-leaf-row > .sb-leaf {
   flex: 1 1 auto;
   min-width: 0;
 }
@@ -717,27 +815,26 @@ code {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
   border: 0;
   border-radius: 6px;
-  background: var(--raised);
+  background: var(--line);
   color: var(--faint);
   cursor: pointer;
   opacity: 0;
 }
 
-.tree-row:hover .tree-action,
+.sb-leaf-row:hover .tree-action,
 .tree-action:focus-visible {
   opacity: 1;
 }
 
 .tree-action:hover {
-  background: var(--line);
   color: var(--red-ink);
 }
 
-/* No pointer to hover with: the action is always there, after the name. */
+/* No pointer to hover with: End is always there, after the name. */
 @media (hover: none) {
   .tree-action {
     position: static;
@@ -746,6 +843,46 @@ code {
     background: transparent;
     opacity: 1;
   }
+}
+
+/* Avatars: the account's 30 pixels, and smaller in lists. Oneself in amber,
+ * as on the canvas. */
+.avatar.mine {
+  background: var(--amber-tint);
+  color: var(--amber-ink);
+}
+
+.avatar.small {
+  width: 26px;
+  height: 26px;
+  font-size: 10px;
+}
+
+.avatar.tiny {
+  width: 22px;
+  height: 22px;
+  font-size: 9px;
+}
+
+.avatar.xs {
+  width: 18px;
+  height: 18px;
+  font-size: 8px;
+}
+
+/* A project's code in a small square: tabs, the note's line, the palette. */
+.code-chip {
+  flex: none;
+  min-width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 3px;
+  border-radius: 5px;
+  background: var(--line);
+  color: var(--ink);
+  font: 800 7px var(--font-ui);
 }
 
 /* ------------------------------------------------------------------ dialog */
@@ -1325,6 +1462,31 @@ code {
   white-space: nowrap;
 }
 
+/* The project's code before what the tab holds, faint: P/web-01. */
+.tab-code {
+  color: var(--faint);
+}
+
+.tab-icon {
+  flex: none;
+  color: var(--dim);
+}
+
+/* Whether what was typed in the note in front is saved. */
+.save-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+.save-line.warn {
+  color: var(--amber-ink);
+  font-weight: 600;
+}
+
 .tab-close {
   flex: none;
   width: 22px;
@@ -1382,7 +1544,8 @@ code {
 
 @media (max-width: 720px) {
   .jump-text,
-  .jump kbd {
+  .jump kbd,
+  .save-line:not(.warn) {
     display: none;
   }
 
@@ -3350,5 +3513,981 @@ code {
 
   .profile-note {
     margin-left: 0;
+  }
+}
+
+/* ------------------------------------------------------- buttons (0.1.0) */
+
+.button-plain.small {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+/* No frame: "New terminal", "New note" in a card's head. */
+.button-ghost {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 40px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--dim);
+  font: 600 13px var(--font-ui);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.button-ghost:hover {
+  background: var(--raised);
+  color: var(--ink);
+}
+
+.button-ghost.small {
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.button-row.end {
+  justify-content: flex-end;
+}
+
+/* ------------------------------------------------------------ menus, ⋯ */
+
+.menu-anchor {
+  position: relative;
+  flex: none;
+  display: flex;
+}
+
+.menu-button {
+  width: 32px;
+  height: 32px;
+}
+
+.menu-button.open {
+  background: var(--raised);
+  color: var(--ink);
+}
+
+.menu {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  right: 0;
+  width: 290px;
+  max-width: calc(100vw - 24px);
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  text-align: left;
+  line-height: 1.35;
+}
+
+.menu.left {
+  right: auto;
+  left: 0;
+}
+
+.menu-label {
+  padding: 6px 10px 4px;
+  font: 700 11px var(--font-ui);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.menu-item {
+  width: 100%;
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  font: 600 13px var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.menu-item:hover,
+.menu-item:focus-visible {
+  background: var(--raised);
+  outline: none;
+}
+
+.menu-item svg {
+  flex: none;
+  color: var(--dim);
+}
+
+.menu-item.danger,
+.menu-item.danger svg {
+  color: var(--red-ink);
+}
+
+.menu-radio {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid var(--sep);
+  border-radius: 50%;
+}
+
+.menu-item[aria-checked="true"] .menu-radio {
+  border: 5px solid var(--amber);
+}
+
+.menu-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.menu-count {
+  flex: none;
+  font: 500 11px var(--font-ui);
+  color: var(--faint);
+}
+
+.menu-line {
+  height: 1px;
+  margin: 6px 4px;
+  background: var(--raised);
+}
+
+.menu-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--faint);
+}
+
+.menu-note svg {
+  flex: none;
+  margin-top: 1px;
+}
+
+/* ------------------------------------------- folders and notes: windows */
+
+.folder-dialog {
+  max-width: 460px;
+  gap: 18px;
+}
+
+.folder-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.folder-form label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.folder-form .text-input {
+  height: 42px;
+  font-size: 14px;
+}
+
+.folder-form .hint {
+  margin: 4px 0 0;
+  line-height: 1.5;
+}
+
+.folder-form .error-box {
+  margin-top: 8px;
+}
+
+.folder-form .button-row {
+  margin-top: 14px;
+}
+
+.dialog-note {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--dim);
+}
+
+.confirm-body .ink {
+  color: var(--ink);
+}
+
+.keep-note {
+  display: flex;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--raised);
+  font-size: 13px;
+}
+
+.keep-note svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+/* ----------------------------------------------------------------- a note */
+
+/* A note under its tab, laid over the stage like a terminal: the notes of
+ * the other tabs are there too, hidden, with their caret and scroll. */
+.note-view {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  background: var(--ground);
+}
+
+.note-view.behind {
+  visibility: hidden;
+}
+
+.note-page {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 36px 24px 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.note-crumb {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+  font-size: 12px;
+  color: var(--faint);
+}
+
+.note-where {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.note-where svg {
+  flex: none;
+}
+
+.note-where-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.note-title {
+  display: block;
+  width: 100%;
+  margin: 4px 0 0;
+  padding: 0;
+  border: 0;
+  outline: none;
+  resize: none;
+  overflow: hidden;
+  background: transparent;
+  color: var(--ink);
+  caret-color: var(--amber-ink);
+  font: 800 32px/1.2 var(--font-ui);
+  letter-spacing: -0.02em;
+}
+
+.note-title::placeholder {
+  color: var(--faint);
+  opacity: 0.6;
+}
+
+.note-meta {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: var(--faint);
+}
+
+.note-conflict {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--amber-ring);
+  border-radius: 10px;
+  background: var(--amber-tint);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.note-conflict > span:first-child {
+  flex: 1 1 300px;
+}
+
+.note-gone {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 40px;
+}
+
+.note-gone h1 {
+  margin: 0;
+  font: 800 24px var(--font-ui);
+}
+
+.note-gone p {
+  margin: 0;
+  color: var(--dim);
+}
+
+.note-loading {
+  min-height: 240px;
+}
+
+/* The blocks: each one a textarea that grows with its text, in the note's
+ * own font, so that writing looks like reading. */
+.note-blocks {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.nb-wrap {
+  position: relative;
+}
+
+.nb-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.nb-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+  display: block;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  outline: none;
+  resize: none;
+  overflow: hidden;
+  background: transparent;
+  color: var(--ink);
+  caret-color: var(--amber-ink);
+  font: 400 15px/1.6 var(--font-ui);
+}
+
+.nb-text::placeholder {
+  color: var(--faint);
+  opacity: 0.8;
+}
+
+/* An empty block says what can be typed only while the caret is in it;
+ * an empty note says it always. */
+.nb-text:not(:focus):not(.lonely)::placeholder {
+  color: transparent;
+}
+
+.nb-text[readonly] {
+  caret-color: transparent;
+}
+
+.nb-h {
+  margin-top: 12px;
+  font: 700 20px/1.3 var(--font-ui);
+}
+
+.nb-todo-row.done .nb-text {
+  color: var(--faint);
+  text-decoration: line-through;
+}
+
+.nb-check {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin-top: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1.5px solid var(--sep);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--on-accent);
+  cursor: pointer;
+}
+
+.nb-check:hover:not(:disabled) {
+  border-color: var(--green);
+}
+
+.nb-todo-row.done .nb-check {
+  border-color: var(--green);
+  background: var(--green);
+}
+
+.nb-check:disabled {
+  cursor: default;
+}
+
+.nb-who {
+  flex: none;
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+.nb-bullet {
+  flex: none;
+  width: 18px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.nb-bullet::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--dim);
+}
+
+.nb-code-row {
+  position: relative;
+  padding: 14px 16px;
+  border: 1px solid var(--raised);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.nb-code {
+  padding-right: 64px;
+  font: 400 13px/1.6 var(--font-mono);
+}
+
+.nb-copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--dim);
+  font: 600 12px var(--font-ui);
+  cursor: pointer;
+}
+
+.nb-copy:hover {
+  background: var(--raised);
+  color: var(--ink);
+}
+
+.nb-hr {
+  padding: 10px 0;
+  border-radius: 4px;
+  outline: none;
+}
+
+.nb-hr hr {
+  margin: 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+.nb-hr:focus {
+  box-shadow: 0 0 0 2px var(--amber-ring);
+}
+
+/* "/" at the start of an empty line: what the line can become. */
+.slash-menu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 6px);
+  left: -6px;
+  width: 290px;
+  max-width: calc(100vw - 32px);
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.slash-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 34px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  font: 600 13px var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.slash-item[aria-selected="true"] {
+  background: var(--raised);
+}
+
+.slash-item svg {
+  flex: none;
+  color: var(--dim);
+}
+
+.slash-label {
+  flex: 1 1 auto;
+}
+
+.slash-md {
+  font: 400 12px var(--font-mono);
+  color: var(--faint);
+}
+
+/* ------------------------------------------------------- a project's page */
+
+/* As the digest on the canvas, without people and the journal for now:
+ * machines with their terminals, notes in folders, each a card. */
+.project-view {
+  width: 100%;
+  max-width: 1060px;
+  margin: 0 auto;
+  padding: 32px 28px 80px;
+  display: flex;
+  flex-direction: column;
+  gap: 36px;
+}
+
+.pp-head {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pp-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.pp-head h1 {
+  margin: 0;
+  font: 800 30px/1.15 var(--font-ui);
+  letter-spacing: -0.02em;
+  overflow-wrap: anywhere;
+}
+
+.pp-head p {
+  margin: 0;
+  color: var(--dim);
+}
+
+.pp-code {
+  height: 26px;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  border-radius: 7px;
+  background: var(--line);
+  font: 700 12px var(--font-mono);
+  letter-spacing: 0.08em;
+}
+
+.pp-section {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.pp-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.pp-section-title {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pp-section-title h2 {
+  margin: 0;
+  font: 700 17px/34px var(--font-ui);
+}
+
+.pp-section-title span {
+  font-size: 12px;
+  color: var(--faint);
+}
+
+.pp-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.pp-card {
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.pp-card-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  padding: 12px 16px;
+}
+
+.pp-card-name {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.pp-card-name svg {
+  flex: none;
+  color: var(--dim);
+}
+
+.pp-mono {
+  font: 400 12px var(--font-mono);
+  color: var(--dim);
+  overflow-wrap: anywhere;
+}
+
+.pp-dim {
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.pp-faint {
+  font-size: 12px;
+  color: var(--faint);
+}
+
+.pp-state {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pp-state .dot {
+  width: 7px;
+  height: 7px;
+}
+
+.pp-state .dot.away {
+  border-width: 1.5px;
+  border-color: var(--faint);
+}
+
+.pp-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.pp-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 2px;
+}
+
+.pp-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  padding: 10px 16px 10px 44px;
+  border-top: 1px solid var(--raised);
+}
+
+.pp-row-text {
+  flex: 1 1 300px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  line-height: 1.35;
+}
+
+.pp-row-text strong {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.pp-row-text strong.untitled {
+  color: var(--faint);
+}
+
+.pp-row-sub {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.pp-row-sub.mono {
+  font-family: var(--font-mono);
+}
+
+.pp-row-sub .dot {
+  width: 7px;
+  height: 7px;
+}
+
+.pp-row-sub .dot.busy {
+  width: 9px;
+  height: 9px;
+}
+
+.pp-row-sub .dot.away {
+  border-width: 1.5px;
+  border-color: var(--faint);
+}
+
+.pp-ellipsis {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pp-when {
+  flex: none;
+  color: var(--dim);
+}
+
+.pp-when.busy {
+  color: var(--amber-ink);
+}
+
+.pp-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.pp-empty {
+  padding: 10px 16px 12px 44px;
+  border-top: 1px solid var(--raised);
+  font-size: 13px;
+  color: var(--faint);
+}
+
+/* A note sits where a terminal sits in its machine's card. */
+.pp-note-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-right: 12px;
+  border-top: 1px solid var(--raised);
+}
+
+.pp-note {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  padding: 10px 8px 10px 44px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pp-note:hover {
+  background: var(--raised);
+}
+
+.pp-note-tile {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  background: var(--raised);
+  color: var(--amber-ink);
+}
+
+.pp-note:hover .pp-note-tile {
+  background: var(--line);
+}
+
+.pp-progress {
+  flex: none;
+  width: 64px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.pp-progress > span {
+  display: block;
+  height: 100%;
+  background: var(--green);
+}
+
+.pp-who {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+/* No machines yet: the two kinds, each a way to add one. */
+.pp-kinds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.pp-kind {
+  flex: 1 1 300px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pp-kind:hover:not(:disabled) {
+  border-color: var(--sep);
+}
+
+.pp-kind:disabled {
+  cursor: default;
+}
+
+.pp-kind-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pp-kind-text strong {
+  font: 700 16px var(--font-ui);
+}
+
+.pp-kind-text span {
+  font-size: 13px;
+  color: var(--dim);
+}
+
+/* A card across the page: Personal is yours alone, no notes yet. */
+.pp-wide {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 18px 20px;
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+.pp-wide .tile {
+  color: var(--dim);
+}
+
+.pp-wide-text {
+  flex: 1 1 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pp-wide-text strong {
+  font-weight: 700;
+}
+
+.pp-wide-text span {
+  font-size: 13px;
+  color: var(--dim);
+}
+
+.pp-wide .button-accent {
+  align-self: auto;
+}
+
+@media (max-width: 560px) {
+  .project-view {
+    padding: 24px 16px 56px;
+    gap: 28px;
+  }
+
+  .pp-row,
+  .pp-empty,
+  .pp-note {
+    padding-left: 16px;
+  }
+
+  .note-page {
+    padding: 24px 16px 200px;
+  }
+
+  .note-title {
+    font-size: 26px;
   }
 }

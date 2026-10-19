@@ -1,21 +1,26 @@
-// The sliding sidebar: one menu for everything, as approved on 11.10.
-// Projects with their machines and terminals, a new project, the account and
-// the theme. It slides over the page and does not push it, so that opening it
-// never changes the terminal's width; pinned, it narrows the page once.
+// The sliding sidebar: one menu for everything, as approved on 11.10, with
+// notes beside machines from 0.1.0, as on the canvas of 19.10. Each project
+// has its machines with their terminals, and its notes in folders. A machine
+// and a folder are the same kind of row: a click folds or unfolds it, and
+// its "+" opens a new terminal on the machine or starts a note in the
+// folder. The project's name opens its page. What is folded is remembered
+// in this browser.
 //
-// A machine opens a new terminal on it; a terminal goes to its tab, opening
-// the tab again if it was closed. Pointed at, a machine offers Remove and a
-// terminal End (from 0.0.8); both ask first.
-//
-// The account at the bottom opens the account page (from 0.0.10; in 0.0.9 a
-// menu with Devices and Sign out, which are on that page now).
+// It slides over the page and does not push it, so that opening it never
+// changes the terminal's width; pinned, it narrows the page once. A terminal
+// pointed at offers End (from 0.0.8), which asks first. The account at the
+// bottom opens the account page (from 0.0.10).
 
-import { useState } from "react";
 import type { Machine, Me, Project, Role, TerminalInfo } from "./api";
 import {
-  ChevronDown, Close, Computer, Dots, Logo, Moon, Pin, Plus, Server, Sun, Trash,
+  ChevronDown, Close, Computer, Folder as FolderIcon, FolderOpen, Logo, Moon,
+  Pin, Plus, Server, Sun,
 } from "./icons";
+import { Avatar, NoteIcon } from "./ProjectPage";
+import { titled } from "./noteText";
+import { manages, writes } from "./rights";
 import type { Dot } from "./TabBar";
+import { noteTab, projectTab } from "./tabs";
 import type { Shown } from "./theme";
 import { lastSeen } from "./time";
 
@@ -36,28 +41,159 @@ interface Props {
   onClose: () => void;
   onMouseEnter: () => void;
   onMouseLeave: () => void;
-  onAddMachine: (projectId: string) => void;
+  /** What is folded: p:, m: and f: with the id of a project, a machine or a
+   * folder. */
+  folded: Set<string>;
+  onFold: (key: string) => void;
+  /** The tab in front. */
+  current: string | null;
   terminals: TerminalInfo[];
-  currentTerminal?: string;
-  onOpenTerminal: (machineId: string) => void;
+  dotFor: (terminal: TerminalInfo) => Dot;
+  onOpenProject: (projectId: string) => void;
+  onAddMachine: (projectId: string) => void;
+  onNewTerminal: (machine: Machine) => void;
   onGoTo: (terminalId: string) => void;
-  onRemoveMachine: (machine: Machine) => void;
   onEndTerminal: (terminal: TerminalInfo) => void;
+  onNewFolder: (project: Project) => void;
+  onNewNote: (folderId: string) => void;
+  onOpenNote: (noteId: string) => void;
   /** The machines page. */
   onHome: () => void;
-  dotFor: (terminal: TerminalInfo) => Dot;
   notYet: (what: string) => void;
   /** The account page, and whether it is the one shown. */
   onAccount: () => void;
   accountOpen: boolean;
 }
 
+/** The ⌄ before a row: turned while folded. Only for the mouse: the row's
+ * name does the same and is the one the keyboard reaches. */
+function Chevron({ open, onClick }: { open: boolean; onClick: () => void }) {
+  return (
+    <button type="button" className="sb-chevron" tabIndex={-1} aria-hidden="true"
+      data-open={open} onClick={onClick}>
+      <ChevronDown size={13} />
+    </button>
+  );
+}
+
+function Label(props: { text: string; plus?: { title: string; onClick: () => void } }) {
+  return (
+    <div className="sb-label">
+      <span>{props.text}</span>
+      {props.plus && (
+        <button type="button" className="sb-plus" aria-label={props.plus.title}
+          title={props.plus.title} onClick={props.plus.onClick}>
+          <Plus size={13} />
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function Sidebar(props: Props) {
-  const { me, projects, pinned, shownTheme, notYet, onAddMachine } = props;
-  const { terminals, currentTerminal, onOpenTerminal, onGoTo, dotFor } = props;
-  const [folded, setFolded] = useState<Record<string, boolean>>({});
+  const { me, projects, pinned, shownTheme, folded, onFold, current } = props;
+  const { terminals, dotFor } = props;
   const themeLabel =
     shownTheme === "light" ? "Switch to dark theme" : "Switch to light theme";
+
+  const machineRows = (m: Machine) => {
+    const key = `m:${m.id}`;
+    const open = !folded.has(key);
+    const mine = terminals.filter((t) => t.machineId === m.id);
+    const computer = m.kind === "computer";
+    const offline = computer && !m.online;
+    const seen = offline ? lastSeen(m.lastSeen) : "";
+    return (
+      <div key={m.id} className="sb-group">
+        <div className="sb-row">
+          <Chevron open={open} onClick={() => onFold(key)} />
+          <button type="button" className={offline ? "sb-name offline" : "sb-name"}
+            aria-expanded={open}
+            title={offline
+              ? `${m.name} is offline: asleep, or its agent is not running${seen ? ` (${seen})` : ""}`
+              : `${open ? "Fold" : "Unfold"} ${m.name}`}
+            onClick={() => onFold(key)}>
+            {computer ? <Computer size={14} /> : <Server size={14} />}
+            <span className="sb-text">{m.name}</span>
+            {!open && mine.length > 0 && <span className="sb-count">{mine.length}</span>}
+            {computer && (
+              <span className={offline ? "sb-state away" : "sb-state on"}
+                aria-hidden="true" />
+            )}
+          </button>
+          <button type="button" className="sb-plus"
+            aria-label={`New terminal on ${m.name}`} title="New terminal"
+            onClick={() => props.onNewTerminal(m)}>
+            <Plus size={13} />
+          </button>
+        </div>
+        {open && mine.map((t) => {
+          const dot = dotFor(t);
+          return (
+            <div key={t.id} className="sb-leaf-row">
+              <button type="button" className="sb-leaf"
+                aria-current={current === t.id ? "page" : undefined}
+                title={dot === "away"
+                  ? `Go to ${t.label}: it waits for ${m.name} to come back`
+                  : `Go to ${t.label}`}
+                onClick={() => props.onGoTo(t.id)}>
+                <Avatar who={null} me={me} size="xs" />
+                <span className="sb-text">terminal {t.name}</span>
+                {dot !== "open" && <span className={`dot ${dot}`} aria-hidden="true" />}
+              </button>
+              <button type="button" className="tree-action"
+                aria-label={`End ${t.label}`} title={`End ${t.label}: its shell ends`}
+                onClick={() => props.onEndTerminal(t)}>
+                <Close size={13} />
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  const folderRows = (project: Project) => project.folders.map((f) => {
+    const key = `f:${f.id}`;
+    const open = !folded.has(key);
+    return (
+      <div key={f.id} className="sb-group">
+        <div className="sb-row">
+          <Chevron open={open} onClick={() => onFold(key)} />
+          <button type="button" className="sb-name" aria-expanded={open}
+            title={`${open ? "Fold" : "Unfold"} ${f.name}`}
+            onClick={() => onFold(key)}>
+            {open ? <FolderOpen size={14} /> : <FolderIcon size={14} />}
+            <span className="sb-text">{f.name}</span>
+            {!open && f.notes.length > 0 && <span className="sb-count">{f.notes.length}</span>}
+          </button>
+          {writes(project) && (
+            <button type="button" className="sb-plus"
+              aria-label={`New note in ${f.name}`} title={`New note in ${f.name}`}
+              onClick={() => props.onNewNote(f.id)}>
+              <Plus size={13} />
+            </button>
+          )}
+        </div>
+        {open && f.notes.map((n) => (
+          <button key={n.id} type="button" className="sb-leaf"
+            aria-current={current === noteTab(n.id) ? "page" : undefined}
+            onClick={() => props.onOpenNote(n.id)}>
+            <span className="sb-leaf-icon" aria-hidden="true"><NoteIcon note={n} /></span>
+            <span className={n.title.trim() ? "sb-text" : "sb-text untitled"}>
+              {titled(n.title)}
+            </span>
+            {n.total > 0 && <span className="sb-progress">{n.done}/{n.total}</span>}
+          </button>
+        ))}
+        {open && f.notes.length === 0 && (
+          <div className="sb-none deep">
+            {writes(project) ? "Empty. + starts a note" : "Empty"}
+          </div>
+        )}
+      </div>
+    );
+  });
 
   return (
     <aside className="sidebar" aria-label="Sidebar"
@@ -83,125 +219,53 @@ export function Sidebar(props: Props) {
       <div className="sidebar-body">
         <div className="section-label">Projects</div>
         {projects.map((project) => {
-          const open = !folded[project.id];
-          const canAdd = project.role === "owner" || project.role === "admin";
+          const key = `p:${project.id}`;
+          const open = !folded.has(key);
           return (
-            <div key={project.id}>
+            <div key={project.id} className="sb-project">
               <div className="project-row">
-                <button type="button" className="chevron"
-                  aria-expanded={open}
+                <button type="button" className="chevron" aria-expanded={open}
                   aria-label={`${open ? "Fold" : "Unfold"} ${project.name}`}
-                  onClick={() =>
-                    setFolded({ ...folded, [project.id]: open })}>
+                  onClick={() => onFold(key)}>
                   <ChevronDown size={14} />
                 </button>
                 <button type="button" className="project-name"
-                  title={`Open the ${project.name} overview`}
-                  onClick={() =>
-                    notYet("The project overview comes with teams, in stage 3.")}>
-                  <span className="code-badge" aria-hidden="true">
-                    {project.code}
-                  </span>
+                  aria-current={current === projectTab(project.id) ? "page" : undefined}
+                  title={`Open ${project.name}: its machines and notes`}
+                  onClick={() => props.onOpenProject(project.id)}>
+                  <span className="code-badge" aria-hidden="true">{project.code}</span>
                   <span className="project-title">{project.name}</span>
                   <span className="role">{ROLE_LABEL[project.role]}</span>
                 </button>
-                <button type="button" className="icon-button tiny"
-                  aria-label={`${project.name}: project menu`}
-                  aria-haspopup="menu"
-                  onClick={() =>
-                    notYet("The project menu comes with teams, in stage 3.")}>
-                  <Dots />
-                </button>
               </div>
-              {open && project.machines.length === 0 && (
-                <div className="empty-machines">
-                  <p>No machines yet. Add a server or a computer to open
-                    terminals on it.</p>
-                  {canAdd && (
-                    <button type="button" className="button-accent"
-                      onClick={() => onAddMachine(project.id)}>
-                      <Plus size={14} />
-                      Add machine
-                    </button>
+              {open && (
+                <div className="sb-inside">
+                  <Label text="Machines" plus={manages(project) ? {
+                    title: "Add machine",
+                    onClick: () => props.onAddMachine(project.id),
+                  } : undefined} />
+                  {project.machines.length === 0 && (
+                    <div className="sb-none">No machines yet</div>
                   )}
+                  {project.machines.map(machineRows)}
+                  <Label text="Notes" plus={writes(project) ? {
+                    title: "New folder",
+                    onClick: () => props.onNewFolder(project),
+                  } : undefined} />
+                  {project.folders.length === 0 && (
+                    <div className="sb-none">
+                      {writes(project) ? "No notes yet. + makes a folder for them"
+                        : "No notes yet"}
+                    </div>
+                  )}
+                  {folderRows(project)}
                 </div>
-              )}
-              {open && project.machines.length > 0 && (
-                <ul className="tree">
-                  {project.machines.map((machine) => {
-                    const offline = machine.kind === "computer" && !machine.online;
-                    const seen = offline ? lastSeen(machine.lastSeen) : "";
-                    return (
-                    <li key={machine.id}>
-                      <div className="tree-row">
-                        <button type="button"
-                          className={offline ? "tree-machine offline" : "tree-machine"}
-                          title={offline
-                            ? `${machine.name} is offline: asleep, or its agent is not running${seen ? ` (${seen})` : ""}`
-                            : `Open a new terminal on ${machine.name}`}
-                          onClick={() => offline
-                            ? notYet(`${machine.name} is offline${seen ? `, ${seen}` : ""}: it comes back when its agent connects.`)
-                            : onOpenTerminal(machine.id)}>
-                          {machine.kind === "server" ? <Server size={15} />
-                            : <Computer size={15} />}
-                          <span>{machine.name}</span>
-                        </button>
-                        {canAdd && (
-                          <button type="button" className="tree-action"
-                            aria-label={`Remove ${machine.name}`}
-                            title={`Remove ${machine.name} from tTerm Web`}
-                            onClick={() => props.onRemoveMachine(machine)}>
-                            <Trash size={14} />
-                          </button>
-                        )}
-                      </div>
-                      {terminals.some((t) => t.machineId === machine.id) && (
-                        <ul className="tree-terminals">
-                          {terminals.filter((t) => t.machineId === machine.id)
-                            .map((t) => (
-                              <li key={t.id}>
-                                <div className="tree-row">
-                                  <button type="button" className="tree-terminal"
-                                    aria-current={t.id === currentTerminal
-                                      ? "page" : undefined}
-                                    title={dotFor(t) === "away"
-                                      ? `Go to ${t.label}: it waits for ${machine.name} to come back`
-                                      : `Go to ${t.label}`}
-                                    onClick={() => onGoTo(t.id)}>
-                                    <span className={`dot ${dotFor(t)}`}
-                                      aria-hidden="true" />
-                                    terminal {t.name}
-                                  </button>
-                                  <button type="button" className="tree-action"
-                                    aria-label={`End ${t.label}`}
-                                    title={`End ${t.label}: its shell ends`}
-                                    onClick={() => props.onEndTerminal(t)}>
-                                    <Close size={13} />
-                                  </button>
-                                </div>
-                              </li>
-                            ))}
-                        </ul>
-                      )}
-                    </li>
-                    );
-                  })}
-                  {canAdd && (
-                    <li>
-                      <button type="button" className="tree-add"
-                        onClick={() => onAddMachine(project.id)}>
-                        <Plus size={15} />
-                        Add machine
-                      </button>
-                    </li>
-                  )}
-                </ul>
               )}
             </div>
           );
         })}
         <button type="button" className="new-project"
-          onClick={() => notYet("New projects come with teams, in stage 3.")}>
+          onClick={() => props.notYet("New projects come with teams, in the next version.")}>
           <span className="dashed-tile" aria-hidden="true">
             <Plus size={13} />
           </span>
@@ -233,7 +297,7 @@ function AccountButton(props: { me: Me; onAccount: () => void; current: boolean 
       <button type="button" className="account" onClick={props.onAccount}
         aria-current={props.current ? "page" : undefined}
         title="Your account and settings">
-        <span className="avatar" aria-hidden="true">{me.initials}</span>
+        <span className="avatar mine" aria-hidden="true">{me.initials}</span>
         <span className="account-text">
           <strong>{me.firstName}</strong>
           <span>{plan}</span>

@@ -240,3 +240,77 @@ export function Logo({ size = 40 }: Props) {
     </svg>
   );
 }
+
+// Notes (0.1.0): folders like machines, notes like terminals.
+
+export const FolderOpen = (p: Props) => (
+  <Stroke {...p}>
+    <path d="M4 19a1 1 0 0 1-1-1V7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v1.5" />
+    <path d="M4 19l2.3-7.1A1.4 1.4 0 0 1 7.6 11H20a1 1 0 0 1 .95 1.3L19 17.6A2 2 0 0 1 17.1 19z" />
+  </Stroke>
+);
+
+export const FolderPlus = (p: Props) => (
+  <Stroke {...p}>
+    <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+    <path d="M12 10.5v5M9.5 13h5" />
+  </Stroke>
+);
+
+/** A note with a checklist in it. */
+export const ListCheck = (p: Props) => (
+  <Stroke {...p}>
+    <rect x="3" y="4" width="7" height="7" rx="1.5" />
+    <path d="M5 7.5l1.2 1.2L8.5 6.3" />
+    <path d="M14 7.5h7" />
+    <rect x="3" y="13" width="7" height="7" rx="1.5" />
+    <path d="M14 16.5h7" />
+  </Stroke>
+);
+
+/** A note of text. */
+export const Doc = (p: Props) => (
+  <Stroke {...p}>
+    <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
+    <path d="M14 3v6h6" />
+    <path d="M8 13h8M8 17h5" />
+  </Stroke>
+);
+
+export const Pencil = (p: Props) => (
+  <Stroke {...p}>
+    <path d="M12 20h9" />
+    <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z" />
+  </Stroke>
+);
+
+export const Lock = (p: Props) => (
+  <Stroke {...p}>
+    <rect x="5" y="11" width="14" height="10" rx="2" />
+    <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+  </Stroke>
+);
+
+export const Heading = (p: Props) => (
+  <Stroke {...p}><path d="M6 4v16M18 4v16M6 12h12" /></Stroke>
+);
+
+export const CodeIcon = (p: Props) => (
+  <Stroke {...p}><path d="M8 6l-6 6 6 6M16 6l6 6-6 6" /></Stroke>
+);
+
+export const Minus = (p: Props) => (
+  <Stroke {...p}><path d="M4 12h16" /></Stroke>
+);
+
+export const Bullet = (p: Props) => (
+  <Stroke {...p}>
+    <circle cx="5" cy="7" r="1.2" />
+    <circle cx="5" cy="17" r="1.2" />
+    <path d="M10 7h10M10 17h10" />
+  </Stroke>
+);
+
+export const Paragraph = (p: Props) => (
+  <Stroke {...p}><path d="M4 7h16M4 12h16M4 17h10" /></Stroke>
+);

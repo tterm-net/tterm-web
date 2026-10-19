@@ -76,8 +76,89 @@ export interface Project {
   name: string;
   code: string;
   role: Role;
+  /** The person's own Personal project, which is theirs alone (0.1.0). */
+  personal: boolean;
   machines: Machine[];
+  /** Its folders of notes, by name (0.1.0). */
+  folders: Folder[];
 }
+
+/** Someone, as notes name them: who wrote, edited, ticked. */
+export interface Who {
+  id: string;
+  name: string;
+  firstName: string;
+  initials: string;
+}
+
+/** A note as lists show it: no text, only what it is like. */
+export interface NoteSummary {
+  id: string;
+  title: string;
+  /** Checklist items, and how many are ticked. */
+  total: number;
+  done: number;
+  /** The start of its text. */
+  excerpt: string;
+  /** Which save of it this is: of two copies, the higher is the newer. */
+  version: number;
+  createdBy: Who | null;
+  createdAt: number;
+  editedBy: Who | null;
+  editedAt: number;
+}
+
+export interface Folder {
+  id: string;
+  name: string;
+  createdBy: Who | null;
+  /** The newest first. */
+  notes: NoteSummary[];
+}
+
+export type BlockType = "p" | "h" | "li" | "todo" | "code" | "hr";
+
+/** A paragraph, a heading, a list item, a checklist item, code or a
+ * divider. A checklist item's tick, who made it and when, are the core's
+ * to say: the page sends ticks with tickNote only. */
+export interface Block {
+  id: string;
+  type: BlockType;
+  text: string;
+  done?: boolean;
+  by?: string | null;
+  at?: number | null;
+}
+
+/** A whole note. */
+export interface Note {
+  id: string;
+  folderId: string;
+  folder: string;
+  projectId: string;
+  title: string;
+  blocks: Block[];
+  version: number;
+  createdBy: Who | null;
+  createdAt: number;
+  editedBy: Who | null;
+  editedAt: number;
+  /** Those who ticked its items, by id. */
+  people: Record<string, Who>;
+  canDelete: boolean;
+  canWrite: boolean;
+}
+
+/** A save refused because the same things changed elsewhere meanwhile:
+ * the note as it is saved now. */
+export class NoteConflict extends Error {
+  constructor(readonly note: Note) {
+    super("The note changed elsewhere meanwhile.");
+  }
+}
+
+/** The note is not there any more, or not for this person. */
+export class NoteGone extends Error {}
 
 export interface Me {
   id: string;
@@ -218,10 +299,24 @@ export interface InstallStatus {
     os: string | null; label: string } | null;
 }
 
-export class CoreError extends Error {}
+/** The core said no, or something went wrong there: `status` is its HTTP
+ * answer. */
+export class CoreError extends Error {
+  constructor(message: string, readonly status = 0) {
+    super(message);
+  }
+}
 
 /** No session, or it ended: the page asks to sign in. */
 export class SignedOut extends CoreError {}
+
+/** A refusal for what was asked (a 4xx): asking again the same way gets the
+ * same answer. Anything else, such as no connection or a core that is
+ * restarting, may pass. */
+export function refused(error: unknown): boolean {
+  return error instanceof CoreError && error.status >= 400 &&
+    error.status < 500 && error.status !== 408 && error.status !== 429;
+}
 
 const signedOutListeners = new Set<() => void>();
 
@@ -245,9 +340,10 @@ async function check(response: Response): Promise<Response> {
     }
     if (response.status === 401 && body.signedOut) {
       signedOutNow();
-      throw new SignedOut(body.error ?? "Sign in to go on.");
+      throw new SignedOut(body.error ?? "Sign in to go on.", 401);
     }
-    throw new CoreError(body.error || `tTerm Web answered ${response.status}`);
+    throw new CoreError(body.error || `tTerm Web answered ${response.status}`,
+      response.status);
   }
   return response;
 }
@@ -326,9 +422,9 @@ export interface Device {
 /** A sign-in step refused: why, and for codes the tries left or the
  * seconds to wait before asking again. */
 export class Refused extends CoreError {
-  constructor(message: string, readonly status: number,
+  constructor(message: string, status: number,
     readonly left?: number, readonly wait?: number) {
-    super(message);
+    super(message, status);
   }
 }
 
@@ -517,4 +613,74 @@ export async function listBranches(id: string): Promise<BranchList> {
   const response = await fetch(`/api/terminals/${id}/branches`,
     change("POST", {}));
   return (await check(response)).json();
+}
+
+// ------------------------------------------------------- notes (0.1.0)
+
+export async function createFolder(projectId: string,
+  name: string): Promise<Folder> {
+  return (await check(await fetch("/api/folders",
+    change("POST", { projectId, name })))).json();
+}
+
+export async function renameFolder(id: string,
+  name: string): Promise<{ id: string; name: string }> {
+  return (await check(await fetch(`/api/folders/${id}`,
+    change("PATCH", { name })))).json();
+}
+
+/** Deletes the folder with the notes in it: how many there were. */
+export async function deleteFolder(id: string): Promise<{
+  name: string; notes: number;
+}> {
+  return (await check(await fetch(`/api/folders/${id}`,
+    { method: "DELETE", headers: { "x-tterm": "1" } }))).json();
+}
+
+export async function createNote(folderId: string): Promise<Note> {
+  return (await check(await fetch("/api/notes",
+    change("POST", { folderId })))).json();
+}
+
+/** The whole note; in the background when the page only looks again. */
+export async function loadNote(id: string, background = false): Promise<Note> {
+  const response = await fetch(`/api/notes/${id}`, {
+    cache: "no-store", headers: background ? BACKGROUND : {},
+  });
+  if (response.status === 404) throw new NoteGone("The note is deleted.");
+  return (await check(response)).json();
+}
+
+/** Saves the title and the blocks, made from `baseVersion`. The core merges
+ * them with what was saved since; where it cannot, it answers NoteConflict
+ * with the note as it is now, and the page merges on its own. */
+export async function saveNote(id: string, baseVersion: number, title: string,
+  blocks: Block[]): Promise<Note> {
+  const response = await fetch(`/api/notes/${id}`,
+    change("PUT", { baseVersion, title, blocks }));
+  if (response.status === 404) throw new NoteGone("The note is deleted.");
+  if (response.status === 409) {
+    const body = await response.json();
+    if (body.conflict && body.note) throw new NoteConflict(body.note);
+  }
+  return (await check(response)).json();
+}
+
+export async function tickNote(id: string, blockId: string,
+  done: boolean): Promise<Note> {
+  const response = await fetch(`/api/notes/${id}/tick`,
+    change("POST", { blockId, done }));
+  // An item that went answers 422; 404 is the note.
+  if (response.status === 404) throw new NoteGone("The note is deleted.");
+  return (await check(response)).json();
+}
+
+export async function moveNote(id: string, folderId: string): Promise<Note> {
+  return (await check(await fetch(`/api/notes/${id}`,
+    change("PATCH", { folderId })))).json();
+}
+
+export async function deleteNote(id: string): Promise<{ title: string }> {
+  return (await check(await fetch(`/api/notes/${id}`,
+    { method: "DELETE", headers: { "x-tterm": "1" } }))).json();
 }

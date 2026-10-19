@@ -7,6 +7,8 @@ import { Close } from "./icons";
 
 interface Props {
   title: string;
+  /** A line under the title: where the thing is. */
+  sub?: string;
   children: ReactNode;
   /** The red button's words: "Remove MacBook-Pro". */
   confirm: string;
@@ -51,6 +53,7 @@ export function Confirm(props: Props) {
         <div className="dialog-head">
           <div className="dialog-title">
             <h2 id="cf-title">{props.title}</h2>
+            {props.sub && <p className="dialog-note">{props.sub}</p>}
           </div>
           <button type="button" className="icon-button small" aria-label="Close"
             onClick={props.onCancel}>

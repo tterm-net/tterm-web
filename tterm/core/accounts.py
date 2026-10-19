@@ -261,7 +261,11 @@ async def projects_of(pool: asyncpg.Pool, user_id: uuid.UUID) -> list[dict]:
     """
     rows = await pool.fetch(
         """
-        SELECT p.id, p.name, p.code, m.role, p.owner_id = $1 AS own
+        SELECT p.id, p.name, p.code, m.role, p.owner_id = $1 AS own,
+               -- Personal: the first project of their own, made with the
+               -- account. Its notes and machines are the person's alone.
+               p.id = (SELECT id FROM projects WHERE owner_id = $1
+                       ORDER BY created_at, id LIMIT 1) AS personal
         FROM projects p
         JOIN project_members m ON m.project_id = p.id AND m.user_id = $1
         WHERE m.until IS NULL OR m.until > now()
@@ -292,6 +296,7 @@ async def projects_of(pool: asyncpg.Pool, user_id: uuid.UUID) -> list[dict]:
         "name": r["name"],
         "code": r["code"],
         "role": r["role"],
+        "personal": bool(r["personal"]),
         "machines": by_project.get(r["id"], []),
     } for r in rows]
 

@@ -22,6 +22,9 @@ export interface FinderItem {
 export interface FinderGroup {
   title: string;
   items: FinderItem[];
+  /** Before anything is typed, only the first of them: the notes of a
+   * project with hundreds. Typing searches them all. */
+  limit?: number;
 }
 
 interface Props {
@@ -36,7 +39,11 @@ interface Props {
 
 function narrow(groups: FinderGroup[], query: string): FinderGroup[] {
   const q = query.trim().toLowerCase();
-  if (!q) return groups.filter((g) => g.items.length > 0);
+  if (!q) {
+    return groups.filter((g) => g.items.length > 0).map((g) =>
+      (g.limit !== undefined && g.items.length > g.limit
+        ? { ...g, items: g.items.slice(0, g.limit) } : g));
+  }
   return groups.map((g) => {
     const starts: FinderItem[] = [];
     const has: FinderItem[] = [];

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import html
+import json
 import secrets
 import uuid
 from pathlib import Path
@@ -22,7 +23,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel
 
 from .. import __version__
-from ..core import accounts, auth, letters, machines, ssh
+from ..core import accounts, auth, letters, machines, notes, ssh
 from ..core.mail import Mailer
 from ..core.terminals import NotAllowed, NotOpen, Terminal, Terminals
 from .connect import client_ip
@@ -101,9 +102,58 @@ class CompleteRequest(BaseModel):
     cursor: int
 
 
+class FolderBody(BaseModel):
+    #: For a new folder: the project it goes in.
+    projectId: uuid.UUID | None = None
+    name: str
+
+
+class NewNoteBody(BaseModel):
+    folderId: uuid.UUID
+    title: str = ""
+
+
+class MoveNoteBody(BaseModel):
+    folderId: uuid.UUID
+
+
+class TickBody(BaseModel):
+    blockId: str
+    done: bool
+
+
 #: A line the input line may ask Tab about, at most.
 MAX_LINE = 64 * 1024
 NOT_OPEN = "The terminal is not open."
+#: A note's save, at most, in bytes: its blocks are kept to half that
+#: (notes.BODY_MAX), and JSON from the page escapes a little on the way.
+NOTE_SAVE_MAX = 1024 * 1024
+
+
+class TooBig(Exception):
+    """A request's body over what its route takes, or without a length."""
+
+    def __init__(self, status: int, message: str) -> None:
+        super().__init__(message)
+        self.status = status
+
+
+async def small_json(request: Request, most: int):
+    """The request's JSON, read only if it says how long it is and that is
+    no more than `most` bytes: a note is the one big thing the page sends,
+    and the core reads nothing bigger whole."""
+    size = request.headers.get("content-length", "")
+    if not size.isdigit():
+        raise TooBig(411, "Say how long the request is.")
+    if int(size) > most:
+        raise TooBig(413, "The note is too long to save. Split it into two.")
+    raw = await request.body()
+    if len(raw) > most:
+        raise TooBig(413, "The note is too long to save. Split it into two.")
+    try:
+        return json.loads(raw)
+    except ValueError:
+        raise TooBig(422, "That is not JSON.") from None
 
 
 def _with_nonce(page: str, nonce: str) -> str:
@@ -402,8 +452,13 @@ def create_page_app(pool: asyncpg.Pool, dist: Path, page_url: str,
         """Everything the page needs on start."""
         me = session.person
         projects = await accounts.projects_of(pool, me.id)
+        # Each project's folders of notes, with the notes listed but not
+        # their text: the sidebar and the project's page (0.1.0).
+        folders = await notes.folders_of(
+            pool, [uuid.UUID(p["id"]) for p in projects])
         for project in projects:
             project["machines"] = [with_agents(m) for m in project["machines"]]
+            project["folders"] = folders.get(project["id"], [])
         return _json({
             "version": __version__,
             "me": {
@@ -642,6 +697,118 @@ def create_page_app(pool: asyncpg.Pool, dist: Path, page_url: str,
             return _json(await terminal.branches())
         except NotOpen:
             return _json({"error": NOT_OPEN}, 409)
+
+    # ----------------------------------------------- notes (from 0.1.0)
+
+    def note_refused(exc: notes.Refused) -> Response:
+        return _json({"error": str(exc)}, exc.status)
+
+    @app.post("/api/folders")
+    async def new_folder(body: FolderBody,
+                         session: auth.Session = Depends(signed_in)) -> Response:
+        if body.projectId is None:
+            return _json({"error": "Say which project the folder is for."}, 422)
+        try:
+            folder = await notes.create_folder(pool, session.person.id,
+                                               body.projectId, body.name)
+        except notes.Refused as exc:
+            return note_refused(exc)
+        return _json(folder, 201)
+
+    @app.patch("/api/folders/{folder_id}")
+    async def rename_folder(folder_id: uuid.UUID, body: FolderBody,
+                            session: auth.Session = Depends(signed_in)) -> Response:
+        try:
+            return _json(await notes.rename_folder(pool, session.person.id,
+                                                   folder_id, body.name))
+        except notes.Refused as exc:
+            return note_refused(exc)
+
+    @app.delete("/api/folders/{folder_id}")
+    async def delete_folder(folder_id: uuid.UUID,
+                            session: auth.Session = Depends(signed_in)) -> Response:
+        """The folder and every note in it, for everyone in the project."""
+        try:
+            return _json(await notes.delete_folder(pool, session.person.id,
+                                                   folder_id))
+        except notes.Refused as exc:
+            return note_refused(exc)
+
+    @app.post("/api/notes")
+    async def new_note(body: NewNoteBody,
+                       session: auth.Session = Depends(signed_in)) -> Response:
+        try:
+            note = await notes.create_note(pool, session.person.id,
+                                           body.folderId, body.title)
+        except notes.Refused as exc:
+            return note_refused(exc)
+        return _json(note, 201)
+
+    @app.get("/api/notes/{note_id}")
+    async def note(note_id: uuid.UUID,
+                   session: auth.Session = Depends(signed_in)) -> Response:
+        """The whole note. The page asks again now and then while the note
+        is open, in the background, to show what others wrote."""
+        try:
+            return _json(await notes.get_note(pool, session.person.id, note_id))
+        except notes.Refused as exc:
+            return note_refused(exc)
+
+    @app.put("/api/notes/{note_id}")
+    async def save_note(note_id: uuid.UUID, request: Request,
+                        session: auth.Session = Depends(signed_in)) -> Response:
+        """The title and the blocks as the page has them, made from the
+        version it names. Where the same things changed elsewhere since,
+        409 with the note as it is now: the page merges, asking whose change
+        to keep where both changed, and saves from that version."""
+        try:
+            data = await small_json(request, NOTE_SAVE_MAX)
+        except TooBig as exc:
+            return _json({"error": str(exc)}, exc.status)
+        base = data.get("baseVersion") if isinstance(data, dict) else None
+        if (not isinstance(base, int) or isinstance(base, bool)
+                or not 0 < base < 2 ** 31):
+            return _json({"error": "Say which version the save was made from."},
+                         422)
+        try:
+            saved = await notes.save_note(
+                pool, session.person.id, note_id, base, data.get("title", ""),
+                data.get("blocks"))
+        except notes.Conflict as exc:
+            return _json({"error": str(exc), "conflict": True,
+                          "note": exc.note}, 409)
+        except notes.Refused as exc:
+            return note_refused(exc)
+        return _json(saved)
+
+    @app.post("/api/notes/{note_id}/tick")
+    async def tick(note_id: uuid.UUID, body: TickBody,
+                   session: auth.Session = Depends(signed_in)) -> Response:
+        """A checklist item ticked or not, at once: who and when are the
+        core's to note."""
+        try:
+            return _json(await notes.tick(pool, session.person.id, note_id,
+                                          body.blockId, body.done))
+        except notes.Refused as exc:
+            return note_refused(exc)
+
+    @app.patch("/api/notes/{note_id}")
+    async def move_note(note_id: uuid.UUID, body: MoveNoteBody,
+                        session: auth.Session = Depends(signed_in)) -> Response:
+        try:
+            return _json(await notes.move_note(pool, session.person.id,
+                                               note_id, body.folderId))
+        except notes.Refused as exc:
+            return note_refused(exc)
+
+    @app.delete("/api/notes/{note_id}")
+    async def delete_note(note_id: uuid.UUID,
+                          session: auth.Session = Depends(signed_in)) -> Response:
+        try:
+            return _json(await notes.delete_note(pool, session.person.id,
+                                                 note_id))
+        except notes.Refused as exc:
+            return note_refused(exc)
 
     @app.websocket("/api/ws")
     async def socket(websocket: WebSocket) -> None:
