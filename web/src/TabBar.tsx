@@ -5,9 +5,13 @@
 //
 // A terminal tab's dot is its machine: green on line, a turning ring while a
 // command runs, a hollow ring while the computer sleeps, grey once it ended.
-// A note says on the right whether what was typed is saved.
+// A note says on the right whether what was typed is saved. From 0.1.1 the
+// project's code is in its color, and a double click on a terminal's tab
+// names the terminal: Enter saves, Esc cancels.
 
-import { useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import type { ProjectColor } from "./api";
+import { colorClass } from "./colors";
 import { Check, Close, Doc, ListCheck, Plus, Search } from "./icons";
 import { JUMP_KEYS, type TabKind } from "./tabs";
 
@@ -16,8 +20,9 @@ export type Dot = "open" | "busy" | "away" | "ended";
 export interface TabView {
   id: string;
   kind: TabKind;
-  /** The project's code. */
+  /** The project's code, and its color. */
   code: string;
+  color?: ProjectColor;
   /** What follows the code: web-01 · 2, a note's title, a project's name. */
   label: string;
   /** A terminal's state. */
@@ -29,6 +34,11 @@ export interface TabView {
   /** What the dot means, and where the tab's terminal or note is. */
   title: string;
   closeTitle: string;
+  /** A terminal still running: its machine, its name, and whether a double
+   * click names it. */
+  machine?: string;
+  name?: string;
+  canRename?: boolean;
 }
 
 /** How saving goes in the note in front. */
@@ -49,6 +59,61 @@ interface Props {
   renderPicker: (around: React.RefObject<HTMLElement | null>) => ReactNode;
   onJump: () => void;
   saving: SaveLine | null;
+  /** The terminal's tab being named, if one is. */
+  renaming: string | null;
+  onStartRename: (id: string) => void;
+  onRename: (id: string, name: string) => void;
+  onStopRename: (id: string) => void;
+}
+
+/** The name being typed into a terminal's tab. Enter or leaving it saves,
+ * Esc goes back to what it was. A number stays a placeholder. */
+function RenameInput(props: {
+  tab: TabView;
+  onRename: (id: string, name: string) => void;
+  onStop: () => void;
+}) {
+  const { tab } = props;
+  const numbered = /^\d+$/.test(tab.name ?? "");
+  const [value, setValue] = useState(numbered ? "" : tab.name ?? "");
+  const input = useRef<HTMLInputElement>(null);
+  const done = useRef(false);
+
+  useEffect(() => {
+    input.current?.focus();
+    input.current?.select();
+  }, []);
+
+  const commit = () => {
+    if (done.current) return;
+    done.current = true;
+    const name = value.trim();
+    if (!name || name === tab.name) props.onStop();
+    else props.onRename(tab.id, name);
+  };
+
+  return (
+    <input ref={input} className="tab-rename" aria-label="Terminal name"
+      value={value} maxLength={40} autoComplete="off" spellCheck={false}
+      placeholder={numbered ? `terminal ${tab.name}` : undefined}
+      aria-describedby={`${tab.id}-tip`}
+      onChange={(e) => setValue(e.target.value)}
+      onKeyDown={(e) => {
+        // Enter and Esc while a word is being composed (Japanese, Chinese)
+        // are the input method's: they take or drop the word.
+        if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+        if (e.key === "Enter") {
+          e.preventDefault();
+          commit();
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          e.stopPropagation();
+          done.current = true;
+          props.onStop();
+        }
+      }}
+      onBlur={commit} />
+  );
 }
 
 function Lead({ tab }: { tab: TabView }) {
@@ -70,25 +135,49 @@ export function TabBar(props: Props) {
       <nav className="tabs" aria-label="Open tabs">
         {props.tabs.map((tab) => {
           const current = tab.id === props.current;
+          const renaming = props.renaming === tab.id && !!tab.canRename;
           return (
-            <div key={tab.id} className={current ? "tab current" : "tab"}>
-              <button type="button" className="tab-main"
-                aria-current={current ? "page" : undefined} title={tab.title}
-                onClick={() => props.onSelect(tab.id)}
-                onAuxClick={(e) => {
-                  if (e.button === 1) {
-                    e.preventDefault();
-                    props.onClose(tab.id);
-                  }
-                }}>
-                <Lead tab={tab} />
-                <span className={tab.untitled ? "tab-label untitled" : "tab-label"}>
-                  {tab.kind !== "project" && tab.code && (
-                    <span className="tab-code">{tab.code}/</span>
-                  )}
-                  {tab.label}
-                </span>
-              </button>
+            <div key={tab.id}
+              className={`${current ? "tab current" : "tab"} ${colorClass(tab.color)}`}>
+              {renaming ? (
+                <div className="tab-main renaming">
+                  <Lead tab={tab} />
+                  <span className="tab-label">
+                    {tab.code && <span className="tab-code">{tab.code}/</span>}
+                    {tab.machine} ·{" "}
+                  </span>
+                  <RenameInput tab={tab} onRename={props.onRename}
+                    onStop={() => props.onStopRename(tab.id)} />
+                </div>
+              ) : (
+                <button type="button" className="tab-main"
+                  aria-current={current ? "page" : undefined} title={tab.title}
+                  onClick={() => props.onSelect(tab.id)}
+                  onDoubleClick={() => {
+                    if (tab.canRename) props.onStartRename(tab.id);
+                  }}
+                  onAuxClick={(e) => {
+                    if (e.button === 1) {
+                      e.preventDefault();
+                      props.onClose(tab.id);
+                    }
+                  }}>
+                  <Lead tab={tab} />
+                  <span className={tab.untitled ? "tab-label untitled" : "tab-label"}>
+                    {tab.kind !== "project" && tab.code && (
+                      <span className="tab-code">{tab.code}/</span>
+                    )}
+                    {tab.label}
+                  </span>
+                </button>
+              )}
+              {renaming && (
+                <div className="tab-tip" role="tooltip" id={`${tab.id}-tip`}>
+                  <strong>Name this terminal</strong>
+                  <span>Enter saves, Esc cancels. The name shows in the sidebar,
+                    in tabs and on the project's page.</span>
+                </div>
+              )}
               <button type="button" className="tab-close"
                 aria-label={`Close the tab ${tab.code ? `${tab.code}/` : ""}${tab.label}`}
                 title={tab.closeTitle}

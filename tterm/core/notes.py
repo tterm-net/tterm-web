@@ -108,10 +108,11 @@ def _storable(text: str) -> str:
 
 
 def clean_name(name: object) -> str | None:
-    """A folder's name: one line, 1 to 80 characters, or None."""
+    """A folder's name, or a project's: one line, 1 to 80 characters, or
+    None."""
     if not isinstance(name, str):
         return None
-    name = " ".join(_CONTROL.sub(" ", _storable(name)).split())
+    name = accounts.one_line(_storable(name))
     return name if 1 <= len(name) <= NAME_MAX else None
 
 
@@ -300,6 +301,26 @@ async def _role(conn, project_id: uuid.UUID, user_id: uuid.UUID) -> str | None:
         project_id, user_id)
 
 
+FOLDER_PROJECT = "SELECT project_id FROM note_folders WHERE id = $1"
+NOTE_PROJECT = ("SELECT f.project_id FROM notes n JOIN note_folders f "
+                "ON f.id = n.folder_id WHERE n.id = $1")
+
+
+async def _hold(conn, project_id: uuid.UUID | None, missing: str, *,
+                mode: str = "KEY SHARE") -> None:
+    """Takes the project's row before any folder or note in it, as deleting
+    the project takes them (projects.delete), so that neither ever waits for
+    the other in turn. FOR UPDATE for what must wait while the project is
+    deleted or changed: a new folder or note, a name or a move checked
+    against the rest; KEY SHARE for the rest, which then writes its line in
+    the journal. A project deleted meanwhile is gone: NotFound."""
+    alive = project_id is not None and await conn.fetchval(
+        f"SELECT deleted_at IS NULL FROM projects WHERE id = $1 FOR {mode}",
+        project_id)
+    if not alive:
+        raise NotFound(missing)
+
+
 async def _folder(conn, folder_id: uuid.UUID, user_id: uuid.UUID, *,
                   lock: bool = False):
     """The folder and the person's role in its project; NotFound for a
@@ -410,8 +431,7 @@ async def create_folder(pool: asyncpg.Pool, user_id: uuid.UUID,
             raise NotFound("No such project.")
         if role not in WRITERS:
             raise NotAllowed("An observer reads notes but does not write them.")
-        await conn.execute("SELECT 1 FROM projects WHERE id = $1 FOR UPDATE",
-                           project_id)
+        await _hold(conn, project_id, "No such project.", mode="UPDATE")
         if await conn.fetchval(
                 "SELECT count(*) FROM note_folders WHERE project_id = $1",
                 project_id) >= FOLDERS_MAX:
@@ -438,12 +458,12 @@ async def rename_folder(pool: asyncpg.Pool, user_id: uuid.UUID,
     if clean is None:
         raise Invalid(f"A folder's name is 1 to {NAME_MAX} characters.")
     async with pool.acquire() as conn, conn.transaction():
+        # As for a new folder: two names given at once wait for each other.
+        await _hold(conn, await conn.fetchval(FOLDER_PROJECT, folder_id),
+                    "No such folder.", mode="UPDATE")
         row, role = await _folder(conn, folder_id, user_id, lock=True)
         if role not in WRITERS:
             raise NotAllowed("An observer reads notes but does not write them.")
-        # As for a new folder: two names given at once wait for each other.
-        await conn.execute("SELECT 1 FROM projects WHERE id = $1 FOR UPDATE",
-                           row["project_id"])
         if clean != row["name"] and await conn.fetchval(
                 "SELECT 1 FROM note_folders WHERE project_id = $1 "
                 "AND lower(name) = lower($2) AND id <> $3",
@@ -459,6 +479,8 @@ async def delete_folder(pool: asyncpg.Pool, user_id: uuid.UUID,
                         folder_id: uuid.UUID) -> dict:
     """Deletes the folder and the notes in it. The journal keeps a line."""
     async with pool.acquire() as conn, conn.transaction():
+        await _hold(conn, await conn.fetchval(FOLDER_PROJECT, folder_id),
+                    "No such folder.")
         row, role = await _folder(conn, folder_id, user_id, lock=True)
         count = await conn.fetchval(
             "SELECT count(*) FROM notes WHERE folder_id = $1", folder_id)
@@ -483,13 +505,14 @@ async def create_note(pool: asyncpg.Pool, user_id: uuid.UUID,
                       blocks: object = None) -> dict:
     clean_t, clean_b = clean_title(title), clean_blocks(blocks)
     async with pool.acquire() as conn, conn.transaction():
-        # Held: a folder deleted meanwhile waits, then takes the note along.
+        # The project held, for the count of its notes, then the folder: a
+        # folder deleted meanwhile waits, then takes the note along.
+        await _hold(conn, await conn.fetchval(FOLDER_PROJECT, folder_id),
+                    "No such folder.", mode="UPDATE")
         folder, role = await _folder(conn, folder_id, user_id, lock=True)
         if role not in WRITERS:
             raise NotAllowed("An observer reads notes but does not write them.")
         project_id = folder["project_id"]
-        await conn.execute("SELECT 1 FROM projects WHERE id = $1 FOR UPDATE",
-                           project_id)
         if await conn.fetchval(
                 "SELECT count(*) FROM notes n JOIN note_folders f "
                 "ON f.id = n.folder_id WHERE f.project_id = $1",
@@ -583,6 +606,8 @@ async def move_note(pool: asyncpg.Pool, user_id: uuid.UUID, note_id: uuid.UUID,
                     folder_id: uuid.UUID) -> dict:
     """Puts the note in another folder of its project."""
     async with pool.acquire() as conn, conn.transaction():
+        await _hold(conn, await conn.fetchval(NOTE_PROJECT, note_id),
+                    "No such note.", mode="UPDATE")
         row, role = await _note_row(conn, note_id, user_id, lock=True)
         if role not in WRITERS:
             raise NotAllowed("An observer reads notes but does not write them.")
@@ -603,6 +628,8 @@ async def delete_note(pool: asyncpg.Pool, user_id: uuid.UUID,
                       note_id: uuid.UUID) -> dict:
     """Deletes the note for everyone. The journal keeps a line."""
     async with pool.acquire() as conn, conn.transaction():
+        await _hold(conn, await conn.fetchval(NOTE_PROJECT, note_id),
+                    "No such note.")
         row, role = await _note_row(conn, note_id, user_id, lock=True)
         if not (role in MANAGERS or (role in WRITERS
                                      and row["created_by"] == user_id)):

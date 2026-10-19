@@ -2,25 +2,29 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Account } from "./Account";
 import { AddMachine } from "./AddMachine";
 import {
-  CoreError, createFolder, createNote, deleteFolder, deleteNote, endTerminal,
-  loadNote, loadState, moveNote, NoteGone, onSignedOut, openTerminal,
-  removeMachine, renameFolder, saveTheme, SignedOut, signOut, type Folder,
+  CoreError, createFolder, createNote, createProject, deleteFolder, deleteNote,
+  deleteProject, editProject, endTerminal, loadNote, loadState, moveMachine,
+  moveNote, NoteGone, onSignedOut, openTerminal, removeMachine, renameFolder,
+  renameTerminal, saveProjectTint, saveTheme, SignedOut, signOut, type Folder,
   type Machine, type MachineKind, type Note, type NoteSummary, type Project,
-  type State, type TerminalInfo, type Theme,
+  type ProjectFields, type ProjectTint, type State, type TerminalInfo,
+  type Theme,
 } from "./api";
+import { colorClass } from "./colors";
 import { Confirm, Removed } from "./Confirm";
 import { Finder, type FinderGroup, type FinderItem } from "./Finder";
 import {
   ChevronRight, Close, Computer, Doc, Folder as FolderIcon, ListCheck, Moon,
-  Person, Pin, Plus, Server, Sun, Trash,
+  Pencil, Person, Pin, Plus, Server, Sun, Trash,
 } from "./icons";
 import { Machines } from "./Machines";
 import { FolderDialog } from "./Menus";
 import { draftsOf, forgetDrafts, markDeleted } from "./drafts";
 import { NoteView, primeNote, type SaveState, type Typed } from "./NoteView";
 import { summary, titled, toMarkdown } from "./noteText";
+import { DeleteProjectDialog, MoveDialog, ProjectDialog } from "./ProjectDialog";
 import { ProjectPage } from "./ProjectPage";
-import { deletesNote, listed, many } from "./rights";
+import { alone, deletesNote, listed, manages, many } from "./rights";
 import { Sidebar } from "./Sidebar";
 import { SignIn } from "./SignIn";
 import { socket } from "./socket";
@@ -230,6 +234,8 @@ export function App() {
   const [state, setState] = useState<State | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [theme, setTheme] = useState<Theme>("system");
+  /** How much of a project's color the sidebar shows (0.1.1). */
+  const [tint, setTint] = useState<ProjectTint>("badge");
   const [shownTheme, setShownTheme] = useState<Shown>(() =>
     document.documentElement.classList.contains("tt-light") ? "light" : "dark");
   const [open, setOpen] = useState(false);
@@ -245,6 +251,12 @@ export function App() {
   const [online, setOnline] = useState(true);
   const [asking, setAsking] = useState<Asking | null>(null);
   const [naming, setNaming] = useState<Naming | null>(null);
+  /** The window of a new project, or the pencil on a project (0.1.1). */
+  const [projectWindow, setProjectWindow] = useState<{ project?: Project } | null>(null);
+  const [moving, setMoving] = useState<Machine | null>(null);
+  const [deleting, setDeleting] = useState<Project | null>(null);
+  /** The terminal whose tab is being named. */
+  const [renaming, setRenaming] = useState<string | null>(null);
   const [removed, setRemoved] = useState<{ name: string; cleanup: string } | null>(null);
   const [folded, setFolded] = useState<Set<string>>(rememberedFolds);
   const [live, setLive] = useState<Record<string, Live>>({});
@@ -288,6 +300,7 @@ export function App() {
         lastUser.current = loaded.me.id;
         setState(loaded);
         setTheme(loaded.me.theme);
+        setTint(loaded.me.projectTint ?? "badge");
         if (!pruned.current) {
           // Tabs left from before: those of terminals still running, and of
           // notes and projects still there, stay.
@@ -328,6 +341,10 @@ export function App() {
     setAdding(null);
     setAsking(null);
     setNaming(null);
+    setProjectWindow(null);
+    setMoving(null);
+    setDeleting(null);
+    setRenaming(null);
     setRemoved(null);
     setPalette(false);
     setPicking(false);
@@ -619,7 +636,7 @@ export function App() {
     setState((s) => s && eachFolder(s, (f) =>
       ({ ...f, notes: f.notes.filter((n) => n.id !== asked.noteId) })));
     notYet(`The note ${titled(result.title)} is deleted from ` +
-      `${asked.folder.name}.${asked.project.personal ? ""
+      `${asked.folder.name}.${alone(asked.project) ? ""
         : " The journal has a line about it."}`);
     refresh();
   }, [closeTabs, notYet, refresh]);
@@ -640,7 +657,7 @@ export function App() {
     const n = result.notes;
     notYet(`The folder ${result.name}${n === 0 ? " is deleted."
       : n === 1 ? " and its note are deleted."
-      : ` and its ${n} notes are deleted.`}${asked.project.personal ? ""
+      : ` and its ${n} notes are deleted.`}${alone(asked.project) ? ""
         : " The journal has a line about it."}`);
     refresh();
   }, [closeTabs, notYet, refresh]);
@@ -666,6 +683,90 @@ export function App() {
         : e instanceof CoreError ? `Could not copy: ${e.message}`
         : "Could not copy: the browser did not let the page."));
   }, [notYet]);
+
+  // ---------------------------------------------------- projects (0.1.1)
+
+  /** A new project, opened on its page; or the pencil's changes. */
+  const saveProject = useCallback(async (asked: { project?: Project },
+    fields: ProjectFields) => {
+    // A refusal comes back as an error, which the window shows.
+    const was = asked.project;
+    if (!was) {
+      const made = await createProject(fields.name, fields.code, fields.color);
+      setState((s) => s && { ...s,
+        projects: [...s.projects.filter((p) => p.id !== made.id), made] });
+      setProjectWindow(null);
+      unfold(`p:${made.id}`);
+      openTab(projectTab(made.id));
+    } else {
+      const change: Partial<ProjectFields> = {};
+      if (fields.name !== was.name) change.name = fields.name;
+      if (fields.code !== was.code) change.code = fields.code;
+      if (fields.color !== was.color) change.color = fields.color;
+      if (Object.keys(change).length) {
+        const changed = await editProject(was.id, change);
+        setState((s) => s && { ...s, projects: s.projects.map((p) =>
+          (p.id === changed.id ? { ...p, name: changed.name, code: changed.code,
+            color: changed.color } : p)) });
+      }
+      setProjectWindow(null);
+    }
+    refresh();
+  }, [openTab, refresh, unfold]);
+
+  const removeProject = useCallback(async (asked: Project) => {
+    const project = stateNow.current?.projects.find((p) => p.id === asked.id) ?? asked;
+    const result = await deleteProject(project.id);
+    setDeleting(null);
+    const inside = project.folders.flatMap((f) => f.notes.map((n) => n.id));
+    for (const id of inside) markDeleted(id);
+    closeTabs([projectTab(project.id), ...inside.map(noteTab)], true);
+    setState((s) => s && { ...s, projects: s.projects.filter((p) => p.id !== project.id) });
+    notYet(`${result.name} is deleted${result.notes === 1 ? ", with its note"
+      : result.notes ? `, with its ${result.notes} notes` : ""}.`);
+    refresh();
+  }, [closeTabs, notYet, refresh]);
+
+  /** A machine moved to another project of one's own: the lists follow at
+   * once, its terminals keep running. */
+  const moveTo = useCallback(async (machine: Machine, projectId: string) => {
+    const moved = await moveMachine(machine.id, projectId);
+    setMoving(null);
+    const byName = (a: Machine, b: Machine) =>
+      a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+    setState((s) => s && { ...s, projects: s.projects.map((p) => {
+      const without = p.machines.filter((m) => m.id !== machine.id);
+      if (p.id === moved.projectId) {
+        return { ...p, machines: [...without, { ...machine, name: moved.name }].sort(byName) };
+      }
+      return without.length === p.machines.length ? p : { ...p, machines: without };
+    }) });
+    unfold(`p:${moved.projectId}`, `m:${moved.id}`);
+    notYet(`${machine.name} is in ${moved.project} now, as ${moved.code}/${moved.name}. ` +
+      "Its terminals keep running.");
+    refresh();
+  }, [notYet, refresh, unfold]);
+
+  /** The naming of this tab over, and of no other begun meanwhile. */
+  const stopRenaming = useCallback((id: string) => {
+    setRenaming((was) => (was === id ? null : was));
+  }, []);
+  /** A terminal named in its tab. */
+  const renameTab = useCallback((id: string, name: string) => {
+    renameTerminal(id, name)
+      .then((info) => {
+        stopRenaming(id);
+        setStatuses((all) => (all[id] ? { ...all, [id]: { ...all[id], label: info.label } }
+          : all));
+        setState((s) => s && { ...s, terminals: s.terminals.map((t) =>
+          (t.id === id ? { ...t, name: info.name, label: info.label } : t)) });
+        refresh();
+      })
+      .catch((e: Error) => {
+        stopRenaming(id);
+        notYet(`Could not rename it: ${e.message}`);
+      });
+  }, [notYet, refresh, stopRenaming]);
 
   // What open notes tell of themselves.
   const onSummary = useCallback((noteId: string, typed: Typed) => {
@@ -710,6 +811,11 @@ export function App() {
   const toggleTheme = useCallback(() => {
     chooseTheme(shown(theme) === "light" ? "dark" : "light");
   }, [theme, chooseTheme]);
+  const chooseTint = useCallback((next: ProjectTint) => {
+    setTint(next);
+    saveProjectTint(next).catch(() =>
+      notYet("Could not save the project colors: tTerm Web did not answer."));
+  }, [notYet]);
 
   /** The name changed on the account page: the sidebar and the greetings
    * follow at once. */
@@ -750,11 +856,12 @@ export function App() {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !pinned && !adding && !naming) setOpen(false);
+      if (event.key === "Escape" && !pinned && !adding && !naming &&
+        !projectWindow && !moving && !deleting && !renaming) setOpen(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [pinned, adding, naming]);
+  }, [pinned, adding, naming, projectWindow, moving, deleting, renaming]);
 
   // The palette: Cmd+K on a Mac, Ctrl+Shift+K elsewhere, before the
   // terminal hears it.
@@ -788,7 +895,8 @@ export function App() {
       const where = findNote(projects, id);
       const title = live[id]?.title ?? where?.note.title ?? "";
       return {
-        id: tab, kind, code: where?.project.code ?? "", label: titled(title),
+        id: tab, kind, code: where?.project.code ?? "", color: where?.project.color,
+        label: titled(title),
         untitled: !title.trim(), checklist: (live[id]?.total ?? where?.note.total ?? 0) > 0,
         title: where ? `Note in ${where.folder.name}` : "Note",
         closeTitle: "Close the note. It stays in its folder.",
@@ -797,7 +905,8 @@ export function App() {
     if (kind === "project") {
       const project = projects.find((p) => p.id === id);
       return {
-        id: tab, kind, code: project?.code ?? "", label: project?.name ?? "Project",
+        id: tab, kind, code: project?.code ?? "", color: project?.color,
+        label: project?.name ?? "Project",
         title: project ? `${project.name}: its machines and notes` : "Project",
         closeTitle: "Close the page",
       };
@@ -809,19 +918,29 @@ export function App() {
     const dot = dotOf(status, known, !!state && !known && !status);
     const where = status?.where ? ` · ${status.where}` : "";
     const slash = full.indexOf("/");
+    const home = known && projects.find((p) => p.machines.some((m) => m.id === known.machineId));
+    const canRename = !!known && dot !== "ended";
+    const said = dot === "away"
+      ? `${full}: ${machine} is asleep or offline, the terminal waits for it`
+      : dot === "ended" ? `${full}: ended`
+      : dot === "busy" && status?.running ? `${full}${where}: a command is running`
+      : `${full}${where}`;
     return {
-      id: tab, kind, code: slash > 0 ? full.slice(0, slash) : "",
+      id: tab, kind, code: slash > 0 ? full.slice(0, slash) : "", color: home?.color,
       label: slash > 0 ? full.slice(slash + 1) : full, dot,
-      title: dot === "away"
-        ? `${full}: ${machine} is asleep or offline, the terminal waits for it`
-        : dot === "ended" ? `${full}: ended`
-        : dot === "busy" && status?.running ? `${full}${where}: a command is running`
-        : `${full}${where}`,
+      machine, name: known?.name, canRename,
+      title: canRename ? `${said}\nDouble-click to name it` : said,
       closeTitle: "Close the tab. The terminal keeps running, in the sidebar " +
         "under its machine.",
     };
   });
   const front = tabViews.find((t) => t.id === current);
+  // A tab being named that can be named no more, its terminal ended or the
+  // tab closed: the naming is over too.
+  const renamable = !!renaming && tabViews.some((t) => t.id === renaming && t.canRename);
+  useEffect(() => {
+    if (renaming && !renamable) setRenaming(null);
+  }, [renaming, renamable]);
   const accountOpen = !current && ACCOUNT_PATH.test(path);
   const title = front
     ? `${front.kind === "terminal" && front.code ? `${front.code}/` : ""}${front.label} · tTerm`
@@ -973,13 +1092,29 @@ export function App() {
       key: `p-${p.id}`,
       label: p.name,
       hint: "machines and notes",
-      icon: <span className="code-chip" aria-hidden="true">{p.code}</span>,
+      icon: <span className={`code-chip ${colorClass(p.color)}`} aria-hidden="true">{p.code}</span>,
       words: `project page ${p.code} folders`,
       run: () => openTab(projectTab(p.id)),
     }));
     const noteHere = frontKind === "note" ? findNote(projects, tabTarget(current!)) : null;
     const actions: FinderItem[] = [
       ...addItem,
+      {
+        key: "new-project",
+        label: "New project",
+        hint: "its own machines and notes",
+        icon: <Plus size={15} />,
+        words: "project new create make",
+        run: () => setProjectWindow({}),
+      },
+      ...(pageProject && manages(pageProject) ? [{
+        key: "edit-project",
+        label: `Edit ${pageProject.name}`,
+        hint: "name, code and color",
+        icon: <Pencil size={15} />,
+        words: "project rename edit code color colour",
+        run: () => setProjectWindow({ project: pageProject }),
+      }] : []),
       ...projects.filter((p) => p.role !== "observer").map((p): FinderItem => ({
         key: `folder-${p.id}`,
         label: projects.length > 1 ? `New folder in ${p.name}` : "New folder",
@@ -1005,6 +1140,13 @@ export function App() {
         run: () => closeTab(current),
       }] : []),
       ...(runningHere ? [{
+        key: "rename-terminal",
+        label: "Name this terminal",
+        hint: "instead of its number",
+        icon: <Pencil size={15} />,
+        words: "terminal rename name label",
+        run: () => setRenaming(runningHere.id),
+      }, {
         key: "end-terminal",
         label: "End this terminal",
         hint: "its shell ends",
@@ -1055,7 +1197,7 @@ export function App() {
   };
 
   return (
-    <div className={pinned ? "app pinned" : "app"}>
+    <div className={`${pinned ? "app pinned" : "app"}${tint === "block" ? " tint-block" : ""}`}>
       <TabBar sidebarButton={sidebarButton} tabs={tabViews}
         current={current} onSelect={(tab) => navigate(tabPath(tab))}
         onClose={closeTab}
@@ -1075,7 +1217,14 @@ export function App() {
           setPicking(false);
           setPalette(true);
         }}
-        saving={frontKind === "note" ? saveLine(saveStates[tabTarget(current!)]) : null} />
+        saving={frontKind === "note" ? saveLine(saveStates[tabTarget(current!)]) : null}
+        renaming={renaming}
+        onStartRename={(id) => {
+          setPicking(false);
+          setRenaming(id);
+        }}
+        onRename={renameTab}
+        onStopRename={stopRenaming} />
 
       <div className="stage">
         {shownTabs.filter(isTerminalTab).map((id) => (
@@ -1100,6 +1249,12 @@ export function App() {
                 terminals={liveTerminals} dotFor={dotFor}
                 onAddMachine={startAdding} onOpenTerminal={startTerminal}
                 onGoTo={goTo} onRemoveMachine={askRemove}
+                onMoveMachine={pageProject.own && projects.some((p) => p.own &&
+                  p.role === "owner" && p.id !== pageProject.id)
+                  ? (machine) => setMoving(machine) : undefined}
+                onEditProject={(project) => setProjectWindow({ project })}
+                onDeleteProject={(project) => setDeleting(project)}
+                onNewProject={() => setProjectWindow({})}
                 onNewFolder={(project) => setNaming({ kind: "new", project })}
                 onRenameFolder={(folder, project) =>
                   setNaming({ kind: "rename", folder, project })}
@@ -1126,7 +1281,7 @@ export function App() {
         {accountOpen && (
           <div className="page-scroll">
             <Account key={accountVisit} me={state.me} theme={theme}
-              onTheme={chooseTheme}
+              onTheme={chooseTheme} tint={tint} onTint={chooseTint}
               onRenamed={renamed} onSignOut={signOutHere}
               onSignedOut={(note) => {
                 // This device forgotten: nothing of the person stays here.
@@ -1180,6 +1335,7 @@ export function App() {
           onNewFolder={(project) => setNaming({ kind: "new", project })}
           onNewNote={(folderId) => away(() => newNote(folderId))()}
           onOpenNote={(noteId) => away(() => openTab(noteTab(noteId)))()}
+          onNewProject={() => away(() => setProjectWindow({}))()}
           onAccount={openAccount}
           accountOpen={accountOpen}
           onHome={away(() => navigate("/"))}
@@ -1212,14 +1368,40 @@ export function App() {
           initial={naming.kind === "rename" ? naming.folder.name : ""}
           action={naming.kind === "new" ? "Create folder" : "Save"}
           help={naming.kind === "new"
-            ? `${naming.project.personal ? "Only you see it."
+            ? `${alone(naming.project) ? "Only you see it."
               : `Everyone in ${naming.project.name} sees it and can write notes in it.`}` +
               " Then + next to the folder starts the first note."
-            : naming.project.personal ? "Only you see it."
+            : alone(naming.project) ? "Only you see it."
             : `Everyone in ${naming.project.name} sees the new name at once. ` +
               "The notes inside stay as they are."}
           onSave={(name) => saveFolder(naming, name)}
           onCancel={() => setNaming(null)} />
+      )}
+
+      {projectWindow && (
+        // A window for another project, opened from the palette over this
+        // one, starts again with that project's own values.
+        <ProjectDialog key={projectWindow.project?.id ?? "new"}
+          project={projectWindow.project} projects={projects}
+          onSave={(fields) => saveProject(projectWindow, fields)}
+          onCancel={() => setProjectWindow(null)} />
+      )}
+
+      {moving && (() => {
+        const from = projects.find((p) => p.machines.some((m) => m.id === moving.id));
+        return (
+          <MoveDialog machine={moving}
+            targets={projects.filter((p) => p.own && p.role === "owner" && p.id !== from?.id)}
+            onMove={(projectId) => moveTo(moving, projectId)}
+            onCancel={() => setMoving(null)} />
+        );
+      })()}
+
+      {deleting && (
+        <DeleteProjectDialog
+          project={projects.find((p) => p.id === deleting.id) ?? deleting}
+          onDelete={() => removeProject(deleting)}
+          onCancel={() => setDeleting(null)} />
       )}
 
       {asking?.kind === "remove" && (
@@ -1263,7 +1445,7 @@ export function App() {
           onConfirm={() => removeNote(asking)}
           onCancel={() => setAsking(null)}>
           <p>
-            {asking.project.personal ? "It is gone for good."
+            {alone(asking.project) ? "It is gone for good."
               : `Everyone in ${asking.project.name} loses it, also whoever has ` +
                 "it open now. The journal keeps a line: who deleted it, and when."}
           </p>
@@ -1289,7 +1471,7 @@ export function App() {
                   `with it: ${named}.`
                 : "The folder is empty."}
             </p>
-            {inside.length > 0 && !asking.project.personal && (
+            {inside.length > 0 && !alone(asking.project) && (
               <p>
                 Everyone in {asking.project.name} loses them, also whoever has
                 one open now. The journal keeps a line: who deleted the folder,

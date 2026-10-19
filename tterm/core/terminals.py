@@ -205,6 +205,23 @@ def clamp_size(cols: int, rows: int) -> tuple[int, int]:
             max(MIN_ROWS, min(MAX_ROWS, int(rows))))
 
 
+#: A terminal's name, at most (0.1.1).
+NAME_MAX = 40
+
+
+def clean_name(name: object) -> str | None:
+    """A terminal's name as its owner gives it: one line, 1 to 40
+    characters, or None."""
+    if not isinstance(name, str):
+        return None
+    try:
+        name.encode("utf-8")
+    except UnicodeEncodeError:
+        return None
+    name = accounts.one_line(name)
+    return name if 1 <= len(name) <= NAME_MAX else None
+
+
 def _code(text: str) -> int | None:
     return int(text) if text.isdigit() else None
 
@@ -1060,6 +1077,51 @@ class Terminals:
             HISTORY_MAX)
         return [{"command": r["command"], "here": r["here"]} for r in rows]
 
+    async def rename(self, terminal_id: uuid.UUID, user_id: uuid.UUID,
+                     name: object) -> Terminal:
+        """The person's terminal named as they like (0.1.1): the sidebar,
+        the tab and the project's page show it. NotOpen if it is not
+        running; NotAllowed with a name that will not do."""
+        terminal = self.get(terminal_id, user_id)
+        if terminal is None:
+            raise LookupError("No such terminal.")
+        if terminal.state == "ended":
+            raise NotOpen("The terminal is not running any more.")
+        cleaned = clean_name(name)
+        if cleaned is None:
+            raise NotAllowed(f"Name the terminal: up to {NAME_MAX} characters.")
+        if cleaned.isdigit():
+            # Numbers are how terminals go before they are named: 1 shows
+            # as the machine alone, and a 2 would look like another one.
+            raise NotAllowed("A name needs a letter in it: numbers alone are "
+                             "how tTerm counts terminals.")
+        if cleaned != terminal.name:
+            await self.pool.execute(
+                "UPDATE terminals SET name = $2 WHERE id = $1",
+                terminal.id, cleaned)
+            terminal.name = cleaned
+            terminal._changed()
+        return terminal
+
+    def retag(self, machine_id: uuid.UUID, project_id: uuid.UUID, code: str,
+              name: str) -> None:
+        """A machine moved to another project (projects.move_machine): its
+        running terminals go by the new project, its code and the machine's
+        name there."""
+        for t in self._live.values():
+            if t.machine.id == machine_id:
+                t.machine.project_id = project_id
+                t.machine.code = code
+                t.machine.name = name
+                t._changed()
+
+    def recode(self, project_id: uuid.UUID, code: str) -> None:
+        """The project's code changed: its terminals' labels follow."""
+        for t in self._live.values():
+            if t.machine.project_id == project_id and t.machine.code != code:
+                t.machine.code = code
+                t._changed()
+
     async def end_machine(self, machine_id: uuid.UUID, reason: str) -> None:
         """Ends every terminal of a machine that was removed, saying why."""
         await asyncio.gather(*(t.close(reason) for t in list(self._live.values())
@@ -1244,7 +1306,7 @@ class Watcher:
 
     async def _state(self) -> None:
         t = self.terminal
-        now = (t.state, t.reason, t.markers, t.shell, t.away)
+        now = (t.state, t.reason, t.markers, t.shell, t.away, t.label)
         if now != self._state_sent:
             self._state_sent = now
             await self._json({"op": "state", "ch": self.channel,

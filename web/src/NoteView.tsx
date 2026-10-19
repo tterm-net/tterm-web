@@ -19,6 +19,7 @@ import {
   draftKey, draftsOff, dropDrafts, isDeleted, leftDrafts, writeDraft,
   type Base, type Doc,
 } from "./drafts";
+import { colorClass } from "./colors";
 import { Folder as FolderIcon } from "./icons";
 import { MenuButton, NoteMenuItems } from "./Menus";
 import { fit, NoteEditor } from "./NoteEditor";
@@ -670,7 +671,7 @@ export function NoteView(props: Props) {
       : `${who(note.editedBy)} edited it ${ago(note.editedAt)} · ` +
         `${who(note.createdBy)} wrote it ${onDay(note.createdAt)}`;
     if (project) {
-      meta += project.personal ? " · only you see it"
+      meta += project.personal || project.alone ? " · only you see it"
         : ` · everyone in ${project.name} can edit`;
     }
   }
@@ -715,7 +716,8 @@ export function NoteView(props: Props) {
       <>
         <div className="note-crumb">
           <span className="note-where">
-            <span className="code-chip" aria-hidden="true">{project?.code ?? ""}</span>
+            <span className={`code-chip ${colorClass(project?.color)}`}
+              aria-hidden="true">{project?.code ?? ""}</span>
             <span className="note-where-name">{project?.name ?? ""}</span>
             <span aria-hidden="true">·</span>
             <FolderIcon size={13} />

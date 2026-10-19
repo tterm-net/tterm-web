@@ -9,9 +9,11 @@
 // It slides over the page and does not push it, so that opening it never
 // changes the terminal's width; pinned, it narrows the page once. A terminal
 // pointed at offers End (from 0.0.8), which asks first. The account at the
-// bottom opens the account page (from 0.0.10).
+// bottom opens the account page (from 0.0.10). From 0.1.1 each project's
+// badge is in its color, and New project makes one of one's own.
 
 import type { Machine, Me, Project, Role, TerminalInfo } from "./api";
+import { colorClass, terminalName } from "./colors";
 import {
   ChevronDown, Close, Computer, Folder as FolderIcon, FolderOpen, Logo, Moon,
   Pin, Plus, Server, Sun,
@@ -57,6 +59,7 @@ interface Props {
   onNewFolder: (project: Project) => void;
   onNewNote: (folderId: string) => void;
   onOpenNote: (noteId: string) => void;
+  onNewProject: () => void;
   /** The machines page. */
   onHome: () => void;
   notYet: (what: string) => void;
@@ -138,7 +141,7 @@ export function Sidebar(props: Props) {
                   : `Go to ${t.label}`}
                 onClick={() => props.onGoTo(t.id)}>
                 <Avatar who={null} me={me} size="xs" />
-                <span className="sb-text">terminal {t.name}</span>
+                <span className="sb-text">{terminalName(t.name)}</span>
                 {dot !== "open" && <span className={`dot ${dot}`} aria-hidden="true" />}
               </button>
               <button type="button" className="tree-action"
@@ -222,7 +225,7 @@ export function Sidebar(props: Props) {
           const key = `p:${project.id}`;
           const open = !folded.has(key);
           return (
-            <div key={project.id} className="sb-project">
+            <div key={project.id} className={`sb-project ${colorClass(project.color)}`}>
               <div className="project-row">
                 <button type="button" className="chevron" aria-expanded={open}
                   aria-label={`${open ? "Fold" : "Unfold"} ${project.name}`}
@@ -264,8 +267,7 @@ export function Sidebar(props: Props) {
             </div>
           );
         })}
-        <button type="button" className="new-project"
-          onClick={() => props.notYet("New projects come with teams, in the next version.")}>
+        <button type="button" className="new-project" onClick={props.onNewProject}>
           <span className="dashed-tile" aria-hidden="true">
             <Plus size={13} />
           </span>

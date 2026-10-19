@@ -4,7 +4,13 @@ tTerm in the browser: a real terminal with command blocks, for people who work
 with servers and for their teams. Projects, roles, a journal of who ran what,
 and watching a colleague's terminal, always with them knowing.
 
-**Status:** early development. Version 0.1.0 adds notes: each project keeps
+**Status:** early development. Version 0.1.1 lets you make projects of your
+own besides Personal, rename any of them, Personal too, and give each a
+color: it fills the project's code badge, or tints its whole block in the
+sidebar, as you choose on the account page. A machine moves from one
+project to another with its terminals running, a project without machines
+can be deleted, and a terminal gets a name of its own with a double click on
+its tab. Version 0.1.0 adds notes: each project keeps
 them in folders, the way terminals live on machines, with Markdown as you
 type, checklists that say who ticked an item and when, and code with Copy. A
 note written on two devices at once keeps the changes of both, and asks only

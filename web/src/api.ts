@@ -9,6 +9,17 @@
 export type Theme = "system" | "light" | "dark";
 export type Role = "owner" | "admin" | "member" | "observer";
 export type MachineKind = "server" | "computer";
+/** A project's color (0.1.1): it marks the project in the sidebar and in
+ * tabs, for everyone in it. */
+export type ProjectColor =
+  | "violet" | "sky" | "teal" | "pink" | "orange" | "lime" | "indigo" | "slate";
+/** In the order new projects take them, as the core has it. */
+export const PROJECT_COLORS: ProjectColor[] = [
+  "violet", "sky", "teal", "pink", "orange", "lime", "indigo", "slate",
+];
+/** How much of a project's color the sidebar shows: its badge only, or the
+ * whole block of the project. Each person's own choice. */
+export type ProjectTint = "badge" | "block";
 
 export interface Passport {
   os?: string;
@@ -75,9 +86,15 @@ export interface Project {
   id: string;
   name: string;
   code: string;
+  color: ProjectColor;
   role: Role;
-  /** The person's own Personal project, which is theirs alone (0.1.0). */
+  /** The person's first project, Personal unless renamed, which is theirs
+   * alone (0.1.0) and stays. */
   personal: boolean;
+  /** Theirs: they made it (0.1.1). */
+  own: boolean;
+  /** Nobody else in it: "only you". */
+  alone: boolean;
   machines: Machine[];
   /** Its folders of notes, by name (0.1.0). */
   folders: Folder[];
@@ -166,6 +183,7 @@ export interface Me {
   firstName: string;
   initials: string;
   theme: Theme;
+  projectTint: ProjectTint;
   plan: string;
   email: string | null;
 }
@@ -527,6 +545,65 @@ export async function forgetDevice(id: string): Promise<{ current: boolean }> {
 
 export async function saveTheme(theme: Theme): Promise<void> {
   await check(await fetch("/api/me", change("PATCH", { theme })));
+}
+
+export async function saveProjectTint(projectTint: ProjectTint): Promise<void> {
+  await check(await fetch("/api/me", change("PATCH", { projectTint })));
+}
+
+// ----------------------------------------------------- projects (0.1.1)
+
+/** A project of one's own, as the sidebar lists it. */
+export async function createProject(name: string, code: string,
+  color: ProjectColor): Promise<Project> {
+  return (await check(await fetch("/api/projects",
+    change("POST", { name, code, color })))).json();
+}
+
+export interface ProjectFields {
+  name: string;
+  code: string;
+  color: ProjectColor;
+}
+
+/** The name, the code or the color changed: the project as it is now. */
+export async function editProject(id: string,
+  fields: Partial<ProjectFields>): Promise<ProjectFields & { id: string }> {
+  return (await check(await fetch(`/api/projects/${id}`,
+    change("PATCH", fields)))).json();
+}
+
+/** Deletes a project with no machines in it, with its notes. */
+export async function deleteProject(id: string): Promise<{
+  id: string; name: string; folders: number; notes: number;
+}> {
+  return (await check(await fetch(`/api/projects/${id}`,
+    { method: "DELETE", headers: { "x-tterm": "1" } }))).json();
+}
+
+/** A machine moved to another project of one's own. */
+export interface Moved {
+  id: string;
+  /** Its name there: with a number, where its own was taken. */
+  name: string;
+  kind: MachineKind;
+  projectId: string;
+  project: string;
+  code: string;
+  /** The project it came from. */
+  from: string;
+}
+
+export async function moveMachine(id: string, projectId: string): Promise<Moved> {
+  return (await check(await fetch(`/api/machines/${id}/move`,
+    change("POST", { projectId })))).json();
+}
+
+/** A name for a terminal instead of its number. */
+export async function renameTerminal(id: string,
+  name: string): Promise<TerminalInfo> {
+  return (await check(await fetch(`/api/terminals/${id}`,
+    change("PATCH", { name })))).json();
 }
 
 export async function newInstall(projectId: string,

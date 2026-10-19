@@ -1,12 +1,13 @@
 // The account page (0.0.10), from the account at the bottom of the sidebar
 // and from the palette, as approved on the canvas on 16.10: the name, which
 // the person changes here; the plan and what counts against it; the trusted
-// devices; the theme; Sign out, which only this page has; and where the
+// devices; the theme, and from 0.1.1 how much of a project's color the
+// sidebar shows; Sign out, which only this page has; and where the
 // documents and support are. Tabs stay above it; Close or Esc goes back.
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
-  loadAccount, saveName, type AccountInfo, type Me, type Theme,
+  loadAccount, saveName, type AccountInfo, type Me, type ProjectTint, type Theme,
 } from "./api";
 import { DevicesSection } from "./Devices";
 import { Close, Monitor, Moon, SignOut, Sun } from "./icons";
@@ -15,6 +16,8 @@ interface Props {
   me: Me;
   theme: Theme;
   onTheme: (theme: Theme) => void;
+  tint: ProjectTint;
+  onTint: (tint: ProjectTint) => void;
   onRenamed: (named: { name: string; firstName: string; initials: string }) => void;
   /** Sign out: this browser forgets the person. */
   onSignOut: () => Promise<void>;
@@ -28,6 +31,11 @@ const THEMES: { value: Theme; label: string; icon: ReactNode }[] = [
   { value: "system", label: "System", icon: <Monitor size={14} /> },
   { value: "light", label: "Light", icon: <Sun size={14} /> },
   { value: "dark", label: "Dark", icon: <Moon size={14} /> },
+];
+
+const TINTS: { value: ProjectTint; label: string }[] = [
+  { value: "badge", label: "Code badge" },
+  { value: "block", label: "Whole project" },
 ];
 
 const SUPPORT = "support@tterm.net";
@@ -233,7 +241,8 @@ export function Account(props: Props) {
         <div className="account-section-head">
           <h2 id="ac-appearance">Appearance</h2>
           <p>Saved to your account. System follows the setting of each computer
-            you use.</p>
+            you use. A project's color fills its code badge, or tints the whole
+            project in the sidebar.</p>
         </div>
         <div className="account-card theme-card">
           <span className="theme-label">Theme</span>
@@ -243,6 +252,18 @@ export function Account(props: Props) {
                 aria-pressed={props.theme === t.value}
                 onClick={() => props.onTheme(t.value)}>
                 {t.icon}
+                {t.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="account-card theme-card">
+          <span className="theme-label">Project colors</span>
+          <div className="segmented" role="group" aria-label="Project colors">
+            {TINTS.map((t) => (
+              <button key={t.value} type="button"
+                aria-pressed={props.tint === t.value}
+                onClick={() => props.onTint(t.value)}>
                 {t.label}
               </button>
             ))}

@@ -93,9 +93,15 @@ async def room_problem(pool: asyncpg.Pool | asyncpg.Connection,
 
 async def _make_room(conn: asyncpg.Connection, project_id: uuid.UUID) -> None:
     """In the transaction that adds a machine: one at a time per owner, and
-    only while there is room."""
-    owner_id = await conn.fetchval("SELECT owner_id FROM projects WHERE id = $1",
-                                   project_id)
+    only while there is room. The project's row is held meanwhile: a
+    project is not deleted with a machine coming in (projects.delete), and
+    one deleted already takes none."""
+    project = await conn.fetchrow(
+        "SELECT owner_id, deleted_at FROM projects WHERE id = $1 FOR SHARE",
+        project_id)
+    if project is None or project["deleted_at"] is not None:
+        raise LimitReached("The project was deleted in tTerm Web meanwhile.")
+    owner_id = project["owner_id"]
     await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))",
                        f"machines-of:{owner_id}")
     problem = await room_problem(conn, project_id)

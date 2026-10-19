@@ -1,16 +1,19 @@
 // A project's page, in a tab of its own, opened from the project's name in
 // the sidebar (0.1.0): its machines with the terminals running on them, and
-// its notes in folders, as on the approved canvas. People and the journal
-// come with teams, in the next step.
+// its notes in folders, as on the approved canvas. From 0.1.1 the pencil
+// next to its name changes the name, the code and the color, ⋯ next to a
+// machine moves it to another project of one's own, and Delete project is
+// at the very end. People and the journal come with teams, later.
 
 import { useEffect, useState } from "react";
 import type {
   Folder, Machine, MachineKind, Me, NoteSummary, Project, TerminalInfo, Who,
 } from "./api";
 import { shortPath } from "./BlockView";
+import { colorClass, terminalName } from "./colors";
 import {
-  Computer, Doc, Folder as FolderIcon, FolderPlus, ListCheck, Lock, Plus,
-  Server, Trash,
+  Computer, Doc, Folder as FolderIcon, FolderPlus, ListCheck, Lock, Pencil,
+  Plus, Server, Trash,
 } from "./icons";
 import { FolderMenuItems, MenuButton, NoteMenuItems } from "./Menus";
 import { titled } from "./noteText";
@@ -37,6 +40,12 @@ interface Props {
   onOpenTerminal: (machineId: string) => void;
   onGoTo: (terminalId: string) => void;
   onRemoveMachine: (machine: Machine) => void;
+  /** Moves a machine to another project of one's own: only when there is
+   * another one. */
+  onMoveMachine?: (machine: Machine) => void;
+  onEditProject: (project: Project) => void;
+  onDeleteProject: (project: Project) => void;
+  onNewProject: () => void;
   onNewFolder: (project: Project) => void;
   onRenameFolder: (folder: Folder, project: Project) => void;
   onDeleteFolder: (folder: Folder, project: Project) => void;
@@ -91,7 +100,7 @@ function TerminalRow({ t, me, dot, onGoTo }: {
     <li className="pp-row">
       <Avatar who={null} me={me} size="small" />
       <span className="pp-row-text">
-        <strong>terminal {t.name}</strong>
+        <strong>{terminalName(t.name)}</strong>
         <span className="pp-row-sub mono">
           <span className={`dot ${dot}`} aria-hidden="true" />
           <span className="pp-ellipsis">{text || "~"}</span>
@@ -116,6 +125,7 @@ function MachineCard(props: {
   onOpenTerminal: (machineId: string) => void;
   onGoTo: (terminalId: string) => void;
   onRemoveMachine: (machine: Machine) => void;
+  onMoveMachine?: (machine: Machine) => void;
   notYet: (what: string) => void;
 }) {
   const { machine: m, project } = props;
@@ -148,16 +158,30 @@ function MachineCard(props: {
             New terminal
           </button>
           {manages(project) && (
-            <MenuButton label={`${m.name}: machine menu`} title="Remove machine">
+            <MenuButton label={`${m.name}: machine menu`}
+              title={props.onMoveMachine ? "Move to another project, Remove machine"
+                : "Remove machine"}>
               {(close) => (
-                <button type="button" className="menu-item danger" role="menuitem"
-                  onClick={() => {
-                    close();
-                    props.onRemoveMachine(m);
-                  }}>
-                  <Trash size={15} />
-                  <span className="menu-text">Remove machine</span>
-                </button>
+                <>
+                  {props.onMoveMachine && (
+                    <button type="button" className="menu-item" role="menuitem"
+                      onClick={() => {
+                        close();
+                        props.onMoveMachine?.(m);
+                      }}>
+                      <FolderIcon size={15} />
+                      <span className="menu-text">Move to another project</span>
+                    </button>
+                  )}
+                  <button type="button" className="menu-item danger" role="menuitem"
+                    onClick={() => {
+                      close();
+                      props.onRemoveMachine(m);
+                    }}>
+                    <Trash size={15} />
+                    <span className="menu-text">Remove machine</span>
+                  </button>
+                </>
               )}
             </MenuButton>
           )}
@@ -236,10 +260,12 @@ export function ProjectPage(props: Props) {
 
   const machineIds = new Set(project.machines.map((m) => m.id));
   const running = props.terminals.filter((t) => machineIds.has(t.machineId));
+  // Nobody else in it: Personal, and until people come, every project.
+  const alone = project.personal || project.alone;
   const line = [
     many(project.machines.length, "machine", "machines"),
     many(running.length, "terminal open", "terminals open"),
-    project.personal ? "only you" : ROLE_LINE[project.role],
+    alone ? "only you" : ROLE_LINE[project.role],
   ].join(" · ");
   const manage = manages(project);
   const write = writes(project);
@@ -247,9 +273,17 @@ export function ProjectPage(props: Props) {
   return (
     <main className="project-view" aria-labelledby="pp-title">
       <div className="pp-head">
-        <div className="pp-title-row">
+        <div className={`pp-title-row ${colorClass(project.color)}`}>
           <h1 id="pp-title">{project.name}</h1>
           <span className="pp-code" title="Short code">{project.code}</span>
+          {manage && (
+            <button type="button" className="icon-button small"
+              aria-label="Edit name, code and color"
+              title="Edit name, code and color"
+              onClick={() => props.onEditProject(project)}>
+              <Pencil size={16} />
+            </button>
+          )}
         </div>
         <p>{line}</p>
       </div>
@@ -258,7 +292,7 @@ export function ProjectPage(props: Props) {
         <div className="pp-section-head">
           <div className="pp-section-title">
             <h2 id="pp-machines">Machines</h2>
-            <span>{project.personal ? "Only you open terminals on them"
+            <span>{alone ? "Only you open terminals on them"
               : "Your terminals on them"}</span>
           </div>
           {manage && (
@@ -297,9 +331,15 @@ export function ProjectPage(props: Props) {
                 terminals={running.filter((t) => t.machineId === m.id)}
                 dotFor={props.dotFor} onOpenTerminal={props.onOpenTerminal}
                 onGoTo={props.onGoTo} onRemoveMachine={props.onRemoveMachine}
-                notYet={props.notYet} />
+                onMoveMachine={props.onMoveMachine} notYet={props.notYet} />
             ))}
           </div>
+        )}
+        {project.machines.length === 0 && !project.personal && manage && (
+          <p className="pp-hint">
+            Already have the machine in another project? On that project's page,
+            ⋯ next to the machine, then Move to another project.
+          </p>
         )}
       </section>
 
@@ -307,12 +347,12 @@ export function ProjectPage(props: Props) {
         <div className="pp-wide">
           <span className="tile" aria-hidden="true"><Lock size={20} /></span>
           <span className="pp-wide-text">
-            <strong>Personal is yours alone</strong>
-            <span>No one can be invited here. To work with others, create a
-              project and move machines into it.</span>
+            <strong>{project.name} is yours alone</strong>
+            <span>No one can be invited here. To keep other machines apart, or
+              later to work with others, create a project and move machines
+              into it.</span>
           </span>
-          <button type="button" className="button-plain"
-            onClick={() => props.notYet("New projects come with teams, in the next version.")}>
+          <button type="button" className="button-plain" onClick={props.onNewProject}>
             New project
           </button>
         </div>
@@ -322,8 +362,8 @@ export function ProjectPage(props: Props) {
         <div className="pp-section-head">
           <div className="pp-section-title">
             <h2 id="pp-notes">Notes</h2>
-            <span>{project.personal
-              ? "Only you see notes in Personal. Folders keep them in order"
+            <span>{alone
+              ? `Only you see notes in ${project.name}. Folders keep them in order`
               : `Everyone in ${project.name} reads and edits them. Folders keep them in order`}</span>
           </div>
           {write && (
@@ -362,7 +402,7 @@ export function ProjectPage(props: Props) {
                   <span className="pp-dim">
                     {f.notes.length ? many(f.notes.length, "note", "notes") : "Empty"}
                   </span>
-                  {!project.personal && f.createdBy && (
+                  {!alone && f.createdBy && (
                     <span className="pp-faint">
                       made by {f.createdBy.id === me.id ? "you" : f.createdBy.firstName}
                     </span>
@@ -406,6 +446,22 @@ export function ProjectPage(props: Props) {
           </div>
         )}
       </section>
+
+      {project.own && !project.personal && (
+        <section className="pp-section" aria-labelledby="pp-delete">
+          <div className="pp-wide pp-danger">
+            <span className="pp-wide-text">
+              <strong id="pp-delete">Delete {project.name}</strong>
+              <span>Its folders and notes go with it. Machines are moved to
+                another project or removed first.</span>
+            </span>
+            <button type="button" className="button-danger-line"
+              onClick={() => props.onDeleteProject(project)}>
+              Delete project
+            </button>
+          </div>
+        </section>
+      )}
     </main>
   );
 }

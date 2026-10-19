@@ -116,3 +116,43 @@
   --font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace,
     SFMono-Regular, Menlo, monospace;
 }
+
+/* Projects' colors (0.1.1), as approved on the canvas on 19.10: the solid
+ * fill of a project's code badge (--pc-solid) with its code on it
+ * (--pc-on); text and icons in the project's color (--pc-ink); and the
+ * color as numbers for its tints (--pc-rgb). The light theme takes darker
+ * shades, for the same contrast of at least 4.5:1, tints included. Amber is
+ * not among them: it says "yours" and "in front". */
+.pc-violet { --pc-solid: #A78BFA; --pc-on: #0D0E11; --pc-ink: #C4B5FD; --pc-rgb: 167, 139, 250; }
+.pc-sky    { --pc-solid: #38BDF8; --pc-on: #0D0E11; --pc-ink: #7DD3FC; --pc-rgb: 56, 189, 248; }
+.pc-teal   { --pc-solid: #2DD4BF; --pc-on: #0D0E11; --pc-ink: #5EEAD4; --pc-rgb: 45, 212, 191; }
+.pc-pink   { --pc-solid: #F472B6; --pc-on: #0D0E11; --pc-ink: #F9A8D4; --pc-rgb: 244, 114, 182; }
+.pc-orange { --pc-solid: #FB923C; --pc-on: #0D0E11; --pc-ink: #FDBA74; --pc-rgb: 251, 146, 60; }
+.pc-lime   { --pc-solid: #A3E635; --pc-on: #0D0E11; --pc-ink: #BEF264; --pc-rgb: 163, 230, 53; }
+.pc-indigo { --pc-solid: #818CF8; --pc-on: #0D0E11; --pc-ink: #A5B4FC; --pc-rgb: 129, 140, 248; }
+.pc-slate  { --pc-solid: #94A3B8; --pc-on: #0D0E11; --pc-ink: #CBD5E1; --pc-rgb: 148, 163, 184; }
+
+.tt-light .pc-violet { --pc-solid: #6D28D9; --pc-on: #FFFFFF; --pc-ink: #6D28D9; --pc-rgb: 124, 58, 237; }
+.tt-light .pc-sky    { --pc-solid: #0369A1; --pc-on: #FFFFFF; --pc-ink: #075985; --pc-rgb: 2, 132, 199; }
+.tt-light .pc-teal   { --pc-solid: #0F766E; --pc-on: #FFFFFF; --pc-ink: #115E59; --pc-rgb: 13, 148, 136; }
+.tt-light .pc-pink   { --pc-solid: #BE185D; --pc-on: #FFFFFF; --pc-ink: #9D174D; --pc-rgb: 219, 39, 119; }
+.tt-light .pc-orange { --pc-solid: #C2410C; --pc-on: #FFFFFF; --pc-ink: #9A3412; --pc-rgb: 234, 88, 12; }
+.tt-light .pc-lime   { --pc-solid: #4D7C0F; --pc-on: #FFFFFF; --pc-ink: #3F6212; --pc-rgb: 101, 163, 13; }
+.tt-light .pc-indigo { --pc-solid: #4338CA; --pc-on: #FFFFFF; --pc-ink: #4338CA; --pc-rgb: 79, 70, 229; }
+.tt-light .pc-slate  { --pc-solid: #475569; --pc-on: #FFFFFF; --pc-ink: #475569; --pc-rgb: 100, 116, 139; }
+
+/* How strong a project's tint is under a row in front, in its block; and
+ * the grey of small words there, which keeps 4.5:1 on the strongest tint
+ * (lime, in the dark theme). */
+:root,
+.tt-dark {
+  --pc-wash: .07;
+  --pc-pick: .14;
+  --pc-dim: #A8AEB7;
+}
+
+.tt-light {
+  --pc-wash: .07;
+  --pc-pick: .12;
+  --pc-dim: #545B67;
+}

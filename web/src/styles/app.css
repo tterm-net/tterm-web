@@ -4491,3 +4491,378 @@ code {
     font-size: 26px;
   }
 }
+
+/* ----------------------------------------------- projects' colors (0.1.1) */
+
+/* A project's code badge in its color wherever it shows: the sidebar, the
+ * tabs, the note's line, the project's page, the palette (colors in
+ * tokens.css). Without a color, as before. */
+.code-badge,
+.code-chip,
+.pp-code {
+  background: var(--pc-solid, var(--line));
+  color: var(--pc-on, var(--ink));
+}
+
+/* The whole block of each project tinted in its color, for those who chose
+ * that on the account page (.tint-block on the page): its name, the labels
+ * and the icons of machines and folders in the color too, as on the canvas
+ * of 19.10. */
+.tint-block .sb-project {
+  padding: 2px 0;
+  border-radius: 12px;
+  background: rgba(var(--pc-rgb), var(--pc-wash));
+}
+
+.tint-block .sb-project .project-title,
+.tint-block .sb-project .sb-label > span {
+  color: var(--pc-ink);
+}
+
+.tint-block .sb-project .sb-name:not(.offline) svg {
+  color: var(--pc-ink);
+}
+
+/* Small faint words on the tint would fall under 4.5:1: a shade brighter
+ * there, even on a row in front. */
+.tint-block .sb-project .role,
+.tint-block .sb-project .sb-count,
+.tint-block .sb-project .sb-none,
+.tint-block .sb-project .sb-progress,
+.tint-block .sb-project .sb-text.untitled {
+  color: var(--pc-dim);
+}
+
+.tint-block .sb-project .project-name:hover,
+.tint-block .sb-project .project-name[aria-current="page"],
+.tint-block .sb-project .sb-row:hover,
+.tint-block .sb-project .sb-leaf:hover,
+.tint-block .sb-project .sb-leaf[aria-current="page"] {
+  background: rgba(var(--pc-rgb), var(--pc-pick));
+}
+
+/* The project's code before what a tab holds, in its color. */
+.tint-block .tab .tab-code {
+  color: var(--pc-ink, var(--faint));
+}
+
+/* --------------------------------------------- a project's window (0.1.1) */
+
+.project-dialog {
+  max-width: 520px;
+}
+
+.project-form {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.pd-fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.pd-field {
+  flex: 1 1 260px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pd-field.code {
+  flex: 0 0 132px;
+}
+
+.pd-field label,
+.pd-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.pd-field .text-input {
+  height: 42px;
+  font-size: 14px;
+}
+
+.pd-field.code .text-input {
+  font: 700 14px var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.pd-help {
+  margin: -8px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--faint);
+}
+
+.pd-colors {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pd-colors .pd-help {
+  margin: 0;
+}
+
+.swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.swatch {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  background: var(--pc-solid);
+  color: var(--pc-on);
+  cursor: pointer;
+}
+
+.swatch[aria-checked="true"] {
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--pc-solid);
+}
+
+.swatch:focus-visible {
+  outline: 2px solid var(--amber-ring);
+  outline-offset: 5px;
+}
+
+.pd-preview {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding: 12px 14px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+}
+
+.pd-preview-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--faint);
+}
+
+.pd-preview-project {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font: 700 13px var(--font-ui);
+  overflow-wrap: anywhere;
+}
+
+.pd-preview-tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 12px;
+  border-bottom: 2px solid var(--amber);
+  font: 600 13px var(--font-ui);
+}
+
+.pd-preview-tab .tab-code {
+  color: var(--faint);
+}
+
+.tint-block .pd-preview-tab .tab-code {
+  color: var(--pc-ink);
+}
+
+.pd-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--raised);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--dim);
+}
+
+.pd-note svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+/* Moving a machine: the projects to pick from. */
+.move-targets {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.move-target {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.move-target:hover {
+  background: var(--raised);
+}
+
+.move-target[aria-checked="true"] {
+  border-color: var(--amber);
+  background: var(--amber-tint);
+}
+
+.move-radio {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1.5px solid var(--sep);
+}
+
+.move-target[aria-checked="true"] .move-radio {
+  border: 5px solid var(--amber);
+}
+
+.move-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: 700 14px var(--font-ui);
+  overflow-wrap: anywhere;
+}
+
+.move-sub {
+  font-size: 12px;
+  color: var(--faint);
+}
+
+/* On the amber of the chosen one, a shade brighter: 4.5:1. */
+.move-target[aria-checked="true"] .move-sub {
+  color: var(--dim);
+}
+
+/* Deleting a project: its name typed to confirm. */
+.confirm-body .text-input {
+  height: 42px;
+  font-size: 14px;
+}
+
+.confirm-body label {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.confirm-body ul {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* The project's page: its pencil, and Delete at the very end. */
+.pp-title-row .icon-button {
+  color: var(--dim);
+}
+
+.pp-danger {
+  border: 1px solid var(--red-line);
+  background: transparent;
+}
+
+.button-danger-line {
+  height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--red-line);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--red-ink);
+  font: 700 13px var(--font-ui);
+  cursor: pointer;
+}
+
+.button-danger-line:hover {
+  background: var(--red-tint);
+}
+
+.pp-hint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--dim);
+}
+
+/* --------------------------------------------- naming a terminal (0.1.1) */
+
+.tab {
+  position: relative;
+}
+
+.tab-main.renaming {
+  cursor: default;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.tab-rename {
+  width: 120px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--amber);
+  border-radius: 6px;
+  outline: none;
+  box-shadow: 0 0 0 3px var(--amber-tint);
+  background: var(--ground);
+  color: var(--ink);
+  caret-color: var(--amber-ink);
+  font: 600 13px var(--font-ui);
+}
+
+.tab-tip {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 8px);
+  left: 8px;
+  width: 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dim);
+  white-space: normal;
+}
+
+.tab-tip strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* Project colors on the account page: "Whole project" on one line. */
+.theme-card .segmented button {
+  white-space: nowrap;
+}

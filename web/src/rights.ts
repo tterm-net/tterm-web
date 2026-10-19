@@ -8,6 +8,12 @@ export function manages(project: Project): boolean {
   return project.role === "owner" || project.role === "admin";
 }
 
+/** Nobody else in it: Personal, and, until people come, every project of
+ * one's own (0.1.1). */
+export function alone(project: Project): boolean {
+  return project.personal || project.alone;
+}
+
 /** Everyone but an observer writes notes. */
 export function writes(project: Project): boolean {
   return project.role !== "observer";

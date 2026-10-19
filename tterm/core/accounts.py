@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 import uuid
 from collections.abc import Collection
 from dataclasses import dataclass
@@ -20,6 +21,9 @@ import asyncpg
 OWNER_LOCK = 0x7474_0002
 
 THEMES = ("system", "light", "dark")
+
+#: A project's colors (0.1.1), in the order new projects take them.
+COLORS = ("violet", "sky", "teal", "pink", "orange", "lime", "indigo", "slate")
 
 #: How long journal entries that belong to no project are kept.
 PERSONAL_JOURNAL_DAYS = 365
@@ -61,6 +65,18 @@ def initials(name: str) -> str:
     if len(words) == 1:
         return words[0][0].upper()
     return (words[0][0] + words[-1][0]).upper()
+
+
+def one_line(text: str) -> str:
+    """A name as lists show it (0.1.1): what prints, on one line. Controls
+    and line breaks become spaces; marks that only steer or hide the text,
+    such as U+202E, which turns it around, or U+200B, which is not seen,
+    are left out; spaces tidied."""
+    shown = "".join(
+        ch if ch.isprintable()
+        else " " if ch.isspace() or unicodedata.category(ch) == "Cc"
+        else "" for ch in text)
+    return " ".join(shown.split())
 
 
 def valid_code(code: str) -> bool:
@@ -146,19 +162,39 @@ async def local_owner(pool: asyncpg.Pool) -> Person | None:
                   row["email"])
 
 
+async def free_color(conn: asyncpg.Connection | asyncpg.Pool,
+                     owner_id: uuid.UUID) -> str:
+    """The first color none of the owner's projects has; with all eight
+    taken, the one fewest of them have."""
+    used = [r["color"] for r in await conn.fetch(
+        "SELECT color FROM projects WHERE owner_id = $1 AND deleted_at IS NULL",
+        owner_id)]
+    for color in COLORS:
+        if color not in used:
+            return color
+    return min(COLORS, key=used.count)
+
+
 async def create_project(conn: asyncpg.Connection, owner_id: uuid.UUID,
-                         name: str, code: str) -> uuid.UUID:
+                         name: str, code: str,
+                         color: str | None = None) -> uuid.UUID:
+    """A project and its owner in it. Without a color, a free one."""
     code = code.upper()
     if not valid_code(code):
         raise ValueError(f"project code must be 1 to 4 letters or digits: {code!r}")
+    if color is None:
+        color = await free_color(conn, owner_id)
+    if color not in COLORS:
+        raise ValueError(f"no such color: {color!r}")
     project_id = await conn.fetchval(
-        "INSERT INTO projects (owner_id, name, code) VALUES ($1, $2, $3) "
-        "RETURNING id", owner_id, name, code)
+        "INSERT INTO projects (owner_id, name, code, color) "
+        "VALUES ($1, $2, $3, $4) RETURNING id", owner_id, name, code, color)
     await conn.execute(
         "INSERT INTO project_members (project_id, user_id, role) "
         "VALUES ($1, $2, 'owner')", project_id, owner_id)
     await journal(conn, "project.created", project_id=project_id,
-                  user_id=owner_id, details={"name": name, "code": code})
+                  user_id=owner_id,
+                  details={"name": name, "code": code, "color": color})
     return project_id
 
 
@@ -261,14 +297,18 @@ async def projects_of(pool: asyncpg.Pool, user_id: uuid.UUID) -> list[dict]:
     """
     rows = await pool.fetch(
         """
-        SELECT p.id, p.name, p.code, m.role, p.owner_id = $1 AS own,
+        SELECT p.id, p.name, p.code, p.color, m.role, p.owner_id = $1 AS own,
                -- Personal: the first project of their own, made with the
                -- account. Its notes and machines are the person's alone.
                p.id = (SELECT id FROM projects WHERE owner_id = $1
-                       ORDER BY created_at, id LIMIT 1) AS personal
+                       ORDER BY created_at, id LIMIT 1) AS personal,
+               -- Nobody else in it (yet): the page says "only you".
+               NOT EXISTS (SELECT 1 FROM project_members o
+                           WHERE o.project_id = p.id AND o.user_id <> $1
+                             AND (o.until IS NULL OR o.until > now())) AS alone
         FROM projects p
         JOIN project_members m ON m.project_id = p.id AND m.user_id = $1
-        WHERE m.until IS NULL OR m.until > now()
+        WHERE (m.until IS NULL OR m.until > now()) AND p.deleted_at IS NULL
         ORDER BY (p.owner_id = $1) DESC, p.created_at, p.name
         """, user_id)
     machines = await pool.fetch(
@@ -295,8 +335,11 @@ async def projects_of(pool: asyncpg.Pool, user_id: uuid.UUID) -> list[dict]:
         "id": str(r["id"]),
         "name": r["name"],
         "code": r["code"],
+        "color": r["color"],
         "role": r["role"],
         "personal": bool(r["personal"]),
+        "own": bool(r["own"]),
+        "alone": bool(r["alone"]),
         "machines": by_project.get(r["id"], []),
     } for r in rows]
 

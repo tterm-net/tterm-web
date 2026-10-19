@@ -23,7 +23,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel
 
 from .. import __version__
-from ..core import accounts, auth, letters, machines, notes, ssh
+from ..core import accounts, auth, letters, machines, notes, projects, ssh
 from ..core.mail import Mailer
 from ..core.terminals import NotAllowed, NotOpen, Terminal, Terminals
 from .connect import client_ip
@@ -47,9 +47,11 @@ It comes ready in the release archive; unpack the archive again.
 
 
 class MePatch(BaseModel):
-    #: Either or both. The name from 0.0.10, on the account page.
+    #: Any of them. The name from 0.0.10, on the account page; how much of a
+    #: project's color the sidebar shows from 0.1.1, badge or block.
     theme: str | None = None
     name: str | None = None
+    projectTint: str | None = None
 
 
 class EmailBody(BaseModel):
@@ -120,6 +122,22 @@ class MoveNoteBody(BaseModel):
 class TickBody(BaseModel):
     blockId: str
     done: bool
+
+
+class ProjectBody(BaseModel):
+    #: For a new project the name; the code and the color then come by
+    #: themselves if not given. For a change, whichever changes.
+    name: str | None = None
+    code: str | None = None
+    color: str | None = None
+
+
+class MoveBody(BaseModel):
+    projectId: uuid.UUID
+
+
+class TerminalPatch(BaseModel):
+    name: str
 
 
 #: A line the input line may ask Tab about, at most.
@@ -451,12 +469,12 @@ def create_page_app(pool: asyncpg.Pool, dist: Path, page_url: str,
     async def state(session: auth.Session = Depends(signed_in)) -> Response:
         """Everything the page needs on start."""
         me = session.person
-        projects = await accounts.projects_of(pool, me.id)
+        listed = await accounts.projects_of(pool, me.id)
         # Each project's folders of notes, with the notes listed but not
         # their text: the sidebar and the project's page (0.1.0).
         folders = await notes.folders_of(
-            pool, [uuid.UUID(p["id"]) for p in projects])
-        for project in projects:
+            pool, [uuid.UUID(p["id"]) for p in listed])
+        for project in listed:
             project["machines"] = [with_agents(m) for m in project["machines"]]
             project["folders"] = folders.get(project["id"], [])
         return _json({
@@ -467,10 +485,11 @@ def create_page_app(pool: asyncpg.Pool, dist: Path, page_url: str,
                 "firstName": me.first_name,
                 "initials": me.initials,
                 "theme": me.theme,
+                "projectTint": await projects.tint_of(pool, me.id),
                 "plan": me.plan,
                 "email": me.email,
             },
-            "projects": projects,
+            "projects": listed,
             "terminals": ([t.describe() for t in terminals.live(me.id)]
                           if terminals else []),
         })
@@ -488,11 +507,18 @@ def create_page_app(pool: asyncpg.Pool, dist: Path, page_url: str,
             if name is None:
                 return _json({"error": "Enter your name: up to "
                               f"{auth.NAME_MAX} characters."}, 422)
+        # All of it checked before any of it is saved.
+        if change.theme is not None and change.theme not in accounts.THEMES:
+            return _json({"error": "theme must be one of "
+                          f"{', '.join(accounts.THEMES)}"}, 422)
+        if change.projectTint is not None and \
+                change.projectTint not in projects.TINTS:
+            return _json({"error": "The tint is one of "
+                          f"{', '.join(projects.TINTS)}."}, 422)
         if change.theme is not None:
-            try:
-                await accounts.set_theme(pool, me.id, change.theme)
-            except ValueError as exc:
-                return _json({"error": str(exc)}, 422)
+            await accounts.set_theme(pool, me.id, change.theme)
+        if change.projectTint is not None:
+            await projects.set_tint(pool, me.id, change.projectTint)
         if name is None:
             return Response(status_code=204, headers=NO_STORE)
         await accounts.set_name(pool, me.id, name)
@@ -575,6 +601,21 @@ def create_page_app(pool: asyncpg.Pool, dist: Path, page_url: str,
             pool, terminals.signer if terminals is not None else None,
             removed, who))
 
+    @app.post("/api/machines/{machine_id}/move")
+    async def move_machine(machine_id: uuid.UUID, body: MoveBody,
+                           session: auth.Session = Depends(signed_in)) -> Response:
+        """To another project of the person's own (0.1.1). Its terminals go
+        on; nothing changes on the machine itself."""
+        try:
+            moved = await projects.move_machine(pool, session.person.id,
+                                                machine_id, body.projectId)
+        except notes.Refused as exc:
+            return _json({"error": str(exc)}, exc.status)
+        if terminals is not None:
+            terminals.retag(machine_id, body.projectId, moved["code"],
+                            moved["name"])
+        return _json(moved)
+
     @app.post("/api/terminals")
     async def open_terminal(request: TerminalRequest,
                             session: auth.Session = Depends(signed_in)) -> Response:
@@ -601,6 +642,23 @@ def create_page_app(pool: asyncpg.Pool, dist: Path, page_url: str,
         if ended is None:
             return _json({"error": "no such terminal"}, 404)
         return _json(ended)
+
+    @app.patch("/api/terminals/{terminal_id}")
+    async def rename_terminal(terminal_id: uuid.UUID, body: TerminalPatch,
+                              session: auth.Session = Depends(signed_in)) -> Response:
+        """A name for the person's terminal, instead of its number (0.1.1)."""
+        if terminals is None:
+            return _json({"error": "terminals are not running"}, 503)
+        try:
+            terminal = await terminals.rename(terminal_id, session.person.id,
+                                              body.name)
+        except LookupError:
+            return _json({"error": "no such terminal"}, 404)
+        except NotOpen as exc:
+            return _json({"error": str(exc)}, 409)
+        except NotAllowed as exc:
+            return _json({"error": str(exc)}, 422)
+        return _json(terminal.describe())
 
     @app.delete("/api/terminals/{terminal_id}")
     async def end_terminal(terminal_id: uuid.UUID,
@@ -697,6 +755,45 @@ def create_page_app(pool: asyncpg.Pool, dist: Path, page_url: str,
             return _json(await terminal.branches())
         except NotOpen:
             return _json({"error": NOT_OPEN}, 409)
+
+    # -------------------------------------------- projects (from 0.1.1)
+
+    @app.post("/api/projects")
+    async def new_project(body: ProjectBody,
+                          session: auth.Session = Depends(signed_in)) -> Response:
+        """A project of the person's own, as the sidebar lists it."""
+        try:
+            project = await projects.create(pool, session.person.id, body.name,
+                                            body.code, body.color)
+        except notes.Refused as exc:
+            return _json({"error": str(exc)}, exc.status)
+        return _json(project, 201)
+
+    @app.patch("/api/projects/{project_id}")
+    async def change_project(project_id: uuid.UUID, body: ProjectBody,
+                             session: auth.Session = Depends(signed_in)) -> Response:
+        """The name, the code, the color: by the owner and admins. Running
+        terminals take the new code at once."""
+        try:
+            changed = await projects.edit(pool, session.person.id, project_id,
+                                          name=body.name, code=body.code,
+                                          color=body.color)
+        except notes.Refused as exc:
+            return _json({"error": str(exc)}, exc.status)
+        if terminals is not None:
+            terminals.recode(project_id, changed["code"])
+        return _json(changed)
+
+    @app.delete("/api/projects/{project_id}")
+    async def delete_project(project_id: uuid.UUID,
+                             session: auth.Session = Depends(signed_in)) -> Response:
+        """A project of the person's own with no machines in it, with its
+        notes. Personal stays."""
+        try:
+            return _json(await projects.delete(pool, session.person.id,
+                                               project_id))
+        except notes.Refused as exc:
+            return _json({"error": str(exc)}, exc.status)
 
     # ----------------------------------------------- notes (from 0.1.0)
 

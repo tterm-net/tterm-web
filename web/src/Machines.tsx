@@ -5,6 +5,7 @@
 // and admins can remove a machine here (from 0.0.8).
 
 import type { Machine, Passport, Project, Role, TerminalInfo } from "./api";
+import { colorClass } from "./colors";
 import { Computer, Plus, Server, TerminalIcon, Trash } from "./icons";
 import { lastSeen } from "./time";
 
@@ -154,7 +155,8 @@ export function Machines(props: Props) {
         <section key={project.id} className="machines-project"
           aria-label={project.name}>
           <h2>
-            <span className="code-badge" aria-hidden="true">{project.code}</span>
+            <span className={`code-badge ${colorClass(project.color)}`}
+              aria-hidden="true">{project.code}</span>
             {project.name}
           </h2>
           <div className="machine-list">
