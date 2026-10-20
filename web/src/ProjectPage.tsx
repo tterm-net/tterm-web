@@ -3,7 +3,9 @@
 // its notes in folders, as on the approved canvas. From 0.1.1 the pencil
 // next to its name changes the name, the code and the color, ⋯ next to a
 // machine moves it to another project of one's own, and Delete project is
-// at the very end. People and the journal come with teams, later.
+// at the very end. From 0.1.2 a double click on a terminal's name names it,
+// and a note's ⋯ moves it to another project. People and the journal come
+// with teams, later.
 
 import { useEffect, useState } from "react";
 import type {
@@ -16,6 +18,7 @@ import {
   Plus, Server, Trash,
 } from "./icons";
 import { FolderMenuItems, MenuButton, NoteMenuItems } from "./Menus";
+import { NameInput } from "./NameInput";
 import { titled } from "./noteText";
 import {
   deletesFolder, deletesNote, many, manages, writes,
@@ -52,9 +55,24 @@ interface Props {
   onNewNote: (folderId: string) => void;
   onOpenNote: (noteId: string) => void;
   onMoveNote: (noteId: string, folderId: string) => void;
+  /** To another project (0.1.2): only when there is one to write in. */
+  onMoveNoteOut?: (noteId: string) => void;
   onCopyNote: (noteId: string) => void;
   onDeleteNote: (noteId: string) => void;
+  /** The terminal whose name is being typed here, if one is (0.1.2). */
+  renaming: string | null;
+  onStartRename: (terminalId: string) => void;
+  onRename: (terminalId: string, name: string) => void;
+  onStopRename: (terminalId: string) => void;
   notYet: (what: string) => void;
+}
+
+/** Naming a terminal on the page (0.1.2), as in its tab. */
+interface Naming {
+  renaming: string | null;
+  onStartRename: (terminalId: string) => void;
+  onRename: (terminalId: string, name: string) => void;
+  onStopRename: (terminalId: string) => void;
 }
 
 /** A person's initials in a circle, amber for oneself: 26, 22 or 18 pixels
@@ -81,12 +99,14 @@ function capital(text: string): string {
   return text ? text[0].toUpperCase() + text.slice(1) : text;
 }
 
-function TerminalRow({ t, me, dot, onGoTo }: {
+function TerminalRow({ t, me, dot, onGoTo, naming }: {
   t: TerminalInfo;
   me: Me;
   dot: Dot;
   onGoTo: (id: string) => void;
+  naming: Naming;
 }) {
+  const canRename = dot !== "ended";
   const where = t.cwd ? shortPath(t.cwd, t.home) : "";
   let text = [where, t.branch].filter(Boolean).join(" · ");
   let when = "";
@@ -100,12 +120,31 @@ function TerminalRow({ t, me, dot, onGoTo }: {
     <li className="pp-row">
       <Avatar who={null} me={me} size="small" />
       <span className="pp-row-text">
-        <strong>{terminalName(t.name)}</strong>
-        <span className="pp-row-sub mono">
-          <span className={`dot ${dot}`} aria-hidden="true" />
-          <span className="pp-ellipsis">{text || "~"}</span>
-          {when && <span className={dot === "busy" ? "pp-when busy" : "pp-when"}>{when}</span>}
-        </span>
+        {canRename && naming.renaming === t.id ? (
+          <>
+            <NameInput id={t.id} name={t.name} className="pp-rename-input"
+              describedBy={`pp-rename-${t.id}`} onRename={naming.onRename}
+              onStop={() => naming.onStopRename(t.id)} />
+            <span className="pp-rename-hint" id={`pp-rename-${t.id}`}>
+              Enter saves, Esc cancels.
+            </span>
+          </>
+        ) : (
+          <>
+            <strong className={canRename ? "pp-term-name" : undefined}
+              title={canRename ? "Double-click to rename" : undefined}
+              onDoubleClick={() => {
+                if (canRename) naming.onStartRename(t.id);
+              }}>
+              {terminalName(t.name)}
+            </strong>
+            <span className="pp-row-sub mono">
+              <span className={`dot ${dot}`} aria-hidden="true" />
+              <span className="pp-ellipsis">{text || "~"}</span>
+              {when && <span className={dot === "busy" ? "pp-when busy" : "pp-when"}>{when}</span>}
+            </span>
+          </>
+        )}
       </span>
       <span className="pp-row-actions">
         <button type="button" className="button-plain small" onClick={() => onGoTo(t.id)}>
@@ -126,6 +165,7 @@ function MachineCard(props: {
   onGoTo: (terminalId: string) => void;
   onRemoveMachine: (machine: Machine) => void;
   onMoveMachine?: (machine: Machine) => void;
+  naming: Naming;
   notYet: (what: string) => void;
 }) {
   const { machine: m, project } = props;
@@ -190,7 +230,7 @@ function MachineCard(props: {
       <ul className="pp-rows">
         {props.terminals.map((t) => (
           <TerminalRow key={t.id} t={t} me={props.me} dot={props.dotFor(t)}
-            onGoTo={props.onGoTo} />
+            onGoTo={props.onGoTo} naming={props.naming} />
         ))}
         {props.terminals.length === 0 && <li className="pp-empty">No terminals open</li>}
       </ul>
@@ -205,10 +245,13 @@ function NoteRow(props: {
   me: Me;
   onOpenNote: (noteId: string) => void;
   onMoveNote: (noteId: string, folderId: string) => void;
+  onMoveNoteOut?: (noteId: string) => void;
   onCopyNote: (noteId: string) => void;
   onDeleteNote: (noteId: string) => void;
 }) {
   const { note: n, me, project } = props;
+  const canDelete = deletesNote(project, n, me.id);
+  const moveOut = !!props.onMoveNoteOut && canDelete;
   const editor = n.editedBy ?? n.createdBy;
   const name = !editor || editor.id === me.id ? "You" : editor.firstName;
   const author = !n.createdBy || n.createdBy.id === me.id ? "You" : n.createdBy.firstName;
@@ -234,12 +277,14 @@ function NoteRow(props: {
         </span>
       </button>
       <MenuButton label={`${titled(n.title)}: note menu`}
-        title="Folder, Copy as Markdown, Delete note">
+        title={moveOut ? "Folder, Move to another project, Copy as Markdown, Delete note"
+          : "Folder, Copy as Markdown, Delete note"}>
         {(close) => (
           <NoteMenuItems folders={project.folders} folderId={props.folder.id}
-            canWrite={writes(project)} canDelete={deletesNote(project, n, me.id)}
-            author={author} close={close}
+            canWrite={writes(project)} canDelete={canDelete}
+            elsewhere={!!props.onMoveNoteOut} author={author} close={close}
             onMove={(folderId) => props.onMoveNote(n.id, folderId)}
+            onMoveOut={() => props.onMoveNoteOut?.(n.id)}
             onCopy={() => props.onCopyNote(n.id)}
             onDelete={() => props.onDeleteNote(n.id)} />
         )}
@@ -269,6 +314,10 @@ export function ProjectPage(props: Props) {
   ].join(" · ");
   const manage = manages(project);
   const write = writes(project);
+  const naming: Naming = {
+    renaming: props.renaming, onStartRename: props.onStartRename,
+    onRename: props.onRename, onStopRename: props.onStopRename,
+  };
 
   return (
     <main className="project-view" aria-labelledby="pp-title">
@@ -331,7 +380,8 @@ export function ProjectPage(props: Props) {
                 terminals={running.filter((t) => t.machineId === m.id)}
                 dotFor={props.dotFor} onOpenTerminal={props.onOpenTerminal}
                 onGoTo={props.onGoTo} onRemoveMachine={props.onRemoveMachine}
-                onMoveMachine={props.onMoveMachine} notYet={props.notYet} />
+                onMoveMachine={props.onMoveMachine} naming={naming}
+                notYet={props.notYet} />
             ))}
           </div>
         )}
@@ -432,6 +482,7 @@ export function ProjectPage(props: Props) {
                   {f.notes.map((n) => (
                     <NoteRow key={n.id} note={n} folder={f} project={project} me={me}
                       onOpenNote={props.onOpenNote} onMoveNote={props.onMoveNote}
+                      onMoveNoteOut={props.onMoveNoteOut}
                       onCopyNote={props.onCopyNote} onDeleteNote={props.onDeleteNote} />
                   ))}
                   {f.notes.length === 0 && (

@@ -13,7 +13,7 @@ import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { useEffect, useRef } from "react";
 import type { TerminalInfo } from "./api";
-import { keepKeys } from "./keys";
+import { keepKeys, typingElsewhere } from "./keys";
 import { socket, type Channel, type MarkerEvent } from "./socket";
 import type { Shown } from "./theme";
 import { terminalTheme } from "./xtermTheme";
@@ -171,7 +171,7 @@ export function ClassicTerminal(props: Props) {
         element: t.textarea ?? null,
         type: (data) => t.input(data),
       }));
-      if (active.current) t.focus();
+      if (active.current && !typingElsewhere(element)) t.focus();
     };
     void start();
 

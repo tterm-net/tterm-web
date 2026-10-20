@@ -7,12 +7,14 @@
 // command runs, a hollow ring while the computer sleeps, grey once it ended.
 // A note says on the right whether what was typed is saved. From 0.1.1 the
 // project's code is in its color, and a double click on a terminal's tab
-// names the terminal: Enter saves, Esc cancels.
+// names the terminal: Enter saves, Esc cancels. From 0.1.2 the same goes in
+// the sidebar and on the project's page (NameInput).
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 import type { ProjectColor } from "./api";
 import { colorClass } from "./colors";
 import { Check, Close, Doc, ListCheck, Plus, Search } from "./icons";
+import { NameInput } from "./NameInput";
 import { JUMP_KEYS, type TabKind } from "./tabs";
 
 export type Dot = "open" | "busy" | "away" | "ended";
@@ -66,56 +68,6 @@ interface Props {
   onStopRename: (id: string) => void;
 }
 
-/** The name being typed into a terminal's tab. Enter or leaving it saves,
- * Esc goes back to what it was. A number stays a placeholder. */
-function RenameInput(props: {
-  tab: TabView;
-  onRename: (id: string, name: string) => void;
-  onStop: () => void;
-}) {
-  const { tab } = props;
-  const numbered = /^\d+$/.test(tab.name ?? "");
-  const [value, setValue] = useState(numbered ? "" : tab.name ?? "");
-  const input = useRef<HTMLInputElement>(null);
-  const done = useRef(false);
-
-  useEffect(() => {
-    input.current?.focus();
-    input.current?.select();
-  }, []);
-
-  const commit = () => {
-    if (done.current) return;
-    done.current = true;
-    const name = value.trim();
-    if (!name || name === tab.name) props.onStop();
-    else props.onRename(tab.id, name);
-  };
-
-  return (
-    <input ref={input} className="tab-rename" aria-label="Terminal name"
-      value={value} maxLength={40} autoComplete="off" spellCheck={false}
-      placeholder={numbered ? `terminal ${tab.name}` : undefined}
-      aria-describedby={`${tab.id}-tip`}
-      onChange={(e) => setValue(e.target.value)}
-      onKeyDown={(e) => {
-        // Enter and Esc while a word is being composed (Japanese, Chinese)
-        // are the input method's: they take or drop the word.
-        if (e.nativeEvent.isComposing || e.keyCode === 229) return;
-        if (e.key === "Enter") {
-          e.preventDefault();
-          commit();
-        } else if (e.key === "Escape") {
-          e.preventDefault();
-          e.stopPropagation();
-          done.current = true;
-          props.onStop();
-        }
-      }}
-      onBlur={commit} />
-  );
-}
-
 function Lead({ tab }: { tab: TabView }) {
   if (tab.kind === "terminal") {
     return <span className={`dot ${tab.dot ?? "busy"}`} aria-hidden="true" />;
@@ -146,7 +98,8 @@ export function TabBar(props: Props) {
                     {tab.code && <span className="tab-code">{tab.code}/</span>}
                     {tab.machine} ·{" "}
                   </span>
-                  <RenameInput tab={tab} onRename={props.onRename}
+                  <NameInput id={tab.id} name={tab.name ?? ""} className="tab-rename"
+                    describedBy={`${tab.id}-tip`} onRename={props.onRename}
                     onStop={() => props.onStopRename(tab.id)} />
                 </div>
               ) : (

@@ -308,6 +308,159 @@ async def test_a_machine_moves_while_something_else_happens(h):
                       "has this server already, as db")
 
 
+async def test_a_note_moves_while_its_projects_change(h):
+    """A note moved to another project (0.1.2) while the project it goes to,
+    or the one it leaves, is deleted: the move waits, then finds it gone,
+    and the note is where it was or gone with its project. Two notes moved
+    the opposite ways at once both get there: neither move waits for the
+    other in turn."""
+    async with h.pool() as pool:
+        me, personal = await _owner(pool)
+        who = me.id
+        home = uuid.UUID((await notes.create_folder(pool, who, personal,
+                                                    "Home"))["id"])
+        for side in ("to", "from"):
+            project = uuid.UUID((await projects.create(pool, who,
+                                                       f"Gone {side}"))["id"])
+            there = uuid.UUID((await notes.create_folder(pool, who, project,
+                                                         "There"))["id"])
+            z = uuid.UUID((await notes.create_folder(pool, who, project,
+                                                     "Z"))["id"])
+            if side == "to":
+                nid = uuid.UUID((await notes.create_note(pool, who, home))["id"])
+                where, words = there, "no such folder"
+            else:
+                nid = uuid.UUID((await notes.create_note(pool, who, there))["id"])
+                where, words = home, "no such note"
+            # The deletion is held up halfway, by a folder of the project
+            # kept locked, so that the move comes mid-way.
+            _, let_go = await _paused(
+                pool, "SELECT 1 FROM note_folders WHERE id = $1 FOR UPDATE", z)
+            try:
+                deleting = asyncio.create_task(projects.delete(pool, who, project))
+                await asyncio.sleep(0.3)
+                assert not deleting.done(), f"{side}: the deletion went through"
+                moving = asyncio.create_task(notes.move_note(pool, who, nid, where))
+                await asyncio.sleep(0.3)
+                assert not moving.done(), f"{side}: the move did not wait"
+            finally:
+                await let_go()
+            await asyncio.wait_for(deleting, 5)
+            await refused(asyncio.wait_for(moving, 5), notes.NotFound, words)
+            folder = await pool.fetchval("SELECT folder_id FROM notes WHERE id = $1",
+                                         nid)
+            assert folder == (home if side == "to" else None), side
+
+        # Opposite ways at once, while the project first in the order is
+        # held: both moves wait for it, and then go one after the other.
+        # Each taking its own project first, they would lock each other out.
+        a = uuid.UUID((await projects.create(pool, who, "A side"))["id"])
+        b = uuid.UUID((await projects.create(pool, who, "B side"))["id"])
+        low, high = sorted((a, b))
+        f_low = uuid.UUID((await notes.create_folder(pool, who, low, "Low"))["id"])
+        f_high = uuid.UUID((await notes.create_folder(pool, who, high,
+                                                      "High"))["id"])
+        n_low = uuid.UUID((await notes.create_note(pool, who, f_low, "One"))["id"])
+        n_high = uuid.UUID((await notes.create_note(pool, who, f_high,
+                                                    "Two"))["id"])
+        _, let_go = await _paused(
+            pool, "SELECT 1 FROM projects WHERE id = $1 FOR UPDATE", low)
+        try:
+            one = asyncio.create_task(notes.move_note(pool, who, n_low, f_high))
+            await asyncio.sleep(0.3)
+            two = asyncio.create_task(notes.move_note(pool, who, n_high, f_low))
+            await asyncio.sleep(0.3)
+            assert not one.done() and not two.done(), "they did not wait"
+        finally:
+            await let_go()
+        assert (await asyncio.wait_for(one, 5))["projectId"] == str(high)
+        assert (await asyncio.wait_for(two, 5))["projectId"] == str(low)
+
+        # A tick, or a save, while the note moves: done where it is now, not
+        # taken for a note that is gone. The move is held up once it has the
+        # note, by the folder it goes to kept locked.
+        for change in ("tick", "save"):
+            nid = uuid.UUID((await notes.create_note(pool, who, f_low,
+                                                     "Moving"))["id"])
+            await notes.save_note(pool, who, nid, 1, "Moving", [
+                {"id": "a", "type": "todo", "text": "Item"}])
+            _, let_go = await _paused(
+                pool, "SELECT 1 FROM note_folders WHERE id = $1 FOR UPDATE",
+                f_high)
+            try:
+                moving = asyncio.create_task(notes.move_note(pool, who, nid, f_high))
+                await asyncio.sleep(0.3)
+                assert not moving.done(), f"{change}: the move went through"
+                late = asyncio.create_task(
+                    notes.tick(pool, who, nid, "a", True) if change == "tick"
+                    else notes.save_note(pool, who, nid, 2, "Moved", [
+                        {"id": "a", "type": "todo", "text": "Item"}]))
+                await asyncio.sleep(0.3)
+                assert not late.done(), f"{change}: did not wait for the move"
+            finally:
+                await let_go()
+            assert (await asyncio.wait_for(moving, 5))["projectId"] == str(high)
+            done = await asyncio.wait_for(late, 5)
+            assert (done["projectId"], done["folderId"]) == (str(high), str(f_high)), \
+                change
+            assert done["version"] == 3, change
+
+        # Deleted while it moves: the deletion waits, then finds it moved,
+        # and says so; its line would go to the journal of the other project.
+        nid = uuid.UUID((await notes.create_note(pool, who, f_low, "Gone?"))["id"])
+        _, let_go = await _paused(
+            pool, "SELECT 1 FROM note_folders WHERE id = $1 FOR UPDATE", f_high)
+        try:
+            moving = asyncio.create_task(notes.move_note(pool, who, nid, f_high))
+            await asyncio.sleep(0.3)
+            deleting = asyncio.create_task(notes.delete_note(pool, who, nid))
+            await asyncio.sleep(0.3)
+            assert not deleting.done(), "the deletion did not wait"
+        finally:
+            await let_go()
+        assert (await asyncio.wait_for(moving, 5))["projectId"] == str(high)
+        await refused(asyncio.wait_for(deleting, 5), notes.Refused, "just moved")
+        assert await pool.fetchval("SELECT count(*) FROM notes WHERE id = $1",
+                                   nid) == 1
+
+        # Someone else's project or note named: nothing of theirs is held,
+        # and a note they cannot see is not there, whatever else is named.
+        kira = await _person(pool, "kira@example.com", "Kira Novak")
+        _, let_go = await _paused(
+            pool, "SELECT 1 FROM projects WHERE id = $1 FOR UPDATE", low)
+        try:
+            theirs = uuid.UUID((await notes.create_note(
+                pool, kira.id, uuid.UUID((await notes.create_folder(
+                    pool, kira.id, next(uuid.UUID(x["id"]) for x in
+                                        await accounts.projects_of(pool, kira.id)),
+                    "Kira's"))["id"])))["id"])
+            await refused(asyncio.wait_for(notes.move_note(
+                pool, kira.id, theirs, project_id=low), 2), notes.NotFound,
+                "no such project")
+            await refused(asyncio.wait_for(notes.move_note(
+                pool, kira.id, n_high, project_id=uuid.uuid4()), 2),
+                notes.NotFound, "no such note")
+            for call in (notes.delete_note(pool, kira.id, n_high),
+                         notes.create_note(pool, kira.id, f_low),
+                         notes.delete_folder(pool, kira.id, f_low),
+                         notes.rename_folder(pool, kira.id, f_low, "Mine")):
+                await refused(asyncio.wait_for(call, 2), notes.NotFound)
+        finally:
+            await let_go()
+        # Many at once, both ways: taken in turn by each, the two projects
+        # would lock each other out now and then.
+        many_low = [uuid.UUID((await notes.create_note(pool, who, f_low))["id"])
+                    for _ in range(12)]
+        many_high = [uuid.UUID((await notes.create_note(pool, who, f_high))["id"])
+                     for _ in range(12)]
+        done = await asyncio.wait_for(asyncio.gather(
+            *(notes.move_note(pool, who, x, f_high) for x in many_low),
+            *(notes.move_note(pool, who, x, f_low) for x in many_high),
+            return_exceptions=True), 30)
+        failed = [repr(x) for x in done if isinstance(x, BaseException)]
+        assert not failed, failed
+
+
 async def test_projects_made_in_a_day(h):
     """Made and deleted in a loop, projects would pile up: a day has a
     limit too, deleted ones counted."""

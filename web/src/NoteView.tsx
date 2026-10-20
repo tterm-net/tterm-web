@@ -20,12 +20,13 @@ import {
   type Base, type Doc,
 } from "./drafts";
 import { colorClass } from "./colors";
-import { Folder as FolderIcon } from "./icons";
+import { Check, Folder as FolderIcon } from "./icons";
 import { MenuButton, NoteMenuItems } from "./Menus";
 import { fit, NoteEditor } from "./NoteEditor";
 import {
   block, blockId, cleanTitle, merge, summary, titled, toMarkdown,
 } from "./noteText";
+import { writes } from "./rights";
 import { noteTab } from "./tabs";
 import { ago, onDay } from "./time";
 
@@ -117,6 +118,10 @@ interface Props {
   /** The tab is closed and what was left in it saved, or kept as a draft. */
   onSettled: (noteId: string) => void;
   onMoved: (note: Note, from: string) => void;
+  /** Its ⋯ chose another project (0.1.2): the window that asks where. */
+  onMoveOut: (noteId: string) => void;
+  /** Just moved here from another project, from this tab: says so. */
+  moved?: string;
   onDelete: (noteId: string, title: string) => void;
   /** Closes the tab; `gone` when the note is no more, so that Back does
    * not bring the tab up again. */
@@ -643,6 +648,30 @@ export function NoteView(props: Props) {
     }
   }
   const folders = project?.folders ?? [];
+  // Moved to another project, from this tab or elsewhere: what the person
+  // may do with it there comes from the core. The version stays the same,
+  // so looking again now and then would not take it.
+  const listedIn = project?.id;
+  const loadedIn = note?.projectId;
+  useEffect(() => {
+    if (!listedIn || !loadedIn || listedIn === loadedIn) return;
+    let stale = false;
+    loadNote(noteId, true)
+      .then((n) => {
+        if (stale) return;
+        setNote((was) => was && { ...was, projectId: n.projectId,
+          folderId: n.folderId, folder: n.folder, canWrite: n.canWrite,
+          canDelete: n.canDelete });
+      })
+      .catch((e) => {
+        if (!stale && e instanceof NoteGone) markGone();
+      });
+    return () => {
+      stale = true;
+    };
+  }, [listedIn, loadedIn, noteId, markGone]);
+  // Another project the person writes notes in: the note may go there.
+  const elsewhere = props.projects.some((p) => p.id !== project?.id && writes(p));
 
   const copyMarkdown = () => {
     const now = docRef.current;
@@ -654,7 +683,7 @@ export function NoteView(props: Props) {
   const move = (to: string) => {
     if (!note) return;
     const from = folderId;
-    moveNote(noteId, to)
+    moveNote(noteId, { folderId: to })
       .then((moved) => {
         setNote((n) => (n ? { ...n, folderId: moved.folderId, folder: moved.folder } : n));
         props.onMoved(moved, from);
@@ -723,12 +752,16 @@ export function NoteView(props: Props) {
             <FolderIcon size={13} />
             <span className="note-where-name">{folderName}</span>
           </span>
-          <MenuButton label="Note menu" title="Folder, Copy as Markdown, Delete note"
+          <MenuButton label="Note menu"
+            title={elsewhere && note.canDelete
+              ? "Folder, Move to another project, Copy as Markdown, Delete note"
+              : "Folder, Copy as Markdown, Delete note"}
             className="note-menu">
             {(close) => (
               <NoteMenuItems folders={folders} folderId={folderId}
                 canWrite={note.canWrite} canDelete={note.canDelete}
-                author={who(note.createdBy)} close={close} onMove={move}
+                elsewhere={elsewhere} author={who(note.createdBy)} close={close}
+                onMove={move} onMoveOut={() => props.onMoveOut(noteId)}
                 onCopy={copyMarkdown}
                 onDelete={() => props.onDelete(noteId, docRef.current?.title ?? note.title)} />
             )}
@@ -751,6 +784,12 @@ export function NoteView(props: Props) {
             }
           }} />
         <p className="note-meta">{meta}</p>
+        {props.moved && (
+          <div className="note-moved" role="status">
+            <Check size={15} />
+            <span>{props.moved}</span>
+          </div>
+        )}
         {conflict && (
           <div className="note-conflict" role="alert">
             <span>

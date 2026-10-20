@@ -1,20 +1,23 @@
 // The windows of projects of one's own (0.1.1), as on the canvas: a new
 // project and the pencil, with the name, the code and the color and how
 // they will look; moving a machine to another project; deleting a project.
+// From 0.1.2 also moving a note to another project.
 
 import {
   useEffect, useRef, useState, type FormEvent, type KeyboardEvent as KeyEvent,
   type ReactNode,
 } from "react";
 import {
-  PROJECT_COLORS, type Machine, type Project, type ProjectColor,
+  PROJECT_COLORS, type Folder, type Machine, type Project, type ProjectColor,
   type ProjectFields,
 } from "./api";
 import {
   COLOR_NAMES, colorClass, freeColor, freeName, suggestCode, validCode,
 } from "./colors";
-import { Check, Close, Server } from "./icons";
-import { listed, many } from "./rights";
+import {
+  Check, Close, Folder as FolderIcon, FolderPlus, People, Server,
+} from "./icons";
+import { alone, listed, many } from "./rights";
 
 /** Esc closes the window, whatever has the keys inside it. */
 function useEscape(onClose: () => void) {
@@ -294,6 +297,120 @@ export function MoveDialog(props: {
         <button type="button" className="button-accent big" disabled={!target || busy}
           onClick={() => void move()}>
           {target ? `Move to ${target.name}` : "Move"}
+        </button>
+      </div>
+    </Window>
+  );
+}
+
+/** Where a note goes in another project: one of its folders, or the
+ * project alone, for a folder there named as the note's own. */
+export type NoteTarget = { folderId: string } | { projectId: string };
+
+/** A note moved to another project (0.1.2), as on the canvas: each project
+ * the person writes notes in, with its folders, or with a new folder named
+ * as the note's own when it has none; who sees the note there, and who no
+ * longer sees it here. */
+export function MoveNoteDialog(props: {
+  title: string;
+  /** Where it is now. */
+  project: Project;
+  folder: Folder;
+  /** The projects it may go to. */
+  targets: Project[];
+  onMove: (to: NoteTarget) => Promise<void>;
+  onCancel: () => void;
+}) {
+  const { project, folder, targets } = props;
+  const choices = targets.flatMap((p) => (p.folders.length
+    ? p.folders.map((f) => ({
+      key: f.id, project: p, name: f.name, made: false,
+      sub: f.notes.length ? many(f.notes.length, "note", "notes") : "empty",
+      to: { folderId: f.id } as NoteTarget,
+    }))
+    : [{
+      key: `new:${p.id}`, project: p, name: folder.name, made: true,
+      sub: "a new folder, made there for it", to: { projectId: p.id } as NoteTarget,
+    }]));
+  const [pick, setPick] = useState(choices[0]?.key ?? "");
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const group = useRef<HTMLDivElement>(null);
+  useEscape(props.onCancel);
+  useEffect(() => {
+    group.current?.querySelector<HTMLElement>('[aria-checked="true"]')?.focus();
+  }, []);
+  // The lists may change meanwhile (a folder made there elsewhere): the
+  // first one then, never none.
+  const chosen = choices.find((c) => c.key === pick) ?? choices[0];
+
+  const move = async () => {
+    if (!chosen || busy) return;
+    setBusy(true);
+    setProblem(null);
+    try {
+      await props.onMove(chosen.to);
+    } catch (e) {
+      setProblem((e as Error).message || "tTerm Web did not answer.");
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Window id="mn-title" className="confirm-dialog move-note-dialog"
+      title={`Move ${props.title}`}
+      sub={`Now in ${project.name}, folder ${folder.name}. Pick a folder in another project.`}
+      onClose={props.onCancel}>
+      <div className="mn-groups" role="radiogroup" aria-labelledby="mn-title"
+        ref={group}
+        onKeyDown={radioKeys(choices.map((c) => c.key), chosen?.key ?? "", setPick)}>
+        {targets.map((p) => (
+          <div key={p.id} className={`mn-group ${colorClass(p.color)}`}>
+            <div className="mn-group-head">
+              <span className="code-badge" aria-hidden="true">{p.code}</span>
+              <span className="mn-group-name">{p.name}</span>
+              <span className="mn-group-sub">{alone(p) ? "only you" : "with others"}</span>
+            </div>
+            {choices.filter((c) => c.project.id === p.id).map((c) => (
+              <button key={c.key} type="button" role="radio"
+                aria-checked={c.key === chosen?.key}
+                tabIndex={c.key === chosen?.key ? 0 : -1}
+                className="mn-folder" onClick={() => setPick(c.key)}>
+                <span className="move-radio" aria-hidden="true" />
+                {c.made ? <FolderPlus size={15} /> : <FolderIcon size={15} />}
+                <span className="mn-folder-name">{c.name}</span>
+                <span className="mn-folder-sub">{c.sub}</span>
+              </button>
+            ))}
+          </div>
+        ))}
+      </div>
+      {chosen && (
+        <div className="pd-note">
+          <People size={16} />
+          <span className="mn-who">
+            <span>{alone(chosen.project) ? `In ${chosen.project.name} only you see it.`
+              : `Everyone in ${chosen.project.name} sees and edits it.`}</span>
+            {!alone(project) && (
+              <span>Everyone else in {project.name} loses it. The journal
+                of {project.name} keeps a line: who moved it out, and when.</span>
+            )}
+          </span>
+        </div>
+      )}
+      <p className="mn-keeps">
+        Its title, text and history go with it, and so do the ticks with who
+        made them.
+      </p>
+      {problem && <div className="error-box" role="alert">{problem}</div>}
+      <div className="button-row end">
+        <button type="button" className="button-plain" onClick={props.onCancel}>
+          Cancel
+        </button>
+        <button type="button" className="button-accent big" disabled={!chosen || busy}
+          onClick={() => void move()}>
+          {!chosen ? "Move" : chosen.made ? `Move to a new folder ${chosen.name}`
+            : `Move to ${chosen.name}`}
         </button>
       </div>
     </Window>

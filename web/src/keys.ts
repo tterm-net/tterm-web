@@ -75,6 +75,14 @@ export function keepKeys(home: () => Home | null): () => void {
   };
 }
 
+/** A field outside `own` has the keys: someone is typing there, a name in
+ * the sidebar say (0.1.2), and a terminal coming up does not take them. */
+export function typingElsewhere(own: Element | null | undefined): boolean {
+  const active = document.activeElement;
+  return !!active?.closest("input, textarea, select, [contenteditable='true']") &&
+    !own?.contains(active);
+}
+
 /** Types into a text field at its caret, so that React hears of it. */
 export function typeInto(field: HTMLTextAreaElement | HTMLInputElement,
   data: string): void {

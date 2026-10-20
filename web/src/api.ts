@@ -752,9 +752,13 @@ export async function tickNote(id: string, blockId: string,
   return (await check(response)).json();
 }
 
-export async function moveNote(id: string, folderId: string): Promise<Note> {
+/** To another folder of its project, or from 0.1.2 to another project: one
+ * of its folders, or the project alone, for a folder there named as the
+ * note's own, made for it. */
+export async function moveNote(id: string,
+  to: { folderId: string } | { projectId: string }): Promise<Note> {
   return (await check(await fetch(`/api/notes/${id}`,
-    change("PATCH", { folderId })))).json();
+    change("PATCH", to)))).json();
 }
 
 export async function deleteNote(id: string): Promise<{ title: string }> {

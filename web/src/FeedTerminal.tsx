@@ -27,7 +27,7 @@ import { BlockView, shortPath, type FeedBlock } from "./BlockView";
 import { FONT, FONT_SIZE, HIGH, LOW, type ViewEvents } from "./ClassicTerminal";
 import { Warning } from "./icons";
 import { InputLine, type Phase, type Prompt } from "./InputLine";
-import { keepKeys, type Home } from "./keys";
+import { keepKeys, typingElsewhere, type Home } from "./keys";
 import {
   KEEP_LINES, fromBase64, plainText, readBuffer, renderOutput,
 } from "./render";
@@ -671,7 +671,9 @@ export function FeedTerminal(props: Props) {
     if (t) t.options.theme = fullscreen ? terminalTheme(shownTheme)
       : liveTheme(shownTheme);
     layoutRef.current();
-    if (fullscreen) t?.focus();
+    if (fullscreen && !typingElsewhere(feedRef.current?.closest(".terminal-view"))) {
+      t?.focus();
+    }
   }, [fullscreen, shownTheme]);
 
   // Where keys go when the phase changes. A command that is over in a moment
@@ -687,7 +689,7 @@ export function FeedTerminal(props: Props) {
       return !active || active === document.body || active === line;
     };
     if (phase === "input") {
-      t.focus();
+      if (!typingElsewhere(feedRef.current?.closest(".terminal-view"))) t.focus();
       return;
     }
     if (phase === "running") {
@@ -798,7 +800,7 @@ export function FeedTerminal(props: Props) {
       }]);
       setLiveKey(key);
       setPhaseBoth("input");
-      t.focus();
+      if (!typingElsewhere(feedRef.current?.closest(".terminal-view"))) t.focus();
     };
   }, [setPhaseBoth]);
 

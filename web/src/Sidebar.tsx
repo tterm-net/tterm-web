@@ -10,7 +10,8 @@
 // changes the terminal's width; pinned, it narrows the page once. A terminal
 // pointed at offers End (from 0.0.8), which asks first. The account at the
 // bottom opens the account page (from 0.0.10). From 0.1.1 each project's
-// badge is in its color, and New project makes one of one's own.
+// badge is in its color, and New project makes one of one's own. From 0.1.2
+// a double click on a terminal names it right there.
 
 import type { Machine, Me, Project, Role, TerminalInfo } from "./api";
 import { colorClass, terminalName } from "./colors";
@@ -18,6 +19,7 @@ import {
   ChevronDown, Close, Computer, Folder as FolderIcon, FolderOpen, Logo, Moon,
   Pin, Plus, Server, Sun,
 } from "./icons";
+import { NameInput } from "./NameInput";
 import { Avatar, NoteIcon } from "./ProjectPage";
 import { titled } from "./noteText";
 import { manages, writes } from "./rights";
@@ -56,6 +58,14 @@ interface Props {
   onNewTerminal: (machine: Machine) => void;
   onGoTo: (terminalId: string) => void;
   onEndTerminal: (terminal: TerminalInfo) => void;
+  /** The terminal being named here, if one is (0.1.2). */
+  renaming: string | null;
+  onStartRename: (terminalId: string) => void;
+  onRename: (terminalId: string, name: string) => void;
+  onStopRename: (terminalId: string) => void;
+  /** The second press of a double click: the sidebar stays, a click on a
+   * terminal having asked it to slide away. */
+  onKeepOpen: () => void;
   onNewFolder: (project: Project) => void;
   onNewNote: (folderId: string) => void;
   onOpenNote: (noteId: string) => void;
@@ -132,14 +142,41 @@ export function Sidebar(props: Props) {
         </div>
         {open && mine.map((t) => {
           const dot = dotFor(t);
+          const canRename = dot !== "ended";
+          if (canRename && props.renaming === t.id) {
+            return (
+              <div key={t.id} className="sb-rename">
+                <div className="sb-rename-row">
+                  <Avatar who={null} me={me} size="xs" />
+                  <NameInput id={t.id} name={t.name} className="sb-rename-input"
+                    describedBy={`sb-rename-${t.id}`} onRename={props.onRename}
+                    onStop={() => props.onStopRename(t.id)} />
+                </div>
+                <span className="sb-rename-hint" id={`sb-rename-${t.id}`}>
+                  Enter saves, Esc cancels
+                </span>
+              </div>
+            );
+          }
+          const said = dot === "away"
+            ? `Go to ${t.label}: it waits for ${m.name} to come back`
+            : `Go to ${t.label}`;
           return (
             <div key={t.id} className="sb-leaf-row">
               <button type="button" className="sb-leaf"
                 aria-current={current === t.id ? "page" : undefined}
-                title={dot === "away"
-                  ? `Go to ${t.label}: it waits for ${m.name} to come back`
-                  : `Go to ${t.label}`}
-                onClick={() => props.onGoTo(t.id)}>
+                title={canRename ? `${said}\nDouble-click to rename` : said}
+                onMouseDown={(e) => {
+                  if (e.detail > 1 && canRename) props.onKeepOpen();
+                }}
+                onClick={(e) => {
+                  // The second click of a double one: the name, not again
+                  // the terminal.
+                  if (e.detail < 2) props.onGoTo(t.id);
+                }}
+                onDoubleClick={() => {
+                  if (canRename) props.onStartRename(t.id);
+                }}>
                 <Avatar who={null} me={me} size="xs" />
                 <span className="sb-text">{terminalName(t.name)}</span>
                 {dot !== "open" && <span className={`dot ${dot}`} aria-hidden="true" />}

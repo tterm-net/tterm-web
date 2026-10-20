@@ -4,7 +4,13 @@ tTerm in the browser: a real terminal with command blocks, for people who work
 with servers and for their teams. Projects, roles, a journal of who ran what,
 and watching a colleague's terminal, always with them knowing.
 
-**Status:** early development. Version 0.1.1 lets you make projects of your
+**Status:** early development. Version 0.1.2 names a terminal where it is
+listed too, with a double click on it in the sidebar or on its project's
+page, and moves a note to another project, into any of its folders or into
+one made there for it, with its history and its ticks; out of a project a
+note goes by the hand of those who may delete it there, and each project's
+journal keeps a line that names neither the other project nor its folder.
+Version 0.1.1 lets you make projects of your
 own besides Personal, rename any of them, Personal too, and give each a
 color: it fills the project's code badge, or tints its whole block in the
 sidebar, as you choose on the account page. A machine moves from one
@@ -249,7 +255,12 @@ loses tTerm Web, a strip says so until it is back.
 **Notes** live in folders of a project, the way terminals live on its
 machines: everyone in the project reads and writes them, an observer only
 reads, and a note is deleted by its author, the owner and admins, a folder
-with its notes by the owner and admins. A note is a title and blocks: text,
+with its notes by the owner and admins. A note moves to another folder of
+its project, and from 0.1.2 to another project the person writes notes in,
+into one of its folders or, where it has none, into a folder of the same
+name made there for it: out of a project by those who may delete it there.
+Its versions and ticks go with it, and each project's journal keeps a line
+that names neither the other project nor its folder. A note is a title and blocks: text,
 headings, list and checklist items, code and dividers. Markdown typed at the
 start of a block turns it into what it means, "/" offers the same from a
 list, and text pasted with several lines becomes blocks. The core keeps the

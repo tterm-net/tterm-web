@@ -8,8 +8,9 @@ as text, never as HTML, so nothing written in a note can run on the page.
 Notes live in folders the way terminals live on machines, and a folder
 belongs to one project: everyone in the project reads and writes its notes,
 an observer only reads them. A note is deleted by its author, the owner and
-admins; a folder, with the notes in it, by the owner and admins, and by
-whoever made it while it is empty.
+admins, who also move it to another project (from 0.1.2); a folder, with
+the notes in it, by the owner and admins, and by whoever made it while it is
+empty.
 
 The same note written on two devices: every save names the version it was
 made from, and one made from an older version is merged with what was saved
@@ -307,13 +308,21 @@ NOTE_PROJECT = ("SELECT f.project_id FROM notes n JOIN note_folders f "
 
 
 async def _hold(conn, project_id: uuid.UUID | None, missing: str, *,
-                mode: str = "KEY SHARE") -> None:
+                mode: str = "KEY SHARE",
+                user_id: uuid.UUID | None = None) -> None:
     """Takes the project's row before any folder or note in it, as deleting
     the project takes them (projects.delete), so that neither ever waits for
     the other in turn. FOR UPDATE for what must wait while the project is
     deleted or changed: a new folder or note, a name or a move checked
     against the rest; KEY SHARE for the rest, which then writes its line in
-    the journal. A project deleted meanwhile is gone: NotFound."""
+    the journal. A project deleted meanwhile is gone: NotFound.
+
+    With `user_id`, a project the person is not in is not held at all (from
+    0.1.2): naming something of another's holds up nothing of theirs. What
+    is held is then looked at again, as before."""
+    if user_id is not None and (project_id is None or
+                                await _role(conn, project_id, user_id) is None):
+        raise NotFound(missing)
     alive = project_id is not None and await conn.fetchval(
         f"SELECT deleted_at IS NULL FROM projects WHERE id = $1 FOR {mode}",
         project_id)
@@ -351,8 +360,14 @@ NOTE_SQL = """
 
 async def _note_row(conn, note_id: uuid.UUID, user_id: uuid.UUID, *,
                     lock: bool = False):
-    row = await conn.fetchrow(NOTE_SQL + (" FOR UPDATE OF n" if lock else ""),
-                              note_id)
+    """The note, with its folder and project, and the person's role there.
+    Locked, the note's row is taken alone first, then read: locked in one
+    statement with its folder, a note moved meanwhile (0.1.2) would be
+    looked at again with the folder it had before, and seem gone."""
+    if lock and await conn.fetchval(
+            "SELECT 1 FROM notes WHERE id = $1 FOR UPDATE", note_id) is None:
+        raise NotFound("No such note.")
+    row = await conn.fetchrow(NOTE_SQL, note_id)
     if row is None:
         raise NotFound("No such note.")
     role = await _role(conn, row["project_id"], user_id)
@@ -460,7 +475,7 @@ async def rename_folder(pool: asyncpg.Pool, user_id: uuid.UUID,
     async with pool.acquire() as conn, conn.transaction():
         # As for a new folder: two names given at once wait for each other.
         await _hold(conn, await conn.fetchval(FOLDER_PROJECT, folder_id),
-                    "No such folder.", mode="UPDATE")
+                    "No such folder.", mode="UPDATE", user_id=user_id)
         row, role = await _folder(conn, folder_id, user_id, lock=True)
         if role not in WRITERS:
             raise NotAllowed("An observer reads notes but does not write them.")
@@ -480,7 +495,7 @@ async def delete_folder(pool: asyncpg.Pool, user_id: uuid.UUID,
     """Deletes the folder and the notes in it. The journal keeps a line."""
     async with pool.acquire() as conn, conn.transaction():
         await _hold(conn, await conn.fetchval(FOLDER_PROJECT, folder_id),
-                    "No such folder.")
+                    "No such folder.", user_id=user_id)
         row, role = await _folder(conn, folder_id, user_id, lock=True)
         count = await conn.fetchval(
             "SELECT count(*) FROM notes WHERE folder_id = $1", folder_id)
@@ -508,7 +523,7 @@ async def create_note(pool: asyncpg.Pool, user_id: uuid.UUID,
         # The project held, for the count of its notes, then the folder: a
         # folder deleted meanwhile waits, then takes the note along.
         await _hold(conn, await conn.fetchval(FOLDER_PROJECT, folder_id),
-                    "No such folder.", mode="UPDATE")
+                    "No such folder.", mode="UPDATE", user_id=user_id)
         folder, role = await _folder(conn, folder_id, user_id, lock=True)
         if role not in WRITERS:
             raise NotAllowed("An observer reads notes but does not write them.")
@@ -603,23 +618,100 @@ async def tick(pool: asyncpg.Pool, user_id: uuid.UUID, note_id: uuid.UUID,
 
 
 async def move_note(pool: asyncpg.Pool, user_id: uuid.UUID, note_id: uuid.UUID,
-                    folder_id: uuid.UUID) -> dict:
-    """Puts the note in another folder of its project."""
+                    folder_id: uuid.UUID | None = None, *,
+                    project_id: uuid.UUID | None = None) -> dict:
+    """Puts the note in another folder: of its project, or from 0.1.2 of
+    another project the person writes notes in. Out of its project a note
+    goes as it would be deleted from there: by its author, the owner and
+    admins. With `project_id` instead of a folder, it goes into that
+    project's folder named as the one it is in now, made for it if there is
+    none.
+
+    Everything goes with it: its versions, the ticks with who made them,
+    who wrote it. Between projects the journal of each keeps a line, which
+    names neither the other project nor its folder: the people of one
+    project learn nothing of another they are not in."""
+    if (folder_id is None) == (project_id is None):
+        raise Invalid("Say where the note goes: a folder, or a project.")
+    missing = "No such folder." if folder_id is not None else "No such project."
     async with pool.acquire() as conn, conn.transaction():
-        await _hold(conn, await conn.fetchval(NOTE_PROJECT, note_id),
-                    "No such note.", mode="UPDATE")
+        # Someone else's note, or project, is not there for this person,
+        # and nothing of theirs is held: looked at before anything is
+        # locked, and again once it is.
+        source = await conn.fetchval(NOTE_PROJECT, note_id)
+        if source is None or await _role(conn, source, user_id) is None:
+            raise NotFound("No such note.")
+        target = (project_id if folder_id is None
+                  else await conn.fetchval(FOLDER_PROJECT, folder_id))
+        if target is None or (target != source and
+                              await _role(conn, target, user_id) is None):
+            raise NotFound(missing)
+        # Both projects held, always in the same order, as moving a machine
+        # holds them (projects.move_machine).
+        for pid in sorted({source, target}):
+            await _hold(conn, pid, "No such note." if pid == source else missing,
+                        mode="UPDATE")
         row, role = await _note_row(conn, note_id, user_id, lock=True)
+        if row["project_id"] != source:
+            raise Refused("The note was just moved from another tab or device. "
+                          "Look again.")
         if role not in WRITERS:
             raise NotAllowed("An observer reads notes but does not write them.")
-        target = await conn.fetchrow(
-            "SELECT project_id FROM note_folders WHERE id = $1 FOR UPDATE",
-            folder_id)
-        if target is None:
-            raise NotFound("No such folder.")
-        if target["project_id"] != row["project_id"]:
-            raise Invalid("A note moves only to another folder of its project.")
+        across = target != source
+        if across:
+            if not (role in MANAGERS or row["created_by"] == user_id):
+                author = (accounts.first_name(row["created_name"])
+                          if row["created_name"] else "Its author")
+                raise NotAllowed(f"{author}, the owner and admins can move it to "
+                                 "another project.")
+            there = await _role(conn, target, user_id)
+            if there is None:
+                raise NotFound(missing)
+            if there not in WRITERS:
+                name = await conn.fetchval(
+                    "SELECT name FROM projects WHERE id = $1", target)
+                raise NotAllowed(f"In {name} you read notes but do not write them.")
+            if await conn.fetchval(
+                    "SELECT count(*) FROM notes n JOIN note_folders f "
+                    "ON f.id = n.folder_id WHERE f.project_id = $1",
+                    target) >= NOTES_MAX:
+                raise Taken(f"A project holds at most {NOTES_MAX} notes.")
+        if folder_id is not None:
+            folder = await conn.fetchrow(
+                "SELECT id, name FROM note_folders WHERE id = $1 FOR UPDATE",
+                folder_id)
+            if folder is None:
+                raise NotFound("No such folder.")
+        else:
+            folder = await conn.fetchrow(
+                "SELECT id, name FROM note_folders WHERE project_id = $1 "
+                "AND lower(name) = lower($2) FOR UPDATE", target,
+                row["folder_name"])
+            if folder is None:
+                if await conn.fetchval(
+                        "SELECT count(*) FROM note_folders WHERE project_id = $1",
+                        target) >= FOLDERS_MAX:
+                    raise Taken(f"A project holds at most {FOLDERS_MAX} folders.")
+                folder = await conn.fetchrow(
+                    "INSERT INTO note_folders (project_id, name, created_by) "
+                    "VALUES ($1, $2, $3) RETURNING id, name", target,
+                    row["folder_name"], user_id)
+                await accounts.journal(
+                    conn, "folder.created", project_id=target, user_id=user_id,
+                    details={"folder": str(folder["id"]), "name": folder["name"]})
+        if folder["id"] == row["folder_id"]:
+            return await _describe(conn, row, role, user_id)
         await conn.execute("UPDATE notes SET folder_id = $2 WHERE id = $1",
-                           note_id, folder_id)
+                           note_id, folder["id"])
+        if across:
+            for kind, pid, folder_name in (
+                    ("note.moved_out", source, row["folder_name"]),
+                    ("note.moved_in", target, folder["name"])):
+                await accounts.journal(conn, kind, project_id=pid,
+                                       user_id=user_id,
+                                       details={"note": str(note_id),
+                                                "title": row["title"],
+                                                "folder": folder_name})
         row, role = await _note_row(conn, note_id, user_id)
         return await _describe(conn, row, role, user_id)
 
@@ -628,9 +720,14 @@ async def delete_note(pool: asyncpg.Pool, user_id: uuid.UUID,
                       note_id: uuid.UUID) -> dict:
     """Deletes the note for everyone. The journal keeps a line."""
     async with pool.acquire() as conn, conn.transaction():
-        await _hold(conn, await conn.fetchval(NOTE_PROJECT, note_id),
-                    "No such note.")
+        held = await conn.fetchval(NOTE_PROJECT, note_id)
+        await _hold(conn, held, "No such note.", user_id=user_id)
         row, role = await _note_row(conn, note_id, user_id, lock=True)
+        if row["project_id"] != held:
+            # Moved to another project meanwhile (0.1.2): its line in the
+            # journal would be that project's, which is not held.
+            raise Refused("The note was just moved from another tab or device. "
+                          "Look again.")
         if not (role in MANAGERS or (role in WRITERS
                                      and row["created_by"] == user_id)):
             if role not in WRITERS:

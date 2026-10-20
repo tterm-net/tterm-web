@@ -4866,3 +4866,193 @@ code {
 .theme-card .segmented button {
   white-space: nowrap;
 }
+
+/* ------------------------------ naming a terminal elsewhere (0.1.2) */
+
+/* In the sidebar: the terminal's row becomes the field, the keys under it. */
+.sb-rename {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 4px 8px 7px 28px;
+  border-radius: 8px;
+  background: var(--raised);
+}
+
+.sb-rename-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.sb-rename-input,
+.pp-rename-input {
+  padding: 0 8px;
+  border: 1px solid var(--amber);
+  border-radius: 6px;
+  outline: none;
+  box-shadow: 0 0 0 3px var(--amber-tint);
+  background: var(--ground);
+  color: var(--ink);
+  caret-color: var(--amber-ink);
+  font: 600 13px var(--font-ui);
+}
+
+.sb-rename-input {
+  flex: 1 1 0;
+  width: 0;
+  min-width: 0;
+  height: 26px;
+}
+
+.sb-rename-hint {
+  padding-left: 27px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--faint);
+}
+
+/* On the project's page the name is double-clicked like text. */
+.pp-term-name {
+  cursor: text;
+}
+
+.pp-rename-input {
+  width: 260px;
+  max-width: 100%;
+  height: 30px;
+}
+
+.pp-rename-hint {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--faint);
+}
+
+/* ------------------------------ a note to another project (0.1.2) */
+
+.move-note-dialog {
+  max-width: 540px;
+}
+
+/* Each project with its folders, or with the folder made for the note. */
+.mn-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-height: 46vh;
+  overflow-y: auto;
+}
+
+.mn-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mn-group-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 4px 4px;
+}
+
+.mn-group-head .code-badge {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  font-size: 8px;
+}
+
+.mn-group-name {
+  font: 700 13px var(--font-ui);
+  overflow-wrap: anywhere;
+}
+
+.mn-group-sub {
+  font-size: 12px;
+  color: var(--faint);
+}
+
+.mn-folder {
+  width: 100%;
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 12px 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.mn-folder:hover {
+  background: var(--raised);
+}
+
+.mn-folder[aria-checked="true"] {
+  background: var(--amber-tint);
+}
+
+.mn-folder[aria-checked="true"] .move-radio {
+  border: 5px solid var(--amber);
+}
+
+.mn-folder svg {
+  flex: none;
+  color: var(--dim);
+}
+
+.mn-folder-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 600 13px var(--font-ui);
+}
+
+.mn-folder-sub {
+  flex: none;
+  font-size: 12px;
+  color: var(--faint);
+}
+
+/* On the amber of the chosen one, a shade brighter, as for machines. */
+.mn-folder[aria-checked="true"] .mn-folder-sub {
+  color: var(--dim);
+}
+
+.mn-who {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mn-keeps {
+  margin: -4px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--faint);
+}
+
+/* A note just moved here from another project: its tab says so. */
+.note-moved {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--green-tint);
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.note-moved svg {
+  flex: none;
+  color: var(--green-ink);
+}

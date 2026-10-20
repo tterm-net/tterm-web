@@ -116,7 +116,11 @@ class NewNoteBody(BaseModel):
 
 
 class MoveNoteBody(BaseModel):
-    folderId: uuid.UUID
+    #: The folder it goes to: in its project, or from 0.1.2 in another.
+    folderId: uuid.UUID | None = None
+    #: Or another project with no folder for it yet: there it goes into a
+    #: folder named as the one it is in now, made for it (0.1.2).
+    projectId: uuid.UUID | None = None
 
 
 class TickBody(BaseModel):
@@ -892,9 +896,12 @@ def create_page_app(pool: asyncpg.Pool, dist: Path, page_url: str,
     @app.patch("/api/notes/{note_id}")
     async def move_note(note_id: uuid.UUID, body: MoveNoteBody,
                         session: auth.Session = Depends(signed_in)) -> Response:
+        """To another folder of its project; from 0.1.2 also to another
+        project, by its author, the owner and admins."""
         try:
             return _json(await notes.move_note(pool, session.person.id,
-                                               note_id, body.folderId))
+                                               note_id, body.folderId,
+                                               project_id=body.projectId))
         except notes.Refused as exc:
             return note_refused(exc)
 

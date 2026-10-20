@@ -4,7 +4,9 @@
 
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import type { Folder } from "./api";
-import { Close, Copy, Dots, Folder as FolderIcon, Lock, Pencil, Trash } from "./icons";
+import {
+  Close, Copy, Dots, Folder as FolderIcon, Layers, Lock, Pencil, Trash,
+} from "./icons";
 
 export function MenuButton(props: {
   label: string;
@@ -80,17 +82,21 @@ export function MenuButton(props: {
   );
 }
 
-/** A note's menu: the folder it is in, to move it to another; Copy as
- * Markdown; Delete, or who may delete it. */
+/** A note's menu: the folder it is in, to move it to another; from 0.1.2
+ * another project, for whoever may delete it; Copy as Markdown; Delete, or
+ * who may delete it. */
 export function NoteMenuItems(props: {
   folders: Folder[];
   folderId: string;
   canWrite: boolean;
   canDelete: boolean;
+  /** There is another project the person writes notes in. */
+  elsewhere: boolean;
   /** Who may delete it, when this person may not. */
   author: string;
   close: () => void;
   onMove: (folderId: string) => void;
+  onMoveOut: () => void;
   onCopy: () => void;
   onDelete: () => void;
 }) {
@@ -116,6 +122,16 @@ export function NoteMenuItems(props: {
           <div className="menu-line" />
         </>
       )}
+      {props.canDelete && props.elsewhere && (
+        <button type="button" className="menu-item" role="menuitem"
+          onClick={() => {
+            close();
+            props.onMoveOut();
+          }}>
+          <Layers size={15} />
+          <span className="menu-text">Move to another project…</span>
+        </button>
+      )}
       <button type="button" className="menu-item" role="menuitem"
         onClick={() => {
           close();
@@ -136,7 +152,8 @@ export function NoteMenuItems(props: {
       ) : props.canWrite && (
         <div className="menu-note">
           <Lock size={14} />
-          <span>{props.author}, the owner and admins can delete it</span>
+          <span>{props.author}, the owner and admins can {props.elsewhere
+            ? "move it to another project or delete it" : "delete it"}</span>
         </div>
       )}
     </>

@@ -277,6 +277,23 @@ export const Doc = (p: Props) => (
   </Stroke>
 );
 
+/** Another project: two layers, one over the other (0.1.2). */
+export const Layers = (p: Props) => (
+  <Stroke {...p}>
+    <path d="M12 3l9 5-9 5-9-5z" />
+    <path d="M3 13l9 5 9-5" />
+  </Stroke>
+);
+
+/** Who sees something: two people. */
+export const People = (p: Props) => (
+  <Stroke {...p}>
+    <circle cx="9" cy="8" r="3" />
+    <path d="M3 20a6 6 0 0 1 12 0" />
+    <path d="M16 4a3 3 0 0 1 0 6M21 20a6 6 0 0 0-4-5.6" />
+  </Stroke>
+);
+
 export const Pencil = (p: Props) => (
   <Stroke {...p}>
     <path d="M12 20h9" />

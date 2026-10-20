@@ -22,9 +22,11 @@ import { FolderDialog } from "./Menus";
 import { draftsOf, forgetDrafts, markDeleted } from "./drafts";
 import { NoteView, primeNote, type SaveState, type Typed } from "./NoteView";
 import { summary, titled, toMarkdown } from "./noteText";
-import { DeleteProjectDialog, MoveDialog, ProjectDialog } from "./ProjectDialog";
+import {
+  DeleteProjectDialog, MoveDialog, MoveNoteDialog, ProjectDialog, type NoteTarget,
+} from "./ProjectDialog";
 import { ProjectPage } from "./ProjectPage";
-import { alone, deletesNote, listed, manages, many } from "./rights";
+import { alone, deletesNote, listed, manages, many, writes } from "./rights";
 import { Sidebar } from "./Sidebar";
 import { SignIn } from "./SignIn";
 import { socket } from "./socket";
@@ -47,6 +49,9 @@ import { Welcome } from "./Welcome";
 const OPEN_DELAY_MS = 180;
 /** Leaving the sidebar closes it after this pause, forgiving a sloppy mouse. */
 const CLOSE_DELAY_MS = 250;
+/** A terminal clicked in the sidebar: the sidebar slides away after this,
+ * so that a second click can still name the terminal (0.1.2). */
+const DOUBLE_CLICK_MS = 500;
 const TOAST_MS = 3200;
 /** How often the page asks whether computers came online or went. */
 const COMPUTERS_MS = 10_000;
@@ -104,6 +109,20 @@ type Asking =
   | { kind: "note"; noteId: string; title: string; folder: Folder; project: Project }
   | { kind: "folder"; folder: Folder; project: Project };
 
+/** A terminal being named: in its tab, from 0.1.2 also in the sidebar or
+ * on its project's page. */
+interface Renaming {
+  id: string;
+  where: "tab" | "side" | "page";
+}
+
+/** A note on its way to another project (0.1.2): asked from its tab or
+ * from its project's page. */
+interface MovingNote {
+  noteId: string;
+  from: "tab" | "page";
+}
+
 /** The window that names a folder: a new one, or one renamed. */
 type Naming =
   | { kind: "new"; project: Project }
@@ -145,15 +164,23 @@ function eachFolder(state: State, change: (folder: Folder) => Folder): State {
     ({ ...p, folders: p.folders.map(change) })) };
 }
 
-/** The note moved in the lists: out of wherever it was, into its folder. */
+/** The note moved in the lists: out of wherever it was, into its folder,
+ * which the lists may not have yet: one made for it in another project. */
 function moveListed(state: State, note: Note): State {
   let entry: NoteSummary | undefined;
-  const without = eachFolder(state, (f) => {
+  let without = eachFolder(state, (f) => {
     const found = f.notes.find((n) => n.id === note.id);
     if (!found) return f;
     entry = found;
     return { ...f, notes: f.notes.filter((n) => n.id !== note.id) };
   });
+  if (!state.projects.some((p) => p.folders.some((f) => f.id === note.folderId))) {
+    const { id, name, firstName, initials } = state.me;
+    without = withFolders(without, note.projectId, (fs) => [...fs, {
+      id: note.folderId, name: note.folder, notes: [],
+      createdBy: { id, name, firstName, initials },
+    }].sort(byName));
+  }
   const item = entry ?? listedNote(note);
   return eachFolder(without, (f) => (f.id === note.folderId
     ? { ...f, notes: [...f.notes, item].sort((a, b) => b.createdAt - a.createdAt) }
@@ -255,8 +282,17 @@ export function App() {
   const [projectWindow, setProjectWindow] = useState<{ project?: Project } | null>(null);
   const [moving, setMoving] = useState<Machine | null>(null);
   const [deleting, setDeleting] = useState<Project | null>(null);
-  /** The terminal whose tab is being named. */
-  const [renaming, setRenaming] = useState<string | null>(null);
+  /** The terminal being named, and where. */
+  const [renaming, setRenaming] = useState<Renaming | null>(null);
+  const renamingRef = useRef(renaming);
+  renamingRef.current = renaming;
+  const pinnedRef = useRef(pinned);
+  pinnedRef.current = pinned;
+  /** The mouse is over the sidebar. */
+  const overSidebar = useRef(false);
+  const [movingNote, setMovingNote] = useState<MovingNote | null>(null);
+  /** Notes moved to another project from their tab: what the tab says. */
+  const [movedHere, setMovedHere] = useState<Record<string, string>>({});
   const [removed, setRemoved] = useState<{ name: string; cleanup: string } | null>(null);
   const [folded, setFolded] = useState<Set<string>>(rememberedFolds);
   const [live, setLive] = useState<Record<string, Live>>({});
@@ -345,6 +381,7 @@ export function App() {
     setMoving(null);
     setDeleting(null);
     setRenaming(null);
+    setMovingNote(null);
     setRemoved(null);
     setPalette(false);
     setPicking(false);
@@ -504,6 +541,13 @@ export function App() {
       if (!gone.some((g) => was[g])) return was;
       const rest = { ...was };
       for (const g of gone) delete rest[g];
+      return rest;
+    });
+    setMovedHere((was) => {
+      const ids = gone.filter((g) => tabKind(g) === "note").map(tabTarget);
+      if (!ids.some((id) => was[id])) return was;
+      const rest = { ...was };
+      for (const id of ids) delete rest[id];
       return rest;
     });
     const now = currentRef.current;
@@ -671,10 +715,35 @@ export function App() {
     refresh();
   }, [notYet, refresh, unfold]);
   const moveFromList = useCallback((noteId: string, folderId: string) => {
-    moveNote(noteId, folderId)
+    moveNote(noteId, { folderId })
       .then(moved)
       .catch((e: Error) => notYet(`Could not move it: ${e.message}`));
   }, [moved, notYet]);
+
+  /** A note to another project (0.1.2): first the window that asks where. */
+  const askMoveNote = useCallback((noteId: string, from: MovingNote["from"]) => {
+    setPalette(false);
+    setPicking(false);
+    setMovingNote({ noteId, from });
+  }, []);
+  /** Moved: the lists follow at once. Its tab, if it was moved from there,
+   * says where it came from; the project's page says where it went. */
+  const moveNoteOut = useCallback(async (asked: MovingNote, to: NoteTarget) => {
+    const was = stateNow.current && findNote(stateNow.current.projects, asked.noteId);
+    // A refusal comes back as an error, which the window shows.
+    const note = await moveNote(asked.noteId, to);
+    setMovingNote(null);
+    setState((s) => s && moveListed(s, note));
+    unfold(`p:${note.projectId}`, `f:${note.folderId}`);
+    if (asked.from === "tab" && was) {
+      setMovedHere((m) => ({ ...m, [note.id]: `Moved here from ${was.project.name}.` +
+        (alone(was.project) ? "" : " Its journal has a line about it.") }));
+    } else {
+      const there = stateNow.current?.projects.find((p) => p.id === note.projectId);
+      notYet(`Moved to ${there?.name ?? "the other project"}, folder ${note.folder}.`);
+    }
+    refresh();
+  }, [notYet, refresh, unfold]);
 
   const copyNote = useCallback((noteId: string) => {
     copyLater(loadNote(noteId).then((n) => toMarkdown(n.title, n.blocks)))
@@ -747,15 +816,25 @@ export function App() {
     refresh();
   }, [notYet, refresh, unfold]);
 
-  /** The naming of this tab over, and of no other begun meanwhile. */
-  const stopRenaming = useCallback((id: string) => {
-    setRenaming((was) => (was === id ? null : was));
+  /** The naming of this terminal over, and of no other begun meanwhile:
+   * with `asked`, only that very naming, not one of the same terminal begun
+   * elsewhere while its name was on its way. Named in the sidebar, which no
+   * mouse points at now: it slides away, as it would have. */
+  const stopRenaming = useCallback((id: string, asked?: Renaming | null) => {
+    const was = renamingRef.current;
+    if (was?.id !== id || (asked !== undefined && asked !== was)) return;
+    setRenaming(null);
+    if (was.where === "side" && !pinnedRef.current && !overSidebar.current) {
+      window.clearTimeout(closeTimer.current);
+      closeTimer.current = window.setTimeout(() => setOpen(false), CLOSE_DELAY_MS);
+    }
   }, []);
-  /** A terminal named in its tab. */
+  /** A terminal named: in its tab, in the sidebar or on its project's page. */
   const renameTab = useCallback((id: string, name: string) => {
+    const asked = renamingRef.current;
     renameTerminal(id, name)
       .then((info) => {
-        stopRenaming(id);
+        stopRenaming(id, asked);
         setStatuses((all) => (all[id] ? { ...all, [id]: { ...all[id], label: info.label } }
           : all));
         setState((s) => s && { ...s, terminals: s.terminals.map((t) =>
@@ -763,7 +842,7 @@ export function App() {
         refresh();
       })
       .catch((e: Error) => {
-        stopRenaming(id);
+        stopRenaming(id, asked);
         notYet(`Could not rename it: ${e.message}`);
       });
   }, [notYet, refresh, stopRenaming]);
@@ -835,8 +914,10 @@ export function App() {
     openTimer.current = window.setTimeout(() => setOpen(true), OPEN_DELAY_MS);
   };
   const hoverAway = () => {
+    overSidebar.current = false;
     cancelTimers();
-    if (!pinned) {
+    // A name being typed there keeps it open.
+    if (!pinned && renamingRef.current?.where !== "side") {
       closeTimer.current = window.setTimeout(() => setOpen(false),
         CLOSE_DELAY_MS);
     }
@@ -857,11 +938,14 @@ export function App() {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !pinned && !adding && !naming &&
-        !projectWindow && !moving && !deleting && !renaming) setOpen(false);
+        !projectWindow && !moving && !deleting && !renaming && !movingNote) {
+        setOpen(false);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [pinned, adding, naming, projectWindow, moving, deleting, renaming]);
+  }, [pinned, adding, naming, projectWindow, moving, deleting, renaming,
+    movingNote]);
 
   // The palette: Cmd+K on a Mac, Ctrl+Shift+K elsewhere, before the
   // terminal hears it.
@@ -929,18 +1013,29 @@ export function App() {
       id: tab, kind, code: slash > 0 ? full.slice(0, slash) : "", color: home?.color,
       label: slash > 0 ? full.slice(slash + 1) : full, dot,
       machine, name: known?.name, canRename,
-      title: canRename ? `${said}\nDouble-click to name it` : said,
+      title: canRename ? `${said}\nDouble-click to rename` : said,
       closeTitle: "Close the tab. The terminal keeps running, in the sidebar " +
         "under its machine.",
     };
   });
   const front = tabViews.find((t) => t.id === current);
-  // A tab being named that can be named no more, its terminal ended or the
-  // tab closed: the naming is over too.
-  const renamable = !!renaming && tabViews.some((t) => t.id === renaming && t.canRename);
+  // A terminal being named that can be named no more, its terminal ended or
+  // the tab, the sidebar or the project's page gone: the naming is over too.
+  const renamable = !!renaming && (renaming.where === "tab"
+    ? tabViews.some((t) => t.id === renaming.id && t.canRename)
+    : liveTerminals.some((t) => t.id === renaming.id &&
+        dotOf(statuses[t.id], t, false) !== "ended") &&
+      (renaming.where === "side" ? open || pinned
+        : !!current && tabKind(current) === "project"));
   useEffect(() => {
-    if (renaming && !renamable) setRenaming(null);
-  }, [renaming, renamable]);
+    if (renaming && !renamable) stopRenaming(renaming.id);
+  }, [renaming, renamable, stopRenaming]);
+  // A note asked to move that is gone meanwhile: the window goes too.
+  const moveAsked = !movingNote || !state ||
+    !!findNote(state.projects, movingNote.noteId);
+  useEffect(() => {
+    if (!moveAsked) setMovingNote(null);
+  }, [moveAsked]);
   const accountOpen = !current && ACCOUNT_PATH.test(path);
   const title = front
     ? `${front.kind === "terminal" && front.code ? `${front.code}/` : ""}${front.label} · tTerm`
@@ -1145,7 +1240,7 @@ export function App() {
         hint: "instead of its number",
         icon: <Pencil size={15} />,
         words: "terminal rename name label",
-        run: () => setRenaming(runningHere.id),
+        run: () => setRenaming({ id: runningHere.id, where: "tab" }),
       }, {
         key: "end-terminal",
         label: "End this terminal",
@@ -1218,10 +1313,10 @@ export function App() {
           setPalette(true);
         }}
         saving={frontKind === "note" ? saveLine(saveStates[tabTarget(current!)]) : null}
-        renaming={renaming}
+        renaming={renaming?.where === "tab" ? renaming.id : null}
         onStartRename={(id) => {
           setPicking(false);
-          setRenaming(id);
+          setRenaming({ id, where: "tab" });
         }}
         onRename={renameTab}
         onStopRename={stopRenaming} />
@@ -1239,6 +1334,8 @@ export function App() {
             fresh={fresh.current.has(tabTarget(tab))}
             onSummary={onSummary} onNote={onNote} onSaveState={onSaveState}
             onSettled={onSettled} onMoved={moved}
+            onMoveOut={(noteId) => askMoveNote(noteId, "tab")}
+            moved={movedHere[tabTarget(tab)]}
             onDelete={(noteId, noteTitle) => askDeleteNote(noteId, noteTitle)}
             onCloseTab={(tab, gone) => closeTabs([tab], gone)} notify={notYet} />
         ))}
@@ -1261,8 +1358,14 @@ export function App() {
                 onDeleteFolder={askDeleteFolder}
                 onNewNote={newNote}
                 onOpenNote={(noteId) => openTab(noteTab(noteId))}
-                onMoveNote={moveFromList} onCopyNote={copyNote}
+                onMoveNote={moveFromList}
+                onMoveNoteOut={projects.some((p) => p.id !== pageProject.id && writes(p))
+                  ? (noteId) => askMoveNote(noteId, "page") : undefined}
+                onCopyNote={copyNote}
                 onDeleteNote={(noteId) => askDeleteNote(noteId)}
+                renaming={renaming?.where === "page" ? renaming.id : null}
+                onStartRename={(id) => setRenaming({ id, where: "page" })}
+                onRename={renameTab} onStopRename={stopRenaming}
                 notYet={notYet} />
             ) : (
               <div className="status-page">
@@ -1320,7 +1423,10 @@ export function App() {
           onToggleTheme={toggleTheme}
           onTogglePin={togglePin}
           onClose={closeSidebar}
-          onMouseEnter={cancelTimers}
+          onMouseEnter={() => {
+            overSidebar.current = true;
+            cancelTimers();
+          }}
           onMouseLeave={hoverAway}
           folded={folded}
           onFold={fold}
@@ -1330,8 +1436,25 @@ export function App() {
           onOpenProject={(projectId) => away(() => openTab(projectTab(projectId)))()}
           onAddMachine={(projectId) => startAdding(projectId)}
           onNewTerminal={(machine) => away(() => newTerminal(machine))()}
-          onGoTo={(id) => away(() => goTo(id))()}
+          onGoTo={(id) => {
+            goTo(id);
+            // It slides away a moment later: a second click names the
+            // terminal right there.
+            if (!pinned) {
+              cancelTimers();
+              closeTimer.current = window.setTimeout(() => setOpen(false),
+                DOUBLE_CLICK_MS);
+            }
+          }}
           onEndTerminal={askEnd}
+          renaming={renaming?.where === "side" ? renaming.id : null}
+          onStartRename={(id) => {
+            cancelTimers();
+            setPicking(false);
+            setRenaming({ id, where: "side" });
+          }}
+          onRename={renameTab} onStopRename={stopRenaming}
+          onKeepOpen={cancelTimers}
           onNewFolder={(project) => setNaming({ kind: "new", project })}
           onNewNote={(folderId) => away(() => newNote(folderId))()}
           onOpenNote={(noteId) => away(() => openTab(noteTab(noteId)))()}
@@ -1394,6 +1517,17 @@ export function App() {
             targets={projects.filter((p) => p.own && p.role === "owner" && p.id !== from?.id)}
             onMove={(projectId) => moveTo(moving, projectId)}
             onCancel={() => setMoving(null)} />
+        );
+      })()}
+
+      {movingNote && (() => {
+        const where = findNote(projects, movingNote.noteId);
+        return where && (
+          <MoveNoteDialog title={titled(where.note.title)} project={where.project}
+            folder={where.folder}
+            targets={projects.filter((p) => p.id !== where.project.id && writes(p))}
+            onMove={(to) => moveNoteOut(movingNote, to)}
+            onCancel={() => setMovingNote(null)} />
         );
       })()}
 
