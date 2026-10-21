@@ -44,7 +44,7 @@ __tt_put() {
 # git: this runs before every prompt.
 __tt_branch() {
     __tt_b=
-    builtin local d=$PWD h= g=
+    builtin local d="$PWD" h= g=
     while :; do
         if [ -f "$d/.git/HEAD" ]; then
             g=$d/.git

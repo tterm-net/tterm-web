@@ -238,6 +238,9 @@ def _home() -> Path:
         "setopt hist_ignore_space\nPROMPT='%% '\n")
     (home / "repo" / ".git").mkdir(parents=True)
     (home / "repo" / ".git" / "HEAD").write_text("ref: refs/heads/feature/x\n")
+    # A folder with a space in its name, as a Mac has many.
+    (home / "my repo" / ".git").mkdir(parents=True)
+    (home / "my repo" / ".git" / "HEAD").write_text("ref: refs/heads/spaced\n")
     return home
 
 
@@ -293,6 +296,13 @@ def _run_shell(login_shell: str, full: bool) -> None:
         p.read_until(7)
         listed = p.screen.rsplit(b"fc -ln -10", 1)[-1]
         assert b"secret" not in listed, "but it stays out of history, as asked"
+        # In a folder with a space in its name the branch is still found,
+        # and the prompt says nothing more (0.1.3: bash split the path).
+        p.type('cd "$HOME/my repo"')
+        p.read_until(8)
+        assert p.marks[-1].field(3) == "spaced", p.marks[-1]
+        assert p.marks[-1].field(1).endswith("/my repo"), p.marks[-1]
+        assert b"not a valid identifier" not in p.screen, p.screen[-400:]
         failed = False
     finally:
         try:

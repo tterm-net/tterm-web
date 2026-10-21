@@ -4,7 +4,10 @@ tTerm in the browser: a real terminal with command blocks, for people who work
 with servers and for their teams. Projects, roles, a journal of who ran what,
 and watching a colleague's terminal, always with them knowing.
 
-**Status:** early development. Version 0.1.2 names a terminal where it is
+**Status:** early development. Version 0.1.3 mends bash in a folder with a
+space in its name: tTerm's script took the folder's path as cut at the
+space, so bash printed an error before every prompt and the git branch
+was not found. Version 0.1.2 names a terminal where it is
 listed too, with a double click on it in the sidebar or on its project's
 page, and moves a note to another project, into any of its folders or into
 one made there for it, with its history and its ticks; out of a project a
