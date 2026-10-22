@@ -3,8 +3,8 @@
 // a computer), a button for a new terminal, and the terminals already
 // running on it. A computer is online only while its agent runs. The owner
 // and admins can remove a machine here (from 0.0.8). In the app before
-// signing in (0.1.4) there is only the computer it runs on: nothing to add
-// or remove.
+// signing in (0.1.4) there is only the computer it runs on: nothing to
+// remove, and Add a machine says what signing in brings (0.1.5).
 
 import type { Machine, Passport, Project, Role, TerminalInfo } from "./api";
 import { colorClass } from "./colors";
@@ -139,7 +139,7 @@ function MachineCard({ machine, code, terminals, manage, onOpenTerminal, onGoTo,
 export function Machines(props: Props) {
   const { projects, terminals, onAdd, onOpenTerminal, onGoTo, onRemove, local } = props;
   const withMachines = projects.filter((p) => p.machines.length > 0);
-  const first = local ? undefined : projects.find((p) => p.role === "owner") ?? projects[0];
+  const first = projects.find((p) => p.role === "owner") ?? projects[0];
   return (
     <main className="machines-view">
       <div className="machines-head">

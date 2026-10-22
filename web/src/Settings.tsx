@@ -2,14 +2,14 @@
 // bottom of the sidebar, as approved on the canvas of 21.10: what was on
 // the account page besides the name and the plan. The theme and how much of
 // a project's color the sidebar shows; the trusted devices with Forget and
-// Forget all devices; the documents and support. In the app before signing
-// in (local.ts) there is no account and so no devices, and the choices are
-// kept on this computer. Tabs stay above it; Close or Esc goes back.
+// Forget all devices; support's address at the bottom (from 0.1.5 only it:
+// the Terms of Service and the Privacy Policy are on the site and at
+// signing up). In the app before signing in (local.ts) there is no account
+// and so no devices, and the choices are kept on this computer. Tabs stay
+// above it; Close or Esc goes back.
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import {
-  loadAccount, type AccountInfo, type Legal, type ProjectTint, type Theme,
-} from "./api";
+import { loadAccount, type AccountInfo, type ProjectTint, type Theme } from "./api";
 import { PageHead, SUPPORT, useEscCloses } from "./Account";
 import { DevicesSection } from "./Devices";
 import { Monitor, Moon, Sun } from "./icons";
@@ -38,14 +38,6 @@ const TINTS: { value: ProjectTint; label: string }[] = [
   { value: "block", label: "Whole project" },
 ];
 
-/** Where the links go in the app before signing in: there is no account to
- * ask, and these are the app's own. */
-const LEGAL: Legal = {
-  terms: "https://tterm.net/terms",
-  privacy: "https://tterm.net/privacy",
-  support: SUPPORT,
-};
-
 export function Settings(props: Props) {
   const { local } = props;
   const [info, setInfo] = useState<AccountInfo | null>(null);
@@ -61,8 +53,7 @@ export function Settings(props: Props) {
 
   useEscCloses(props.onClose, nothingTyped);
 
-  // Signed in, the links are the core's, as on the sign-in screen.
-  const legal = local ? LEGAL : info?.legal;
+  const support = info?.legal.support ?? SUPPORT;
 
   return (
     <main className="account-view" aria-labelledby="st-title">
@@ -120,15 +111,11 @@ export function Settings(props: Props) {
         </section>
       ))}
 
-      {legal && (
-        <footer className="account-foot">
-          <span className="account-links">
-            <a href={legal.terms} target="_blank" rel="noreferrer">Terms of Service</a>
-            <a href={legal.privacy} target="_blank" rel="noreferrer">Privacy Policy</a>
-            <a href={`mailto:${legal.support}`}>{legal.support}</a>
-          </span>
-        </footer>
-      )}
+      <footer className="account-foot">
+        <span className="account-links">
+          <a href={`mailto:${support}`}>{support}</a>
+        </span>
+      </footer>
     </main>
   );
 }

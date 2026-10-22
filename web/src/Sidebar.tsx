@@ -14,8 +14,9 @@
 // a double click on a terminal names it right there. From 0.1.4 the account
 // at the bottom opens a menu: Settings, Account, Sign out; and in the app
 // before signing in (local.ts) the sidebar has Personal with this computer,
-// no machine to add and no project to make, a card about signing in, and
-// at the bottom Not signed in, whose menu has Settings and Sign in.
+// a card about signing in, and at the bottom Not signed in, whose menu has
+// Settings and Sign in. From 0.1.5 + at Machines and New project are there
+// before signing in too, and say what signing in brings (NeedAccount.tsx).
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Machine, Me, Project, Role, TerminalInfo } from "./api";
@@ -294,7 +295,7 @@ export function Sidebar(props: Props) {
               </div>
               {open && (
                 <div className="sb-inside">
-                  <Label text="Machines" plus={manages(project) && !local ? {
+                  <Label text="Machines" plus={manages(project) ? {
                     title: "Add machine",
                     onClick: () => props.onAddMachine(project.id),
                   } : undefined} />
@@ -318,14 +319,14 @@ export function Sidebar(props: Props) {
             </div>
           );
         })}
-        {local ? <SignInCard onSignIn={props.onSignIn} /> : (
-          <button type="button" className="new-project" onClick={props.onNewProject}>
-            <span className="dashed-tile" aria-hidden="true">
-              <Plus size={13} />
-            </span>
-            New project
-          </button>
-        )}
+        {/* Before signing in too (0.1.5): it says what signing in brings. */}
+        <button type="button" className="new-project" onClick={props.onNewProject}>
+          <span className="dashed-tile" aria-hidden="true">
+            <Plus size={13} />
+          </span>
+          New project
+        </button>
+        {local && <SignInCard onSignIn={props.onSignIn} />}
       </div>
 
       <div className="sidebar-foot">

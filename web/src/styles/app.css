@@ -2705,6 +2705,107 @@ code {
   color: var(--ink);
 }
 
+/* New project and Add machine in the app before signing in (0.1.5): what
+ * signing in brings, dashed as not here yet, and what the Free plan gives. */
+.need-dialog {
+  max-width: 580px;
+}
+
+/* It takes the keys itself when it opens: no ring around all of it. */
+.need-dialog:focus {
+  outline: none;
+}
+
+.need-cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.need-card {
+  flex: 1 1 220px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 13px 14px;
+  border: 1.5px dashed var(--sep);
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--dim);
+}
+
+.need-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.need-card-head strong {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: 700 14px var(--font-ui);
+  color: var(--ink);
+}
+
+.need-icon {
+  flex: none;
+  display: flex;
+  color: var(--dim);
+}
+
+.need-pill {
+  flex: none;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--raised);
+  color: var(--dim);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+/* On the ground, not raised: the Free badge keeps its contrast there. */
+.need-plan {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--ground);
+}
+
+.need-plan .plan-badge {
+  flex: none;
+  height: 22px;
+  padding: 0 9px;
+}
+
+.need-plan-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--dim);
+}
+
+.need-plan-text strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.need-buttons {
+  justify-content: flex-end;
+}
+
 .confirm-bar .button-plain {
   height: 34px;
   border-radius: 8px;

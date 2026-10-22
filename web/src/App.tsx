@@ -21,6 +21,7 @@ import {
 import { LocalOnly } from "./local";
 import { Machines } from "./Machines";
 import { FolderDialog } from "./Menus";
+import { NeedAccount, type Need } from "./NeedAccount";
 import { draftsOf, forgetDrafts, markDeleted } from "./drafts";
 import { NoteView, primeNote, type SaveState, type Typed } from "./NoteView";
 import { summary, titled, toMarkdown } from "./noteText";
@@ -291,6 +292,9 @@ export function App() {
   const [naming, setNaming] = useState<Naming | null>(null);
   /** The window of a new project, or the pencil on a project (0.1.1). */
   const [projectWindow, setProjectWindow] = useState<{ project?: Project } | null>(null);
+  /** New project or Add machine before signing in (0.1.5): what signing in
+   * brings, in place of their own windows. */
+  const [needAccount, setNeedAccount] = useState<Need | null>(null);
   const [moving, setMoving] = useState<Machine | null>(null);
   const [deleting, setDeleting] = useState<Project | null>(null);
   /** The terminal being named, and where. */
@@ -950,14 +954,15 @@ export function App() {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !pinned && !adding && !naming &&
-        !projectWindow && !moving && !deleting && !renaming && !movingNote) {
+        !projectWindow && !moving && !deleting && !renaming && !movingNote &&
+        !needAccount) {
         setOpen(false);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [pinned, adding, naming, projectWindow, moving, deleting, renaming,
-    movingNote]);
+    movingNote, needAccount]);
 
   // The palette: Cmd+K on a Mac, Ctrl+Shift+K elsewhere, before the
   // terminal hears it.
@@ -1064,6 +1069,10 @@ export function App() {
   useEffect(() => {
     if (local && shownPage === "account") navigate("/", true);
   }, [local, shownPage, navigate]);
+  // Signed in meanwhile: New project and Add machine are themselves again.
+  useEffect(() => {
+    if (!local) setNeedAccount(null);
+  }, [local]);
 
   if (signedOut) {
     return (
@@ -1093,14 +1102,28 @@ export function App() {
   const sidebarShown = open || pinned;
   const personal = projects.find((p) => p.personal) ??
     projects.find((p) => p.role === "owner");
-  const canAddTo = local ? undefined : projects.find((p) =>
+  const canAddTo = projects.find((p) =>
     p.role === "owner" || p.role === "admin");
   const anyMachine = projects.some((p) => p.machines.length > 0);
+  /** Before signing in (local.ts), New project and Add machine are there
+   * as after it, and say what signing in brings (0.1.5). */
+  const needSignIn = (need: Need) => {
+    if (!pinned) setOpen(false);
+    setPalette(false);
+    setPicking(false);
+    setNeedAccount(need);
+  };
   const startAdding = (projectId: string, kind: MachineKind = "server") => {
-    // Before signing in there is this computer only (local.ts).
-    if (local) return;
+    if (local) {
+      needSignIn("machine");
+      return;
+    }
     if (!pinned) setOpen(false);
     setAdding({ projectId, kind });
+  };
+  const startProject = () => {
+    if (local) needSignIn("project");
+    else setProjectWindow({});
   };
   const goTo = (id: string) => navigate(`/t/${id}`);
   /** From the sidebar: it slides away unless it is pinned. */
@@ -1231,14 +1254,14 @@ export function App() {
     const noteHere = frontKind === "note" ? findNote(projects, tabTarget(current!)) : null;
     const actions: FinderItem[] = [
       ...addItem,
-      ...(local ? [] : [{
+      {
         key: "new-project",
         label: "New project",
         hint: "its own machines and notes",
         icon: <Plus size={15} />,
         words: "project new create make",
-        run: () => setProjectWindow({}),
-      }]),
+        run: startProject,
+      },
       ...(pageProject && manages(pageProject) ? [{
         key: "edit-project",
         label: `Edit ${pageProject.name}`,
@@ -1315,8 +1338,7 @@ export function App() {
         hint: local ? "theme, project colors" : "theme, project colors, devices",
         icon: <Gear size={15} />,
         words: "settings preferences theme dark light colors colours " +
-          (local ? "" : "devices quick code forget browsers ") +
-          "terms privacy support",
+          (local ? "" : "devices quick code forget browsers ") + "support",
         run: () => openPage("settings"),
       },
       ...(local ? [{
@@ -1416,7 +1438,7 @@ export function App() {
                   ? (machine) => setMoving(machine) : undefined}
                 onEditProject={(project) => setProjectWindow({ project })}
                 onDeleteProject={(project) => setDeleting(project)}
-                onNewProject={() => setProjectWindow({})}
+                onNewProject={startProject}
                 onNewFolder={(project) => setNaming({ kind: "new", project })}
                 onRenameFolder={(folder, project) =>
                   setNaming({ kind: "rename", folder, project })}
@@ -1528,7 +1550,7 @@ export function App() {
           onNewFolder={(project) => setNaming({ kind: "new", project })}
           onNewNote={(folderId) => away(() => newNote(folderId))()}
           onOpenNote={(noteId) => away(() => openTab(noteTab(noteId)))()}
-          onNewProject={() => away(() => setProjectWindow({}))()}
+          onNewProject={() => away(startProject)()}
           local={local}
           page={pageOpen}
           onSettings={() => openPage("settings")}
@@ -1573,6 +1595,15 @@ export function App() {
               "The notes inside stay as they are."}
           onSave={(name) => saveFolder(naming, name)}
           onCancel={() => setNaming(null)} />
+      )}
+
+      {needAccount && (
+        <NeedAccount key={needAccount} need={needAccount}
+          onClose={() => setNeedAccount(null)}
+          onSignIn={() => {
+            setNeedAccount(null);
+            signInHere();
+          }} />
       )}
 
       {projectWindow && (

@@ -6,8 +6,9 @@
 // at the very end. From 0.1.2 a double click on a terminal's name names it,
 // and a note's ⋯ moves it to another project. People and the journal come
 // with teams, later. From 0.1.4, in the app before signing in (local.ts),
-// Personal adds no machine, its computer has no menu, and the card about
-// Personal, with New project, is not there.
+// its computer has no menu; from 0.1.5 Add machine and the card about
+// Personal, with New project, are there as after signing in, and say what
+// signing in brings (NeedAccount.tsx).
 
 import { useEffect, useState } from "react";
 import type {
@@ -319,8 +320,8 @@ export function ProjectPage(props: Props) {
     alone ? "only you" : ROLE_LINE[project.role],
   ].join(" · ");
   const manage = manages(project);
-  // Before signing in, machines come only with signing in.
-  const addsMachines = manage && !props.local;
+  // Before signing in too: App says what signing in brings (0.1.5).
+  const addsMachines = manage;
   const write = writes(project);
   const naming: Naming = {
     renaming: props.renaming, onStartRename: props.onStartRename,
@@ -401,7 +402,7 @@ export function ProjectPage(props: Props) {
         )}
       </section>
 
-      {project.personal && !props.local && (
+      {project.personal && (
         <div className="pp-wide">
           <span className="tile" aria-hidden="true"><Lock size={20} /></span>
           <span className="pp-wide-text">

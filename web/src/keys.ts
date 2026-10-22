@@ -79,8 +79,10 @@ export function keepKeys(home: () => Home | null): () => void {
 }
 
 /** A field outside `own` has the keys: someone is typing there, a name in
- * the sidebar say (0.1.2), and a terminal coming up does not take them. */
+ * the sidebar say (0.1.2), and a terminal coming up does not take them.
+ * Nor while a window or the palette is open over it (0.1.5). */
 export function typingElsewhere(own: Element | null | undefined): boolean {
+  if (document.querySelector(".dialog, .finder") !== null) return true;
   const active = document.activeElement;
   return !!active?.closest("input, textarea, select, [contenteditable='true']") &&
     !own?.contains(active);

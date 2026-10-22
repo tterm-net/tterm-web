@@ -4,7 +4,10 @@ tTerm in the browser: a real terminal with command blocks, for people who work
 with servers and for their teams. Projects, roles, a journal of who ran what,
 and watching a colleague's terminal, always with them knowing.
 
-**Status:** early development. Version 0.1.4 turns the account at the
+**Status:** early development. Version 0.1.5 shows New project and Add
+machine in the app before signing in too: there they tell what an account
+brings and what the Free plan gives, and offer to sign in. Settings ends
+with support's address alone. Version 0.1.4 turns the account at the
 bottom of the sidebar into a menu: Settings, Account and Sign out. Account
 keeps the name and the plan; Settings has the theme, project colors, the
 trusted devices and the documents, and the email about a new sign-in

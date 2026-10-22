@@ -2,7 +2,7 @@
 // the account at the bottom of the sidebar, as approved on the canvas of
 // 21.10: the name, which the person changes here, the address and how to
 // change it; the plan and what counts against it; how to delete the
-// account. The theme, project colors, devices and documents are on
+// account. The theme, project colors, devices and support's address are on
 // Settings (Settings.tsx), and Sign out is in the menu itself. Tabs stay
 // above it; Close or Esc goes back.
 
