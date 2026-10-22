@@ -513,6 +513,7 @@ code {
 }
 
 .sidebar-foot {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -521,7 +522,6 @@ code {
 }
 
 .account-box {
-  position: relative;
   flex: 1 1 auto;
   min-width: 0;
 }
@@ -542,6 +542,7 @@ code {
 }
 
 .account:hover,
+.account.open,
 .account[aria-current="page"] {
   background: var(--raised);
 }
@@ -574,6 +575,80 @@ code {
 .account-text span {
   font-size: 12px;
   color: var(--faint);
+}
+
+/* The account's menu (0.1.4) opens above the foot of the sidebar, as wide
+ * as it, as on the canvas: the name and the address, Settings, Account,
+ * Sign out; in the app before signing in, Not signed in, Settings and
+ * Sign in. */
+.menu.up {
+  top: auto;
+  bottom: calc(100% + 6px);
+  left: 8px;
+  right: 8px;
+  width: auto;
+}
+
+.menu-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 10px 8px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--faint);
+  overflow-wrap: anywhere;
+}
+
+.menu-head strong {
+  font: 700 13px var(--font-ui);
+  color: var(--ink);
+}
+
+.menu-item[aria-current="page"] {
+  background: var(--raised);
+}
+
+.menu-item.accent,
+.menu-item.accent svg {
+  color: var(--amber-ink);
+}
+
+/* Not signed in: a place for an avatar, drawn with a dashed line. */
+.avatar.nobody {
+  box-sizing: border-box;
+  border: 1.5px dashed var(--sep);
+  background: transparent;
+  color: var(--faint);
+}
+
+/* In the app before signing in, under Personal: what signing in adds. */
+.sb-signin {
+  margin: 20px 2px 0;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1.5px dashed var(--sep);
+  border-radius: 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dim);
+}
+
+.sb-signin-icons {
+  display: flex;
+  gap: 10px;
+  color: var(--faint);
+}
+
+.sb-signin strong {
+  font: 700 13px var(--font-ui);
+  color: var(--ink);
+}
+
+.sb-signin .button-accent {
+  margin-top: 4px;
 }
 
 /* ----------------------------------------- inside a project, in the sidebar */
@@ -3073,10 +3148,11 @@ code {
   }
 }
 
-/* ------------------------------------------------------------ account page */
+/* ------------------------------------------------- Account and Settings */
 
 /* The account page (0.0.10), as approved on the canvas: one column, with
-   the trusted devices and Forget all devices in one block. */
+   the trusted devices and Forget all devices in one block. From 0.1.4 two
+   pages in the same column: Account (the name, the plan) and Settings. */
 .account-view {
   width: 100%;
   max-width: 760px;
@@ -3441,37 +3517,6 @@ code {
 .segmented button[aria-pressed="true"] {
   background: var(--line);
   color: var(--ink);
-}
-
-/* Sign out: only here. */
-.signout-card {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 14px;
-  padding: 16px 18px;
-}
-
-.signout-text {
-  flex: 1 1 320px;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  font-size: 13px;
-  color: var(--dim);
-}
-
-.signout-text h2 {
-  margin: 0;
-  font: 700 15px var(--font-ui);
-  color: var(--ink);
-}
-
-.signout-card .button-plain {
-  display: flex;
-  align-items: center;
-  gap: 8px;
 }
 
 .account-foot {
@@ -4505,7 +4550,7 @@ code {
 }
 
 /* The whole block of each project tinted in its color, for those who chose
- * that on the account page (.tint-block on the page): its name, the labels
+ * that in Settings (.tint-block on the page): its name, the labels
  * and the icons of machines and folders in the color too, as on the canvas
  * of 19.10. */
 .tint-block .sb-project {
@@ -4862,7 +4907,7 @@ code {
   font-weight: 600;
 }
 
-/* Project colors on the account page: "Whole project" on one line. */
+/* Project colors in Settings: "Whole project" on one line. */
 .theme-card .segmented button {
   white-space: nowrap;
 }

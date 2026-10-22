@@ -70,7 +70,12 @@ export function MenuButton(props: {
         className={open ? "icon-button small menu-button open" : "icon-button small menu-button"}
         aria-label={props.label} title={props.title ?? props.label}
         aria-haspopup="menu" aria-expanded={open}
-        onClick={() => setOpen((was) => !was)}>
+        onClick={(event) => {
+          // Safari does not give a clicked button the keys: the arrows
+          // walk the menu only with the keys in it.
+          event.currentTarget.focus();
+          setOpen((was) => !was);
+        }}>
         <Dots size={16} />
       </button>
       {open && (

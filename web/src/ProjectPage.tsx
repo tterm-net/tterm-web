@@ -5,7 +5,9 @@
 // machine moves it to another project of one's own, and Delete project is
 // at the very end. From 0.1.2 a double click on a terminal's name names it,
 // and a note's ⋯ moves it to another project. People and the journal come
-// with teams, later.
+// with teams, later. From 0.1.4, in the app before signing in (local.ts),
+// Personal adds no machine, its computer has no menu, and the card about
+// Personal, with New project, is not there.
 
 import { useEffect, useState } from "react";
 import type {
@@ -36,6 +38,8 @@ const ROLE_LINE: Record<Project["role"], string> = {
 interface Props {
   project: Project;
   me: Me;
+  /** The app before signing in: this computer only (0.1.4). */
+  local?: boolean;
   /** The terminals running now, in every project. */
   terminals: TerminalInfo[];
   dotFor: (terminal: TerminalInfo) => Dot;
@@ -167,6 +171,8 @@ function MachineCard(props: {
   onMoveMachine?: (machine: Machine) => void;
   naming: Naming;
   notYet: (what: string) => void;
+  /** The app before signing in: the computer it runs on stays. */
+  local?: boolean;
 }) {
   const { machine: m, project } = props;
   const computer = m.kind === "computer";
@@ -197,7 +203,7 @@ function MachineCard(props: {
             <Plus size={14} />
             New terminal
           </button>
-          {manages(project) && (
+          {manages(project) && !props.local && (
             <MenuButton label={`${m.name}: machine menu`}
               title={props.onMoveMachine ? "Move to another project, Remove machine"
                 : "Remove machine"}>
@@ -313,6 +319,8 @@ export function ProjectPage(props: Props) {
     alone ? "only you" : ROLE_LINE[project.role],
   ].join(" · ");
   const manage = manages(project);
+  // Before signing in, machines come only with signing in.
+  const addsMachines = manage && !props.local;
   const write = writes(project);
   const naming: Naming = {
     renaming: props.renaming, onStartRename: props.onStartRename,
@@ -344,7 +352,7 @@ export function ProjectPage(props: Props) {
             <span>{alone ? "Only you open terminals on them"
               : "Your terminals on them"}</span>
           </div>
-          {manage && (
+          {addsMachines && (
             <button type="button" className="button-plain small"
               onClick={() => props.onAddMachine(project.id)}>
               <Plus size={14} />
@@ -354,7 +362,7 @@ export function ProjectPage(props: Props) {
         </div>
         {project.machines.length === 0 ? (
           <div className="pp-kinds">
-            <button type="button" className="pp-kind" disabled={!manage}
+            <button type="button" className="pp-kind" disabled={!addsMachines}
               onClick={() => props.onAddMachine(project.id, "server")}>
               <span className="tile" aria-hidden="true"><Server size={20} /></span>
               <span className="pp-kind-text">
@@ -363,7 +371,7 @@ export function ProjectPage(props: Props) {
                   on it, and it appears here.</span>
               </span>
             </button>
-            <button type="button" className="pp-kind" disabled={!manage}
+            <button type="button" className="pp-kind" disabled={!addsMachines}
               onClick={() => props.onAddMachine(project.id, "computer")}>
               <span className="tile" aria-hidden="true"><Computer size={20} /></span>
               <span className="pp-kind-text">
@@ -381,11 +389,11 @@ export function ProjectPage(props: Props) {
                 dotFor={props.dotFor} onOpenTerminal={props.onOpenTerminal}
                 onGoTo={props.onGoTo} onRemoveMachine={props.onRemoveMachine}
                 onMoveMachine={props.onMoveMachine} naming={naming}
-                notYet={props.notYet} />
+                notYet={props.notYet} local={props.local} />
             ))}
           </div>
         )}
-        {project.machines.length === 0 && !project.personal && manage && (
+        {project.machines.length === 0 && !project.personal && addsMachines && (
           <p className="pp-hint">
             Already have the machine in another project? On that project's page,
             ⋯ next to the machine, then Move to another project.
@@ -393,7 +401,7 @@ export function ProjectPage(props: Props) {
         )}
       </section>
 
-      {project.personal && (
+      {project.personal && !props.local && (
         <div className="pp-wide">
           <span className="tile" aria-hidden="true"><Lock size={20} /></span>
           <span className="pp-wide-text">

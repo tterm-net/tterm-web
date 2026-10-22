@@ -6,7 +6,8 @@
 // A click on anything that takes no typing hands the keys back right after
 // it did its job, and so does coming back to this window. A key pressed
 // while the focus is elsewhere is not lost: it goes where it belongs. Fields,
-// open dialogs and the browser's own shortcuts are left alone.
+// open dialogs, the account's menu and the browser's own shortcuts are left
+// alone.
 
 export interface Home {
   /** The element that should hold the keys. */
@@ -22,9 +23,11 @@ export function keepKeys(home: () => Home | null): () => void {
     !!el?.closest("input, textarea, select, [contenteditable='true']");
   const pressable = (el: Element | null) =>
     !!el?.closest("button, a[href], summary, [role='button']");
-  // A picker left open in a tab behind does not count.
+  // A picker left open in a tab behind does not count. The account's menu
+  // (0.1.4) keeps the keys as well: it opens in the sidebar, over a live
+  // terminal. Other menus are on pages, which may stay open behind it.
   const dialogOpen = () => document.querySelector(
-    ".dialog, .finder, .terminal-view:not(.behind) .picker") !== null;
+    ".dialog, .finder, .sidebar [role='menu'], .terminal-view:not(.behind) .picker") !== null;
   const target = (): Home | null => {
     const h = home();
     if (!h?.element) return null;

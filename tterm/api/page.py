@@ -414,7 +414,8 @@ def create_page_app(pool: asyncpg.Pool, dist: Path, page_url: str,
 
     @app.post("/api/auth/signout")
     async def sign_out(request: Request) -> Response:
-        """Sign out on the account page: this browser forgets the person.
+        """Sign out, in the menu of the account (on the account page before
+        0.1.4): this browser forgets the person.
         The session ends, and a trusted device is forgotten too, so that
         next time it is a code from email; that is also how one switches
         to another account (from 0.0.10; until then the device stayed
@@ -433,7 +434,7 @@ def create_page_app(pool: asyncpg.Pool, dist: Path, page_url: str,
     async def sign_out_everywhere(
             session: auth.Session = Depends(signed_in)) -> Response:
         """Every session of the person ends and every device is forgotten:
-        "Forget all devices" on the account page."""
+        "Forget all devices" in Settings (on the account page before 0.1.4)."""
         await auth.sign_out_everywhere(pool, session.person.id)
         await cut(lambda s: s.person.id == session.person.id)
         response = _json({"signedOut": True})

@@ -292,7 +292,7 @@ async def test_a_new_address_signs_up_after_its_code(h):
         note = core.mailer.sent[-1]
         assert note.subject == "New sign-in to tTerm", note.subject
         assert "Safari on iPhone" in note.text and "Forget all devices" in note.text
-        assert "Safari on iPhone" in note.html and "/account" in note.html
+        assert "Safari on iPhone" in note.html and "/settings" in note.html
         assert await core.pool.fetchval("SELECT count(*) FROM users") == 1
 
 

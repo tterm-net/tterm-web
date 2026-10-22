@@ -1,6 +1,7 @@
 // Projects' colors and codes (0.1.1), as on the canvas: a project's color
 // fills its code badge everywhere; the whole block of the project in the
-// sidebar is tinted too if the person chose that on the account page. The
+// sidebar is tinted too if the person chose that on the account page (from
+// 0.1.4 in Settings). The
 // values live in tokens.css under .pc-<color>, one set for each theme.
 
 import { PROJECT_COLORS, type Project, type ProjectColor } from "./api";

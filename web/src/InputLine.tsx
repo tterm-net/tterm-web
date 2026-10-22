@@ -8,7 +8,7 @@
 // runs an ordinary command, so it shows up in the feed like any other.
 
 import {
-  useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState,
+  useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState,
   type MutableRefObject,
 } from "react";
 import {
@@ -17,6 +17,7 @@ import {
 import { shortPath } from "./BlockView";
 import { ArrowUp, Branch, Folder } from "./icons";
 import { typeInto, type Home } from "./keys";
+import { LocalOnly } from "./local";
 import { Picker, type PickerItem } from "./Picker";
 
 export type Phase = "start" | "prompt" | "running" | "input" | "full";
@@ -87,6 +88,8 @@ interface Listing {
 type Open = "dirs" | "branches" | "history" | null;
 
 export function InputLine(props: Props) {
+  // In the app before signing in, history stays on this computer (0.1.4).
+  const local = useContext(LocalOnly);
   const { phase, prompt, history, terminalId } = props;
   const [text, setText] = useState("");
   const [atEnd, setAtEnd] = useState(true);
@@ -442,7 +445,7 @@ export function InputLine(props: Props) {
       </div>
       <div className="input-hints">
         <span><kbd>Tab</kbd> complete, or take the suggestion</span>
-        <span><kbd>↑</kbd> history across your devices</span>
+        <span><kbd>↑</kbd> history {local ? "on this computer" : "across your devices"}</span>
         <span><kbd>⇧↵</kbd> new line</span>
         <span>While a command runs, what you type goes to it</span>
       </div>

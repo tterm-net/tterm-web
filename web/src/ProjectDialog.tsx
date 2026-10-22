@@ -188,13 +188,13 @@ export function ProjectDialog(props: {
             {!editing
               ? "The color is picked to differ from your other projects, and you " +
                 "can change it. It fills the code badge, and the whole project " +
-                "in the sidebar if you choose Whole project on your account page."
+                "in the sidebar if you choose Whole project in Settings."
               : alone
               ? "The color fills the code badge, and the whole project in the " +
-                "sidebar if you choose Whole project on your account page."
+                "sidebar if you choose Whole project in Settings."
               : "The color fills the code badge for everyone in it, and the whole " +
-                "project in the sidebar for those who choose Whole project on " +
-                "their account page."}
+                "project in the sidebar for those who choose Whole project in " +
+                "their Settings."}
           </p>
         </div>
         <div className={`pd-preview ${colorClass(color)}`} aria-hidden="true">

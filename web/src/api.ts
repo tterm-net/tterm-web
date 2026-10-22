@@ -294,6 +294,9 @@ export interface State {
   projects: Project[];
   /** The terminals running now, the oldest first. */
   terminals: TerminalInfo[];
+  /** In tTerm for the computer before signing in (0.1.4): this computer
+   * only, see local.ts. tTerm Web never sends it. */
+  local?: boolean;
 }
 
 export interface Install {
@@ -493,10 +496,20 @@ export function quickSignIn(pin: string): Promise<void> {
   return auth("/api/auth/pin-login", { pin });
 }
 
-/** Sign out (on the account page): this browser forgets the person, so
- * that next time it takes a code from email (from 0.0.10). */
+/** Sign out (from 0.0.10; from 0.1.4 in the menu of the account at the
+ * bottom of the sidebar): this browser forgets the person, so that next
+ * time it takes a code from email. */
 export function signOut(): Promise<void> {
   return auth("/api/auth/signout");
+}
+
+/** Sign in, from tTerm for the computer before signing in (0.1.4): the
+ * app signs in with the browser. Its engine answers; until it can, it says
+ * why not, and that is what the page shows. */
+export async function signInApp(): Promise<{ code?: string }> {
+  const response = await check(await fetch("/api/auth/link", change("POST", {})));
+  // An answer with nothing in it is fine too.
+  return response.json().catch(() => ({}));
 }
 
 /** Forget all devices: every session ends and no browser is trusted any
@@ -505,7 +518,8 @@ export async function forgetAllDevices(): Promise<void> {
   await check(await fetch("/api/auth/signout-everywhere", change("POST", {})));
 }
 
-/** What the account page shows besides the name and the address. */
+/** What Account and Settings show besides the name and the address: the
+ * plan on Account, the devices and the documents on Settings (0.1.4). */
 export interface AccountInfo {
   plan: {
     id: string;

@@ -5,7 +5,7 @@ import {
   CoreError, createFolder, createNote, createProject, deleteFolder, deleteNote,
   deleteProject, editProject, endTerminal, loadNote, loadState, moveMachine,
   moveNote, NoteGone, onSignedOut, openTerminal, removeMachine, renameFolder,
-  renameTerminal, saveProjectTint, saveTheme, SignedOut, signOut, type Folder,
+  renameTerminal, saveProjectTint, saveTheme, SignedOut, signInApp, signOut, type Folder,
   type Machine, type MachineKind, type Note, type NoteSummary, type Project,
   type ProjectFields, type ProjectTint, type State, type TerminalInfo,
   type Theme,
@@ -14,9 +14,11 @@ import { colorClass } from "./colors";
 import { Confirm, Removed } from "./Confirm";
 import { Finder, type FinderGroup, type FinderItem } from "./Finder";
 import {
-  ChevronRight, Close, Computer, Doc, Folder as FolderIcon, ListCheck, Moon,
-  Pencil, Person, Pin, Plus, Server, Sun, Trash,
+  ChevronRight, Close, Computer, Doc, Folder as FolderIcon, Gear, ListCheck, Moon,
+  Pencil, Person, Pin, Plus, Server, SignIn as SignInIcon, SignOut as SignOutIcon,
+  Sun, Trash,
 } from "./icons";
+import { LocalOnly } from "./local";
 import { Machines } from "./Machines";
 import { FolderDialog } from "./Menus";
 import { draftsOf, forgetDrafts, markDeleted } from "./drafts";
@@ -27,7 +29,8 @@ import {
 } from "./ProjectDialog";
 import { ProjectPage } from "./ProjectPage";
 import { alone, deletesNote, listed, manages, many, writes } from "./rights";
-import { Sidebar } from "./Sidebar";
+import { Settings } from "./Settings";
+import { Sidebar, type AccountPage } from "./Sidebar";
 import { SignIn } from "./SignIn";
 import { socket } from "./socket";
 import { TabBar, type Dot, type SaveLine, type TabView } from "./TabBar";
@@ -60,8 +63,15 @@ const COMPUTERS_MS = 10_000;
 const LISTS_MS = 60_000;
 
 /** /t/<id> is a terminal, /n/<id> a note, /p/<id> a project's page (tabs.ts),
- * /account the account page (0.0.10); anything else is the machines page. */
-const ACCOUNT_PATH = /^\/account\/?$/;
+ * /account the account page (0.0.10) and /settings Settings (0.1.4);
+ * anything else is the machines page. */
+const PAGE_PATH = /^\/(settings|account)\/?$/;
+
+/** The page of the account's menu at this address, if it is one. */
+function pageOf(path: string): AccountPage | null {
+  const found = PAGE_PATH.exec(path);
+  return found ? (found[1] as AccountPage) : null;
+}
 
 /** The sign-in screen's note when a session ends with nothing done here:
  * eight hours away, or signed out from another device. */
@@ -97,9 +107,10 @@ function dotOf(status: TabStatus | undefined, known: TerminalInfo | undefined,
   return "open";
 }
 
-/** The account page's step in the history: where it was opened from. */
-interface AccountMark {
-  accountFrom: string;
+/** The step in the history of Account or Settings: where it was opened
+ * from. */
+interface PageMark {
+  pageFrom: string;
 }
 
 /** What waits for a yes before it is done. */
@@ -311,9 +322,9 @@ export function App() {
   /** Who was signed in on this page last, and with which address. */
   const lastUser = useRef<string | null>(null);
   const lastEmail = useRef<string | null>(null);
-  /** Each opening of the account page shows it afresh: devices that came
+  /** Each opening of Account or Settings shows it afresh: devices that came
    * or went meanwhile, what the plan counts now. */
-  const [accountVisit, setAccountVisit] = useState(0);
+  const [pageVisit, setPageVisit] = useState(0);
   const stateNow = useRef<State | null>(null);
   stateNow.current = state;
 
@@ -452,7 +463,7 @@ export function App() {
   // the way they would between pages. In place, the address takes the
   // current one's step in the history instead of adding one.
   const navigate = useCallback((to: string, inPlace = false,
-    mark: AccountMark | null = null) => {
+    mark: PageMark | null = null) => {
     if (to !== location.pathname) {
       if (inPlace) history.replaceState(mark, "", to);
       else history.pushState(mark, "", to);
@@ -870,12 +881,13 @@ export function App() {
     void refresh();
   }, [refresh]);
 
-  /** Sign out, on the account page only: this browser forgets the person. */
+  /** Sign out, in the menu of the account at the bottom of the sidebar
+   * (0.1.4): this browser forgets the person. */
   const signOutHere = useCallback(() => signOut()
     .then(() => {
       // The browser forgets the person: their unsaved notes too.
       forgetDrafts();
-      endSession("You signed out.");
+      endSession("You signed out. Your terminals keep running.");
     })
     .catch((error) => {
       notYet("Could not sign out: tTerm Web did not answer. Try again.");
@@ -1036,13 +1048,22 @@ export function App() {
   useEffect(() => {
     if (!moveAsked) setMovingNote(null);
   }, [moveAsked]);
-  const accountOpen = !current && ACCOUNT_PATH.test(path);
+  // In the app before signing in there is no account: Settings only.
+  const local = !!state?.local;
+  const shownPage = current ? null : pageOf(path);
+  const pageOpen = local && shownPage === "account" ? null : shownPage;
   const title = front
     ? `${front.kind === "terminal" && front.code ? `${front.code}/` : ""}${front.label} · tTerm`
-    : accountOpen ? "Account · tTerm" : "tTerm";
+    : pageOpen === "settings" ? "Settings · tTerm"
+    : pageOpen === "account" ? "Account · tTerm" : "tTerm";
   useEffect(() => {
     document.title = title;
   }, [title]);
+  // No Account before signing in: its address gives way to the machines
+  // page, so that signing in later does not open it there.
+  useEffect(() => {
+    if (local && shownPage === "account") navigate("/", true);
+  }, [local, shownPage, navigate]);
 
   if (signedOut) {
     return (
@@ -1072,10 +1093,12 @@ export function App() {
   const sidebarShown = open || pinned;
   const personal = projects.find((p) => p.personal) ??
     projects.find((p) => p.role === "owner");
-  const canAddTo = projects.find((p) =>
+  const canAddTo = local ? undefined : projects.find((p) =>
     p.role === "owner" || p.role === "admin");
   const anyMachine = projects.some((p) => p.machines.length > 0);
   const startAdding = (projectId: string, kind: MachineKind = "server") => {
+    // Before signing in there is this computer only (local.ts).
+    if (local) return;
     if (!pinned) setOpen(false);
     setAdding({ projectId, kind });
   };
@@ -1085,23 +1108,37 @@ export function App() {
     if (!pinned) setOpen(false);
     then();
   };
-  const openAccount = () => {
+  /** Settings or Account, from the menu of the account or the palette.
+   * One of them over the other takes its place in the history, so that
+   * Close goes back to where the first was opened from. */
+  const openPage = (which: AccountPage) => {
     if (!pinned) setOpen(false);
     setPalette(false);
     setPicking(false);
-    setAccountVisit((n) => n + 1);
-    if (!ACCOUNT_PATH.test(location.pathname)) {
-      navigate("/account", false, { accountFrom: location.pathname });
-    }
+    setPageVisit((n) => n + 1);
+    const was = pageOf(location.pathname);
+    if (was === which) return;
+    const mark = history.state as PageMark | null;
+    if (was) navigate(`/${which}`, true, mark);
+    else navigate(`/${which}`, false, { pageFrom: location.pathname });
   };
   /** Back to where the page was opened from: the step before it in the
    * history, which its entry remembers (Back and Forward keep that right).
    * Opened by its address, as a bookmark, to the machines page instead,
    * never out of tTerm. */
-  const closeAccount = () => {
-    const mark = history.state as AccountMark | null;
-    if (mark?.accountFrom) history.back();
+  const closePage = () => {
+    const mark = history.state as PageMark | null;
+    if (mark?.pageFrom) history.back();
     else navigate("/", true);
+  };
+  /** Sign in, in the app before signing in: its engine signs in with the
+   * browser, or says why it cannot yet. */
+  const signInHere = () => {
+    if (!pinned) setOpen(false);
+    setPalette(false);
+    signInApp()
+      .then(() => notYet("Go on in your browser: sign in there, and allow this computer."))
+      .catch((error: Error) => notYet(error.message));
   };
   const frontKind = current ? tabKind(current) : null;
   const runningHere = frontKind === "terminal"
@@ -1194,14 +1231,14 @@ export function App() {
     const noteHere = frontKind === "note" ? findNote(projects, tabTarget(current!)) : null;
     const actions: FinderItem[] = [
       ...addItem,
-      {
+      ...(local ? [] : [{
         key: "new-project",
         label: "New project",
         hint: "its own machines and notes",
         icon: <Plus size={15} />,
         words: "project new create make",
         run: () => setProjectWindow({}),
-      },
+      }]),
       ...(pageProject && manages(pageProject) ? [{
         key: "edit-project",
         label: `Edit ${pageProject.name}`,
@@ -1273,14 +1310,40 @@ export function App() {
         run: togglePin,
       },
       {
+        key: "settings",
+        label: "Settings",
+        hint: local ? "theme, project colors" : "theme, project colors, devices",
+        icon: <Gear size={15} />,
+        words: "settings preferences theme dark light colors colours " +
+          (local ? "" : "devices quick code forget browsers ") +
+          "terms privacy support",
+        run: () => openPage("settings"),
+      },
+      ...(local ? [{
+        key: "sign-in",
+        label: "Sign in",
+        hint: "your servers, projects and team",
+        icon: <SignInIcon size={15} />,
+        words: "sign in log in login account cloud servers",
+        run: signInHere,
+      }] : [{
         key: "account",
         label: "Account",
-        hint: "name, plan, devices, sign out",
+        hint: "name and plan",
         icon: <Person size={15} />,
-        words: "account profile name plan devices quick code forget theme " +
-          "sign out log out logout settings",
-        run: openAccount,
-      },
+        words: "account profile name plan limits delete",
+        run: () => openPage("account"),
+      }, {
+        key: "sign-out",
+        label: "Sign out",
+        hint: "this browser forgets you",
+        icon: <SignOutIcon size={15} />,
+        words: "sign out log out logout leave switch account",
+        run: () => {
+          setPalette(false);
+          void signOutHere().catch(() => {});
+        },
+      }]),
     ];
     return [
       { title: "Terminals", items: terminals },
@@ -1292,6 +1355,7 @@ export function App() {
   };
 
   return (
+    <LocalOnly.Provider value={local}>
     <div className={`${pinned ? "app pinned" : "app"}${tint === "block" ? " tint-block" : ""}`}>
       <TabBar sidebarButton={sidebarButton} tabs={tabViews}
         current={current} onSelect={(tab) => navigate(tabPath(tab))}
@@ -1344,6 +1408,7 @@ export function App() {
             {pageProject ? (
               <ProjectPage project={pageProject} me={state.me}
                 terminals={liveTerminals} dotFor={dotFor}
+                local={local}
                 onAddMachine={startAdding} onOpenTerminal={startTerminal}
                 onGoTo={goTo} onRemoveMachine={askRemove}
                 onMoveMachine={pageProject.own && projects.some((p) => p.own &&
@@ -1381,23 +1446,28 @@ export function App() {
             )}
           </div>
         )}
-        {accountOpen && (
+        {pageOpen === "account" && (
           <div className="page-scroll">
-            <Account key={accountVisit} me={state.me} theme={theme}
+            <Account key={pageVisit} me={state.me} onRenamed={renamed}
+              onClose={closePage} />
+          </div>
+        )}
+        {pageOpen === "settings" && (
+          <div className="page-scroll">
+            <Settings key={pageVisit} local={local} theme={theme}
               onTheme={chooseTheme} tint={tint} onTint={chooseTint}
-              onRenamed={renamed} onSignOut={signOutHere}
               onSignedOut={(note) => {
                 // This device forgotten: nothing of the person stays here.
                 forgetDrafts();
                 endSession(note);
-              }} onClose={closeAccount}
+              }} onClose={closePage}
               notify={notYet} />
           </div>
         )}
-        {!current && !accountOpen && (
+        {!current && !pageOpen && (
           <div className="page-scroll">
-            {anyMachine ? (
-              <Machines projects={projects} terminals={state.terminals}
+            {anyMachine || local ? (
+              <Machines projects={projects} terminals={state.terminals} local={local}
                 onAdd={(projectId) => startAdding(projectId)}
                 onOpenTerminal={startTerminal} onGoTo={goTo}
                 onRemove={askRemove} />
@@ -1459,8 +1529,12 @@ export function App() {
           onNewNote={(folderId) => away(() => newNote(folderId))()}
           onOpenNote={(noteId) => away(() => openTab(noteTab(noteId)))()}
           onNewProject={() => away(() => setProjectWindow({}))()}
-          onAccount={openAccount}
-          accountOpen={accountOpen}
+          local={local}
+          page={pageOpen}
+          onSettings={() => openPage("settings")}
+          onAccount={() => openPage("account")}
+          onSignOut={() => void signOutHere().catch(() => {})}
+          onSignIn={signInHere}
           onHome={away(() => navigate("/"))}
           notYet={notYet}
         />
@@ -1630,5 +1704,6 @@ export function App() {
 
       {toast && <div className="toast" role="status">{toast}</div>}
     </div>
+    </LocalOnly.Provider>
   );
 }

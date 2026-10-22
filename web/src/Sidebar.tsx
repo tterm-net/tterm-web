@@ -11,13 +11,18 @@
 // pointed at offers End (from 0.0.8), which asks first. The account at the
 // bottom opens the account page (from 0.0.10). From 0.1.1 each project's
 // badge is in its color, and New project makes one of one's own. From 0.1.2
-// a double click on a terminal names it right there.
+// a double click on a terminal names it right there. From 0.1.4 the account
+// at the bottom opens a menu: Settings, Account, Sign out; and in the app
+// before signing in (local.ts) the sidebar has Personal with this computer,
+// no machine to add and no project to make, a card about signing in, and
+// at the bottom Not signed in, whose menu has Settings and Sign in.
 
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Machine, Me, Project, Role, TerminalInfo } from "./api";
 import { colorClass, terminalName } from "./colors";
 import {
-  ChevronDown, Close, Computer, Folder as FolderIcon, FolderOpen, Logo, Moon,
-  Pin, Plus, Server, Sun,
+  ChevronDown, Close, Computer, Doc, Folder as FolderIcon, FolderOpen, Gear,
+  Logo, Moon, People, Person, Pin, Plus, Server, SignIn, SignOut, Sun,
 } from "./icons";
 import { NameInput } from "./NameInput";
 import { Avatar, NoteIcon } from "./ProjectPage";
@@ -73,10 +78,19 @@ interface Props {
   /** The machines page. */
   onHome: () => void;
   notYet: (what: string) => void;
-  /** The account page, and whether it is the one shown. */
+  /** The app before signing in (0.1.4): this computer only. */
+  local: boolean;
+  /** The page of the account's menu shown now, if one is (0.1.4). */
+  page: AccountPage | null;
+  onSettings: () => void;
   onAccount: () => void;
-  accountOpen: boolean;
+  onSignOut: () => void;
+  /** In the app before signing in: sign in with the browser. */
+  onSignIn: () => void;
 }
+
+/** The pages behind the menu of the account at the bottom (0.1.4). */
+export type AccountPage = "settings" | "account";
 
 /** The ⌄ before a row: turned while folded. Only for the mouse: the row's
  * name does the same and is the one the keyboard reaches. */
@@ -104,7 +118,7 @@ function Label(props: { text: string; plus?: { title: string; onClick: () => voi
 }
 
 export function Sidebar(props: Props) {
-  const { me, projects, pinned, shownTheme, folded, onFold, current } = props;
+  const { me, projects, pinned, shownTheme, folded, onFold, current, local } = props;
   const { terminals, dotFor } = props;
   const themeLabel =
     shownTheme === "light" ? "Switch to dark theme" : "Switch to light theme";
@@ -280,7 +294,7 @@ export function Sidebar(props: Props) {
               </div>
               {open && (
                 <div className="sb-inside">
-                  <Label text="Machines" plus={manages(project) ? {
+                  <Label text="Machines" plus={manages(project) && !local ? {
                     title: "Add machine",
                     onClick: () => props.onAddMachine(project.id),
                   } : undefined} />
@@ -304,17 +318,20 @@ export function Sidebar(props: Props) {
             </div>
           );
         })}
-        <button type="button" className="new-project" onClick={props.onNewProject}>
-          <span className="dashed-tile" aria-hidden="true">
-            <Plus size={13} />
-          </span>
-          New project
-        </button>
+        {local ? <SignInCard onSignIn={props.onSignIn} /> : (
+          <button type="button" className="new-project" onClick={props.onNewProject}>
+            <span className="dashed-tile" aria-hidden="true">
+              <Plus size={13} />
+            </span>
+            New project
+          </button>
+        )}
       </div>
 
       <div className="sidebar-foot">
-        <AccountButton me={me} onAccount={props.onAccount}
-          current={props.accountOpen} />
+        <AccountPlace me={me} local={local} page={props.page}
+          onSettings={props.onSettings} onAccount={props.onAccount}
+          onSignOut={props.onSignOut} onSignIn={props.onSignIn} />
         <button type="button" className="icon-button"
           aria-label={themeLabel} title={themeLabel}
           onClick={props.onToggleTheme}>
@@ -325,23 +342,174 @@ export function Sidebar(props: Props) {
   );
 }
 
-/** The account at the bottom of the sidebar: the name and the plan. It opens
- * the account page, and lights up under the mouse like anything else here
- * that does something, so it needs no word saying so. */
-function AccountButton(props: { me: Me; onAccount: () => void; current: boolean }) {
-  const { me } = props;
-  const plan = me.plan === "free" ? "Free plan" : me.plan;
+/** In the app before signing in, under Personal: what signing in adds. */
+function SignInCard(props: { onSignIn: () => void }) {
   return (
-    <div className="account-box">
-      <button type="button" className="account" onClick={props.onAccount}
-        aria-current={props.current ? "page" : undefined}
-        title="Your account and settings">
-        <span className="avatar mine" aria-hidden="true">{me.initials}</span>
-        <span className="account-text">
-          <strong>{me.firstName}</strong>
-          <span>{plan}</span>
-        </span>
+    <div className="sb-signin">
+      <span className="sb-signin-icons" aria-hidden="true">
+        <Server size={15} />
+        <Doc size={15} />
+        <People size={15} />
+      </span>
+      <strong>Servers and projects</strong>
+      <span>
+        Sign in to open terminals on your servers, keep notes in projects and
+        work with your team. This computer stays as it is.
+      </span>
+      <button type="button" className="button-accent" onClick={props.onSignIn}>
+        Sign in
       </button>
+    </div>
+  );
+}
+
+function MenuItem(props: {
+  icon: ReactNode;
+  text: string;
+  current?: boolean;
+  accent?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button type="button" role="menuitem"
+      className={props.accent ? "menu-item accent" : "menu-item"}
+      aria-current={props.current ? "page" : undefined} onClick={props.onClick}>
+      {props.icon}
+      <span className="menu-text">{props.text}</span>
+    </button>
+  );
+}
+
+/** The account at the bottom of the sidebar: the name and the plan, and in
+ * the app before signing in Not signed in. A click opens its menu above it,
+ * which closes on a choice, a click elsewhere, or Esc; the arrow keys walk
+ * its items. It lights up under the mouse, and while one of its pages is
+ * open. */
+function AccountPlace(props: {
+  me: Me;
+  local: boolean;
+  page: AccountPage | null;
+  onSettings: () => void;
+  onAccount: () => void;
+  onSignOut: () => void;
+  onSignIn: () => void;
+}) {
+  const { me, local } = props;
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  const plan = me.plan === "free" ? "Free plan" : me.plan;
+
+  useEffect(() => {
+    if (!open) return;
+    const away = (event: MouseEvent) => {
+      if (!box.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const keys = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        setOpen(false);
+        box.current?.querySelector<HTMLButtonElement>(".account")?.focus();
+        return;
+      }
+      if (!box.current?.contains(document.activeElement)) return;
+      if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+      const items = [...(box.current?.querySelectorAll<HTMLButtonElement>(
+        ".menu [role='menuitem']") ?? [])];
+      if (!items.length) return;
+      event.preventDefault();
+      const at = items.indexOf(document.activeElement as HTMLButtonElement);
+      const next = event.key === "ArrowDown" ? (at + 1) % items.length
+        : at < 0 ? items.length - 1 : (at - 1 + items.length) % items.length;
+      items[next].focus();
+    };
+    const left = (event: FocusEvent) => {
+      const next = event.relatedTarget as Node | null;
+      if (next && !box.current?.contains(next)) setOpen(false);
+    };
+    const anchor = box.current;
+    document.addEventListener("mousedown", away);
+    window.addEventListener("keydown", keys, true);
+    anchor?.addEventListener("focusout", left);
+    return () => {
+      document.removeEventListener("mousedown", away);
+      window.removeEventListener("keydown", keys, true);
+      anchor?.removeEventListener("focusout", left);
+    };
+  }, [open]);
+
+  const pick = (then: () => void) => () => {
+    setOpen(false);
+    then();
+  };
+
+  return (
+    <div className="account-box" ref={box}>
+      <button type="button" className={open ? "account open" : "account"}
+        aria-haspopup="menu" aria-expanded={open}
+        aria-current={props.page ? "page" : undefined}
+        title={local ? "Settings, sign in" : "Settings, account, sign out"}
+        onClick={(event) => {
+          // Safari does not give a clicked button the keys: here it takes
+          // them, for the menu's arrows and Esc, and so that the terminal
+          // in front does not.
+          event.currentTarget.focus();
+          setOpen((was) => !was);
+        }}>
+        {local ? (
+          <>
+            <span className="avatar nobody" aria-hidden="true"><Person size={15} /></span>
+            <span className="account-text">
+              <strong>Not signed in</strong>
+              <span>Only this computer</span>
+            </span>
+          </>
+        ) : (
+          <>
+            <span className="avatar mine" aria-hidden="true">{me.initials}</span>
+            <span className="account-text">
+              <strong>{me.firstName}</strong>
+              <span>{plan}</span>
+            </span>
+          </>
+        )}
+      </button>
+      {/* After the button, so that Tab goes from it into the menu. */}
+      {open && (
+        <div className="menu up" role="menu" aria-labelledby="account-menu-name"
+          aria-describedby={local || me.email ? "account-menu-note" : undefined}>
+          {local ? (
+            <>
+              <div className="menu-head">
+                <strong id="account-menu-name">Not signed in</strong>
+                <span id="account-menu-note">tTerm works with this computer.
+                  Sign in for your servers, projects and team.</span>
+              </div>
+              <div className="menu-line" role="separator" />
+              <MenuItem icon={<Gear size={15} />} text="Settings"
+                current={props.page === "settings"} onClick={pick(props.onSettings)} />
+              <div className="menu-line" role="separator" />
+              <MenuItem icon={<SignIn size={15} />} text="Sign in" accent
+                onClick={pick(props.onSignIn)} />
+            </>
+          ) : (
+            <>
+              <div className="menu-head">
+                <strong id="account-menu-name">{me.name}</strong>
+                {me.email && <span id="account-menu-note">{me.email}</span>}
+              </div>
+              <div className="menu-line" role="separator" />
+              <MenuItem icon={<Gear size={15} />} text="Settings"
+                current={props.page === "settings"} onClick={pick(props.onSettings)} />
+              <MenuItem icon={<Person size={15} />} text="Account"
+                current={props.page === "account"} onClick={pick(props.onAccount)} />
+              <div className="menu-line" role="separator" />
+              <MenuItem icon={<SignOut size={15} />} text="Sign out"
+                onClick={pick(props.onSignOut)} />
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

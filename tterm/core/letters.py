@@ -90,15 +90,16 @@ def sign_in_email(*, to: str, label: str, ip: str, at: dt.datetime,
                   page_url: str, support: str = SUPPORT) -> Email:
     """The note about a sign-in with a code from this address, in a
     browser tTerm Web did not know: what it was, and what to do if it was
-    not the person."""
+    not the person. Forget all devices is on Settings (from 0.1.4; before
+    that on the account page)."""
     subject = "New sign-in to tTerm"
     lead = f"Someone signed in as {to} with a code from this email."
     rows = [("Browser", label)]
     if ip:
         rows.append(("Address", ip))
     rows.append(("Time", when(at)))
-    account = page_url.rstrip("/") + "/account"
-    step1 = ("Open your account in tTerm and press Forget all devices: every "
+    settings = page_url.rstrip("/") + "/settings"
+    step1 = ("Open Settings in tTerm and press Forget all devices: every "
              "browser signs out.")
     step2 = ("Change the password of this email, because whoever signed in "
              "could read it.")
@@ -109,7 +110,7 @@ def sign_in_email(*, to: str, label: str, ip: str, at: dt.datetime,
             + "".join(f"{name}: {value}\n" for name, value in rows)
             + "\nIf it was you, there is nothing to do.\n\n"
             "If it was not you:\n"
-            f"1. {step1} {account}\n"
+            f"1. {step1} {settings}\n"
             f"2. {step2}\n\n"
             f"{note}\n\n"
             f"{_footer_text(page_url, support)}\n")
@@ -152,10 +153,10 @@ def sign_in_email(*, to: str, label: str, ip: str, at: dt.datetime,
           # link's own padding and would shrink the button to its words.
           '<td bgcolor="#E9A33F" style="border-radius:10px;'
           'background:#E9A33F;mso-padding-alt:13px 22px;">'
-          f'<a href="{escape(account)}" style="display:inline-block;'
+          f'<a href="{escape(settings)}" style="display:inline-block;'
           f'padding:13px 22px;font-family:{FONT};font-size:15px;'
           'line-height:20px;font-weight:700;color:#0D0E11;'
-          'text-decoration:none;border-radius:10px;">Open your account</a>'
+          'text-decoration:none;border-radius:10px;">Open Settings</a>'
           '</td></tr></table>'
           '</td></tr></table>')
     return Email(to=to, subject=subject, text=text,

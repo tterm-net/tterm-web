@@ -2,7 +2,9 @@
 // about it when it connected (over SSH from a server, through the agent from
 // a computer), a button for a new terminal, and the terminals already
 // running on it. A computer is online only while its agent runs. The owner
-// and admins can remove a machine here (from 0.0.8).
+// and admins can remove a machine here (from 0.0.8). In the app before
+// signing in (0.1.4) there is only the computer it runs on: nothing to add
+// or remove.
 
 import type { Machine, Passport, Project, Role, TerminalInfo } from "./api";
 import { colorClass } from "./colors";
@@ -16,6 +18,8 @@ interface Props {
   onOpenTerminal: (machineId: string) => void;
   onGoTo: (terminalId: string) => void;
   onRemove: (machine: Machine) => void;
+  /** The app before signing in: this computer only. */
+  local?: boolean;
 }
 
 /** Whether this role may add and remove machines. */
@@ -133,9 +137,9 @@ function MachineCard({ machine, code, terminals, manage, onOpenTerminal, onGoTo,
 }
 
 export function Machines(props: Props) {
-  const { projects, terminals, onAdd, onOpenTerminal, onGoTo, onRemove } = props;
+  const { projects, terminals, onAdd, onOpenTerminal, onGoTo, onRemove, local } = props;
   const withMachines = projects.filter((p) => p.machines.length > 0);
-  const first = projects.find((p) => p.role === "owner") ?? projects[0];
+  const first = local ? undefined : projects.find((p) => p.role === "owner") ?? projects[0];
   return (
     <main className="machines-view">
       <div className="machines-head">
@@ -164,7 +168,7 @@ export function Machines(props: Props) {
               <MachineCard key={machine.id} machine={machine}
                 code={project.code} onOpenTerminal={onOpenTerminal}
                 onGoTo={onGoTo} onRemove={onRemove}
-                manage={canManage(project.role)}
+                manage={canManage(project.role) && !local}
                 terminals={terminals.filter((t) => t.machineId === machine.id)} />
             ))}
           </div>

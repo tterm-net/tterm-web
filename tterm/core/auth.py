@@ -802,7 +802,8 @@ async def forget_browser(pool: asyncpg.Pool, token: str | None,
 async def sign_out_everywhere(pool: asyncpg.Pool, user_id: uuid.UUID) -> None:
     """Every session ends and every device is forgotten: from anywhere,
     only a code from email signs in now. On the account page this is
-    "Forget all devices" (0.0.10), so that it reads like Forget for one."""
+    "Forget all devices" (0.0.10; in Settings from 0.1.4), so that it reads
+    like Forget for one."""
     async with pool.acquire() as conn, conn.transaction():
         await conn.execute("UPDATE devices SET forgotten_at = now() "
                            "WHERE user_id = $1 AND forgotten_at IS NULL", user_id)

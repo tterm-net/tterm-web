@@ -45,9 +45,10 @@ def test_the_sign_in_email_says_what_and_what_to_do():
         assert "Safari on iPhone" in part and "203.0.113.24" in part, part
         assert "17 October 2026, 17:54 UTC" in part, part
         assert "Forget all devices" in part and "anna@example.com" in part
-    # The button and the text lead straight to the account page; the button
-    # keeps its size in Outlook too.
-    assert f'href="{PAGE}/account"' in e.html and f"{PAGE}/account" in e.text
+    # The button and the text lead straight to Settings, where Forget all
+    # devices is (0.1.4); the button keeps its size in Outlook too.
+    assert f'href="{PAGE}/settings"' in e.html and f"{PAGE}/settings" in e.text
+    assert "Open Settings in tTerm" in e.text and ">Open Settings</a>" in e.html
     assert 'bgcolor="#E9A33F"' in e.html and "mso-padding-alt" in e.html
     assert "about every sign-in from a browser it did not know" in e.text
     assert e.html.count("<img ") == 1 and e.html.count("<a ") == 3
