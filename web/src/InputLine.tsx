@@ -35,8 +35,10 @@ interface Props {
   prompt: Prompt;
   /** Commands, newest first. */
   history: string[];
-  /** A command to put back into the line (one the shell refused). */
-  restore: { text: string; n: number } | null;
+  /** A command to put back into the line (one the shell refused), or from
+   * 0.1.7 one search put there (`from`), which the line says until it is
+   * typed into. */
+  restore: { text: string; n: number; from?: "search" } | null;
   homeRef: MutableRefObject<Home | null>;
   onRun: (command: string) => void;
   /** Ctrl+C for the shell. */
@@ -101,6 +103,8 @@ export function InputLine(props: Props) {
   const caret = useRef<number | null>(null);
   const nav = useRef<{ index: number; prefix: string; draft: string } | null>(null);
   const asking = useRef(0);
+  /** The text came from search and is not typed into yet (0.1.7). */
+  const [fromSearch, setFromSearch] = useState(false);
   const ready = phase === "prompt";
   /** The line takes typing while a command runs too: the next command can
    * be typed ahead, and runs once the prompt is back. */
@@ -124,6 +128,7 @@ export function InputLine(props: Props) {
     if (props.restore) {
       setText(props.restore.text);
       caret.current = props.restore.text.length;
+      setFromSearch(props.restore.from === "search");
     }
   }, [props.restore]);
 
@@ -150,6 +155,7 @@ export function InputLine(props: Props) {
     }
     props.onRun(command);
     setText("");
+    setFromSearch(false);
     nav.current = null;
     setListing(null);
   }, [props, ready]);
@@ -261,6 +267,13 @@ export function InputLine(props: Props) {
         return;
       }
       setListing(null);
+    }
+    if (event.key === "Escape" && fromSearch) {
+      // What search put in goes out again, as the line said.
+      event.preventDefault();
+      set("");
+      setFromSearch(false);
+      return;
     }
     if (event.key === "Enter" && !event.shiftKey && !event.altKey) {
       event.preventDefault();
@@ -435,6 +448,7 @@ export function InputLine(props: Props) {
             disabled={!usable}
             onChange={(e) => {
               setText(e.target.value);
+              setFromSearch(false);
               nav.current = null;
             }}
             onSelect={(e) => setAtEnd(e.currentTarget.selectionStart ===
@@ -443,12 +457,20 @@ export function InputLine(props: Props) {
         </div>
         <ModeToggle mode="line" onLine={() => {}} onClassic={props.onClassic} />
       </div>
-      <div className="input-hints">
-        <span><kbd>Tab</kbd> complete, or take the suggestion</span>
-        <span><kbd>↑</kbd> history {local ? "on this computer" : "across your devices"}</span>
-        <span><kbd>⇧↵</kbd> new line</span>
-        <span>While a command runs, what you type goes to it</span>
-      </div>
+      {fromSearch && text ? (
+        <div className="input-hints from-search" role="status">
+          <span>From search, not run yet</span>
+          <span><kbd>Enter</kbd> runs it here</span>
+          <span><kbd>Esc</kbd> clears the line</span>
+        </div>
+      ) : (
+        <div className="input-hints">
+          <span><kbd>Tab</kbd> complete, or take the suggestion</span>
+          <span><kbd>↑</kbd> history {local ? "on this computer" : "across your devices"}</span>
+          <span><kbd>⇧↵</kbd> new line</span>
+          <span>While a command runs, what you type goes to it</span>
+        </div>
+      )}
     </footer>
   );
 }

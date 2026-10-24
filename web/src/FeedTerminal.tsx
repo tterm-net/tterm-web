@@ -25,9 +25,11 @@ import {
 } from "./api";
 import { BlockView, shortPath, type FeedBlock } from "./BlockView";
 import { FONT, FONT_SIZE, HIGH, LOW, type ViewEvents } from "./ClassicTerminal";
+import { goneThere, takePaste, useFoundBlock, wentThere } from "./found";
 import { Warning } from "./icons";
 import { InputLine, type Phase, type Prompt } from "./InputLine";
 import { keepKeys, typingElsewhere, type Home } from "./keys";
+import { markOnLine } from "./marks";
 import {
   KEEP_LINES, fromBase64, plainText, readBuffer, renderOutput,
 } from "./render";
@@ -146,7 +148,13 @@ interface Props {
   events: ViewEvents;
   onClassic: () => void;
   notify: (text: string) => void;
+  /** A command search put here, for the line (0.1.7): not run. */
+  paste: { text: string; n: number } | null;
 }
+
+/** How many pages of earlier blocks a block found by search is looked for
+ * in, at most. */
+const FIND_PAGES = 40;
 
 function fromStored(b: StoredBlock, cols: number, folded = false): FeedBlock {
   return {
@@ -193,7 +201,8 @@ export function FeedTerminal(props: Props) {
   const [cellHeight, setCellHeight] = useState(17);
   const [ask, setAsk] = useState<Confirm | null>(null);
   const [history, setHistory] = useState<string[]>([]);
-  const [restore, setRestore] = useState<{ text: string; n: number } | null>(null);
+  const [restore, setRestore] =
+    useState<{ text: string; n: number; from?: "search" } | null>(null);
   /** The block up to which the feed was cleared from view. */
   const [clearedAt, setClearedAt] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
@@ -684,12 +693,14 @@ export function FeedTerminal(props: Props) {
     const t = term.current;
     if (!t || props.ended || !props.active) return;
     const line = homeRef.current?.element;
+    // A window or the search over the terminal keeps the keys (0.1.7).
+    const elsewhere = () => typingElsewhere(feedRef.current?.closest(".terminal-view"));
     const here = () => {
       const active = document.activeElement;
-      return !active || active === document.body || active === line;
+      return (!active || active === document.body || active === line) && !elsewhere();
     };
     if (phase === "input") {
-      if (!typingElsewhere(feedRef.current?.closest(".terminal-view"))) t.focus();
+      if (!elsewhere()) t.focus();
       return;
     }
     if (phase === "running") {
@@ -701,7 +712,8 @@ export function FeedTerminal(props: Props) {
     }
     if (phase === "prompt" && !fullscreen) {
       const active = document.activeElement;
-      if (active === t.textarea || !active || active === document.body) {
+      if ((active === t.textarea || !active || active === document.body) &&
+          !elsewhere()) {
         line?.focus();
       }
     }
@@ -837,33 +849,109 @@ export function FeedTerminal(props: Props) {
     update(b.key, { rendered, expanded: true, partial: false });
   };
 
-  const loadingEarlier = useRef(false);
-  const loadEarlier = async () => {
-    if (loadingEarlier.current) return;
-    loadingEarlier.current = true;
-    try {
-      const first = blocks.find((b) => b.stored);
-      const feed = await loadFeed(terminalId, first?.seqStart).catch(() => null);
-      if (!feed) return;
-      stick.current = false;
-      const cols = term.current?.cols ?? 80;
-      setBlocks((bs) => {
-        const have = new Set(bs.map((b) => b.key));
-        const folded = foldedBlocks();
-        return [...feed.blocks.map((b) => fromStored(b, cols,
-          folded.has(`${terminalId}:${b.seqStart}`)))
-          .filter((b) => !have.has(b.key)), ...bs];
-      });
-      setMore(feed.more);
-      for (const b of [...feed.blocks].reverse()) {
-        const rendered = await renderOutput(fromBase64(b.output),
-          b.cols ?? cols);
-        update(`s${b.seqStart}`, { rendered });
-      }
-    } finally {
-      loadingEarlier.current = false;
+  const blocksNow = useRef(blocks);
+  blocksNow.current = blocks;
+  const moreNow = useRef(more);
+  moreNow.current = more;
+  const loadPage = async () => {
+    const first = blocksNow.current.find((b) => b.stored);
+    const feed = await loadFeed(terminalId, first?.seqStart).catch(() => null);
+    if (!feed) return;
+    stick.current = false;
+    const cols = term.current?.cols ?? 80;
+    setBlocks((bs) => {
+      const have = new Set(bs.map((b) => b.key));
+      const folded = foldedBlocks();
+      return [...feed.blocks.map((b) => fromStored(b, cols,
+        folded.has(`${terminalId}:${b.seqStart}`)))
+        .filter((b) => !have.has(b.key)), ...bs];
+    });
+    setMore(feed.more);
+    for (const b of [...feed.blocks].reverse()) {
+      const rendered = await renderOutput(fromBase64(b.output),
+        b.cols ?? cols);
+      update(`s${b.seqStart}`, { rendered });
     }
   };
+  /** The earlier page being loaded: asked again meanwhile (the button, or
+   * search going back to a block), the same load is waited for. */
+  const loadingEarlier = useRef<Promise<void> | null>(null);
+  const loadEarlier = (): Promise<void> => {
+    loadingEarlier.current ??= loadPage().finally(() => {
+      loadingEarlier.current = null;
+    });
+    return loadingEarlier.current;
+  };
+
+  // A command search put here (0.1.7): into the line, not run, with the
+  // keys there.
+  useEffect(() => {
+    const p = props.paste;
+    if (!p || props.ended || !takePaste(p.n)) return;
+    restoreN.current += 1;
+    setRestore({ text: p.text, n: restoreN.current, from: "search" });
+    stick.current = true;
+    window.setTimeout(() => homeRef.current?.element?.focus(), 0);
+  }, [props.paste, props.ended]);
+
+  // The block search opened (0.1.7): loaded if it is further back than the
+  // feed is, shown if it was cleared from view or folded, its whole output
+  // if the words are in it, and there, in the middle.
+  const found = useFoundBlock(terminalId);
+  const showAllNow = useRef<(b: FeedBlock) => Promise<void>>(async () => {});
+  showAllNow.current = showAll;
+  useEffect(() => {
+    if (!found || !loaded || !props.active || wentThere(found.n)) return;
+    let cancelled = false;
+    const go = async () => {
+      for (let page = 0; page <= FIND_PAGES && !cancelled; page++) {
+        const all = blocksNow.current;
+        const at = all.findIndex((b) => b.seqStart === found.seq);
+        if (at >= 0) {
+          const b = all[at];
+          setClearedAt((cut) => {
+            const c = cut ? all.findIndex((x) => x.key === cut) : -1;
+            return c >= at ? null : cut;
+          });
+          if (b.collapsed) {
+            setBlocks((bs) => bs.map((x) => (x.key === b.key ? { ...x, collapsed: false } : x)));
+          }
+          // All of it: the words may be above the last lines shown, or
+          // beyond what the feed brought.
+          if (found.inOutput && !b.expanded) await showAllNow.current(b);
+          // Its output drawn first, so that the words are marked in it.
+          for (let i = 0; i < 60 && !cancelled; i++) {
+            if (blocksNow.current.find((x) => x.key === b.key)?.rendered !== null) break;
+            await new Promise((r) => requestAnimationFrame(r));
+          }
+          await new Promise((r) => requestAnimationFrame(r));
+          if (cancelled) return;
+          stick.current = false;
+          // Found in a long output: the line with the words in the middle,
+          // not the middle of the block.
+          const shown = feedRef.current?.querySelector<HTMLElement>(`#b${found.seq}`);
+          const output = found.inOutput
+            ? shown?.querySelector<HTMLElement>("pre.out") : null;
+          const word = output ? markOnLine(output, found.words, "found-mark") : null;
+          (word ?? shown)?.scrollIntoView({ block: "center" });
+          goneThere(found.n);
+          return;
+        }
+        if (!moreNow.current) break;
+        await loadEarlier();
+        await new Promise((r) => requestAnimationFrame(r));
+      }
+    };
+    void go().then(() => {
+      // Not there any more (expired, or further back than the pages looked
+      // through): not looked for again.
+      if (!cancelled) goneThere(found.n);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [found?.n, loaded, props.active]);
 
   const home = prompt.home || s.current.info?.home || props.home;
 
@@ -928,6 +1016,7 @@ export function FeedTerminal(props: Props) {
               clipRef={b.key === liveKey ? clipRef : undefined}
               clipHeight={Math.ceil(clipRows * cellHeight)}
               flash={flash === b.key}
+              found={found && found.seq === b.seqStart ? found.words : null}
               onCopyBlock={(x) => copy(blockText(x), "Command and output copied")}
               onCopyOutput={(x) => copy(x.rendered ? plainText(x.rendered) : "",
                 "Output copied")}

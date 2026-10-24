@@ -79,3 +79,12 @@ export function onDay(ms: number | null | undefined): string {
 export function stamp(ms: number): string {
   return sameDay(new Date(ms), new Date()) ? clock(ms) : day(ms);
 }
+
+/** When something ran, as search shows it (0.1.7): "10:46" today,
+ * "yesterday 17:38", "2 Oct 09:12". */
+export function when(ms: number | null | undefined): string {
+  if (!ms) return "";
+  const days = daysBack(ms);
+  return days === 0 ? clock(ms) : days === 1 ? `yesterday ${clock(ms)}`
+    : `${day(ms)} ${clock(ms)}`;
+}

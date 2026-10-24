@@ -7,7 +7,7 @@ import {
   deleteProject, editProject, endTerminal, loadNote, loadState, moveMachine,
   moveNote, NoteGone, onSignedOut, openTerminal, removeMachine, renameFolder,
   renameTerminal, saveProjectTint, saveTheme, SignedOut, signInApp, signOut,
-  welcomeSeen, type Folder,
+  welcomeSeen, type Folder, type FoundBlock, type FoundNote,
   type Machine, type MachineKind, type Note, type NoteSummary, type Project,
   type ProjectFields, type ProjectTint, type State, type TerminalInfo,
   type Theme,
@@ -15,6 +15,7 @@ import {
 import { colorClass } from "./colors";
 import { Confirm, Removed } from "./Confirm";
 import { Finder, type FinderGroup, type FinderItem } from "./Finder";
+import { foundBlock, foundNote } from "./found";
 import {
   ChevronRight, Close, CloudOff, Computer, Doc, Folder as FolderIcon, Gear, ListCheck,
   Moon, Pencil, Person, Pin, Plus, Server, SignIn as SignInIcon,
@@ -32,6 +33,7 @@ import {
   DeleteProjectDialog, MoveDialog, MoveNoteDialog, ProjectDialog, type NoteTarget,
 } from "./ProjectDialog";
 import { ProjectPage } from "./ProjectPage";
+import { Search, type LocalEntry } from "./Search";
 import { alone, deletesNote, listed, manages, many, writes } from "./rights";
 import { Settings } from "./Settings";
 import { Sidebar, type AccountPage } from "./Sidebar";
@@ -48,7 +50,7 @@ import {
   applyTheme, onSystemThemeChange, rememberedPin, rememberPin, shown,
   type Shown,
 } from "./theme";
-import { lastSeen } from "./time";
+import { ago, lastSeen } from "./time";
 import { Welcome } from "./Welcome";
 
 /** Hovering the ⟩ opens the sidebar after this pause, so that a mouse merely
@@ -294,6 +296,10 @@ export function App() {
   const [statuses, setStatuses] = useState<Record<string, TabStatus>>({});
   const [picking, setPicking] = useState(false);
   const [palette, setPalette] = useState(false);
+  /** A command search put into a terminal's line (0.1.7). */
+  const [paste, setPaste] =
+    useState<{ terminalId: string; text: string; n: number } | null>(null);
+  const pasteN = useRef(0);
   const [online, setOnline] = useState(true);
   const [asking, setAsking] = useState<Asking | null>(null);
   const [naming, setNaming] = useState<Naming | null>(null);
@@ -596,7 +602,8 @@ export function App() {
   /** A new terminal on the machine, in a new tab. Opened from an ended
    * terminal (`instead`), it takes that one's tab and its address: Back
    * does not bring the ended one back. */
-  const startTerminal = useCallback((machineId: string, instead?: string) => {
+  const startTerminal = useCallback((machineId: string, instead?: string,
+    then?: (terminalId: string) => void) => {
     const { cols, rows } = guessSize();
     const project = stateNow.current?.projects.find((p) =>
       p.machines.some((m) => m.id === machineId));
@@ -616,6 +623,7 @@ export function App() {
         navigate(`/t/${terminal.id}`,
           !!instead && location.pathname === `/t/${instead}`);
         refresh();
+        then?.(terminal.id);
       })
       .catch((e: Error) => notYet(`Could not open a terminal: ${e.message}`));
   }, [navigate, refresh, notYet, unfold]);
@@ -1263,48 +1271,75 @@ export function App() {
     run: () => startAdding(canAddTo.id),
   }] : [];
 
-  const paletteGroups = (): FinderGroup[] => {
+  // What search finds on the page itself (0.1.7, Search.tsx): terminals,
+  // notes as the lists show them, machines, projects, and things to do; and
+  // what was open last, for before anything is typed. Commands, what they
+  // printed and notes, whole, come from the core.
+  const searchSources = (): { entries: LocalEntry[]; recent: LocalEntry[] } => {
     const listedTabs = new Set(shownTabs);
-    const terminals: FinderItem[] = [
-      ...tabViews.filter((t) => t.kind === "terminal").map((t): FinderItem => ({
-        key: `t-${t.id}`,
-        label: `${t.code ? `${t.code}/` : ""}${t.label}`,
-        hint: t.dot === "away" ? "waits for its computer"
-          : t.dot === "ended" ? "ended" : t.id === current ? "this tab" : "tab",
-        icon: <span className={`dot ${t.dot}`} aria-hidden="true" />,
-        words: "terminal tab go",
-        run: () => goTo(t.id),
-      })),
-      ...liveTerminals.filter((t) => !listedTabs.has(t.id)).map((t): FinderItem => ({
-        key: `t-${t.id}`,
-        label: t.label,
-        hint: t.away ? "waits for its computer" : "running, no tab",
-        icon: <span className={`dot ${dotFor(t)}`} aria-hidden="true" />,
-        words: "terminal go",
-        run: () => goTo(t.id),
-      })),
+    const stateOf = (dot: Dot) => (dot === "away" ? "waits for its computer"
+      : dot === "ended" ? "ended" : dot === "busy" ? "a command runs" : "at the prompt");
+    const terminalEntry = (id: string, label: string, machine: string, dot: Dot,
+      tab: boolean, machineId?: string, name?: string): LocalEntry => ({
+      key: `t-${id}`, kind: "terminals", title: label,
+      sub: [tab ? (id === current ? "this tab" : "tab") : "running, no tab",
+        stateOf(dot)].join(" · "),
+      words: `terminal ${machine} ${name ?? ""}`,
+      icon: <span className={`dot ${dot}`} aria-hidden="true" />,
+      rows: ([["Machine", machine], ["Folder", statuses[id]?.where ?? ""],
+        ["Now", stateOf(dot)]] as [string, string][]).filter((r) => r[1]),
+      run: () => goTo(id), act: "Open", machineId,
+    });
+    const terminals: LocalEntry[] = [
+      ...tabViews.filter((t) => t.kind === "terminal").map((t) => {
+        const known = liveTerminals.find((x) => x.id === t.id);
+        return terminalEntry(t.id, `${t.code ? `${t.code}/` : ""}${t.label}`,
+          t.machine ?? "", t.dot ?? "open", true, known?.machineId, known?.name);
+      }),
+      ...liveTerminals.filter((t) => !listedTabs.has(t.id)).map((t) =>
+        terminalEntry(t.id, t.label, t.machine, dotFor(t), false, t.machineId, t.name)),
     ];
-    // The notes edited last come first; before anything is typed, only a
-    // few of them.
-    const notes: FinderItem[] = projects.flatMap((p) => p.folders.flatMap((f) =>
-      f.notes.map((n) => ({ n, f, p }))))
-      .sort((a, b) => b.n.editedAt - a.n.editedAt)
-      .map(({ n, f, p }): FinderItem => ({
-        key: `n-${n.id}`,
-        label: `${p.code}/${titled(n.title)}`,
-        hint: listedTabs.has(noteTab(n.id)) ? `${f.name} · tab` : f.name,
-        icon: n.total > 0 ? <ListCheck size={15} /> : <Doc size={15} />,
+    const notes: LocalEntry[] = projects.flatMap((p) => p.folders.flatMap((f) =>
+      f.notes.map((n): LocalEntry => ({
+        key: `n-${n.id}`, kind: "notes", noteId: n.id, title: titled(n.title),
+        sub: `${p.name} / ${f.name}${listedTabs.has(noteTab(n.id)) ? " · tab" : ""}`,
         words: `note ${f.name} ${n.excerpt}`,
-        run: () => openTab(noteTab(n.id)),
-      }));
-    const pages: FinderItem[] = projects.map((p): FinderItem => ({
-      key: `p-${p.id}`,
-      label: p.name,
-      hint: "machines and notes",
-      icon: <span className={`code-chip ${colorClass(p.color)}`} aria-hidden="true">{p.code}</span>,
-      words: `project page ${p.code} folders`,
-      run: () => openTab(projectTab(p.id)),
+        icon: n.total > 0 ? <ListCheck size={15} /> : <Doc size={15} />,
+        rows: [["In", `${p.name} / ${f.name}`], ["Edited", ago(n.editedAt)]],
+        run: () => openTab(noteTab(n.id)), act: "Open the note", at: n.editedAt,
+      }))));
+    const machines: LocalEntry[] = projects.flatMap((p) => p.machines.map((m): LocalEntry => {
+      const offline = m.kind === "computer" && !m.online;
+      const waits = cutOff && !m.here;
+      const status = m.here ? hereWord() : waits ? "no connection"
+        : offline ? ["offline", lastSeen(m.lastSeen)].filter(Boolean).join(", ")
+        : m.kind === "computer" ? "online" : "";
+      const open = liveTerminals.filter((t) => t.machineId === m.id).length;
+      return {
+        key: `m-${m.id}`, kind: "machines", title: m.name,
+        sub: [p.name, m.os, m.host, status].filter(Boolean).join(" · "),
+        words: [p.code, m.kind, m.host, m.os].filter(Boolean).join(" "),
+        icon: m.kind === "server" ? <Server size={15} /> : <Computer size={15} />,
+        rows: ([["Project", p.name], ["System", m.os ?? ""], ["Address", m.host ?? ""],
+          ["Status", status], ["Terminals", open ? `${open} open` : ""]] as
+          [string, string][]).filter((r) => r[1]),
+        run: () => newTerminal(m), act: "New terminal", machineId: m.id,
+        muted: offline || waits,
+      };
     }));
+    const pages: LocalEntry[] = projects.map((p): LocalEntry => {
+      const count = p.folders.reduce((n, f) => n + f.notes.length, 0);
+      return {
+        key: `p-${p.id}`, kind: "projects", title: p.name,
+        sub: [p.code, many(p.machines.length, "machine", "machines"),
+          many(count, "note", "notes")].join(" · "),
+        words: `project page ${p.code} folders`,
+        icon: <span className={`code-chip ${colorClass(p.color)}`} aria-hidden="true">{p.code}</span>,
+        rows: [["Code", p.code], ["Machines", String(p.machines.length)],
+          ["Notes", String(count)]],
+        run: () => openTab(projectTab(p.id)), act: "Open its page",
+      };
+    });
     const noteHere = frontKind === "note" ? findNote(projects, tabTarget(current!)) : null;
     const actions: FinderItem[] = [
       ...addItem,
@@ -1405,9 +1440,9 @@ export function App() {
       }] : [{
         key: "account",
         label: "Account",
-        hint: "name and plan",
+        hint: "name, photo and plan",
         icon: <Person size={15} />,
-        words: "account profile name plan limits delete",
+        words: "account profile name photo picture avatar plan limits delete",
         run: () => openPage("account"),
       }, {
         key: "sign-out",
@@ -1421,13 +1456,73 @@ export function App() {
         },
       }]),
     ];
-    return [
-      { title: "Terminals", items: terminals },
-      { title: "Notes", items: notes, limit: 8 },
-      { title: "New terminal", items: machineGroups().flatMap((g) => g.items) },
-      { title: "Projects", items: pages },
-      { title: "Actions", items: actions },
-    ];
+    const things: LocalEntry[] = actions.map((a): LocalEntry => ({
+      key: `a-${a.key}`, kind: "actions", title: a.label, sub: a.hint ?? "",
+      words: a.words ?? "", icon: a.icon, rows: a.hint ? [["Does", a.hint]] : [],
+      run: a.run, act: "Do it", muted: a.muted,
+    }));
+    const entries = [...terminals, ...notes, ...machines, ...pages, ...things];
+    const byKey = new Map(entries.map((e) => [e.key, e]));
+    const recent = [...shownTabs].reverse().map((tab) => {
+      const kind = tabKind(tab);
+      const id = tabTarget(tab);
+      return byKey.get(kind === "note" ? `n-${id}` : kind === "project" ? `p-${id}` : `t-${id}`);
+    }).filter((e): e is LocalEntry => !!e);
+    return { entries, recent };
+  };
+
+  // The machine of the terminal in front: search offers the commands run
+  // most there, and ranks what is on it first among equals.
+  const frontTerminal = frontKind === "terminal"
+    ? liveTerminals.find((t) => t.id === current) : undefined;
+  const near = frontTerminal
+    ? { id: frontTerminal.machineId, name: frontTerminal.machine } : null;
+
+  /** A command found: in its terminal, at its block, marked (0.1.7). */
+  const openFoundBlock = (block: FoundBlock, words: string[], inOutput: boolean) => {
+    foundBlock(block.terminalId, block.seq, words, inOutput);
+    openTab(block.terminalId);
+  };
+  const openFoundNote = (note: FoundNote, words: string[]) => {
+    foundNote(note.noteId, note.blockId, words);
+    openTab(noteTab(note.noteId));
+  };
+  /** Cmd+Enter: the command into the line of the terminal in front, even on
+   * another machine (the owner, 24.10); with none in front, of a terminal of
+   * yours on its machine, or of a new one there. Not run. */
+  const pasteFound = (block: FoundBlock) => {
+    const put = (terminalId: string) => {
+      pasteN.current += 1;
+      setPaste({ terminalId, text: block.command, n: pasteN.current });
+      openTab(terminalId);
+    };
+    if (frontTerminal && statuses[frontTerminal.id]?.running) {
+      // Its line is the running program's: what goes in would go to it.
+      notYet("A command is running in this terminal, so its line is not " +
+        "free. Try again when it ends.");
+      return;
+    }
+    if (frontTerminal && dotFor(frontTerminal) !== "ended") {
+      put(frontTerminal.id);
+      return;
+    }
+    const there = [...liveTerminals].reverse().find((t) =>
+      t.machineId === block.machineId && dotFor(t) === "open");
+    if (there) {
+      put(there.id);
+      return;
+    }
+    const machine = projects.flatMap((p) => p.machines).find((m) => m.id === block.machineId);
+    if (!machine) {
+      notYet(`${block.machine} is not in tTerm Web any more. Open a terminal ` +
+        "elsewhere, and put the command into its line from there.");
+      return;
+    }
+    if (machine.kind === "computer" && !machine.online) {
+      newTerminal(machine);
+      return;
+    }
+    startTerminal(machine.id, undefined, put);
   };
 
   return (
@@ -1466,7 +1561,8 @@ export function App() {
           <TerminalView key={id} terminalId={id} active={id === current}
             shownTheme={shownTheme} onStatus={onStatus} onCloseTab={closeTab}
             onOpenNew={startTerminal} onChanged={refresh} notify={notYet}
-            machineThere={(machineId) => machineIds.has(machineId)} />
+            machineThere={(machineId) => machineIds.has(machineId)}
+            paste={paste?.terminalId === id ? paste : null} />
         ))}
         {shownTabs.filter((tab) => tabKind(tab) === "note").map((tab) => (
           <NoteView key={tab} noteId={tabTarget(tab)} active={tab === current}
@@ -1525,7 +1621,9 @@ export function App() {
         {pageOpen === "account" && (
           <div className="page-scroll">
             <Account key={pageVisit} me={state.me} onRenamed={renamed}
-              onClose={closePage} />
+              onPhoto={(photo) => setState((was) => (was
+                ? { ...was, me: { ...was.me, photo } } : was))}
+              notify={notYet} onClose={closePage} />
           </div>
         )}
         {pageOpen === "settings" && (
@@ -1627,13 +1725,14 @@ export function App() {
         />
       )}
 
-      {palette && (
-        <div className="palette-backdrop">
-          <Finder className="palette" label="Jump to"
-            placeholder="A terminal, a note, a machine or something to do"
-            groups={paletteGroups()} onClose={() => setPalette(false)} />
-        </div>
-      )}
+      {palette && (() => {
+        const { entries, recent } = searchSources();
+        return (
+          <Search entries={entries} recent={recent} near={near}
+            onOpenBlock={openFoundBlock} onPaste={pasteFound}
+            onOpenNote={openFoundNote} onClose={() => setPalette(false)} />
+        );
+      })()}
 
       {adding && (
         <AddMachine projects={projects} projectId={adding.projectId}

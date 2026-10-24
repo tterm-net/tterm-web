@@ -13,6 +13,7 @@ import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { useEffect, useRef } from "react";
 import type { TerminalInfo } from "./api";
+import { takePaste } from "./found";
 import { keepKeys, typingElsewhere } from "./keys";
 import { socket, type Channel, type MarkerEvent } from "./socket";
 import type { Shown } from "./theme";
@@ -42,6 +43,9 @@ interface Props {
   /** Its tab is in front: only then does it take the keys. */
   active: boolean;
   events: ViewEvents;
+  /** A command search put here (0.1.7): typed at the prompt, not run. */
+  paste?: { text: string; n: number } | null;
+  notify?: (text: string) => void;
 }
 
 export function ClassicTerminal(props: Props) {
@@ -55,6 +59,11 @@ export function ClassicTerminal(props: Props) {
   ended.current = props.ended;
   const active = useRef(props.active);
   active.current = props.active;
+  /** History is drawn: keys typed from now on are new (0.1.7, for a
+   * command search puts in). */
+  const ready = useRef(false);
+  const waiting = useRef<{ text: string; n: number } | null>(null);
+  const pasteWaiting = useRef(() => {});
 
   useEffect(() => {
     const element = box.current;
@@ -118,17 +127,23 @@ export function ClassicTerminal(props: Props) {
         attached: (terminal, resumed) => {
           // Back after a moment away: what was missed is old news too, up
           // to `replayed`.
-          if (resumed) replaying = true;
+          if (resumed) {
+            replaying = true;
+            ready.current = false;
+          }
           events.current.attached(terminal);
         },
         reset: () => {
           t.reset();
           pending = 0;
           replaying = true;
+          ready.current = false;
         },
         replayed: () => {
           t.write(new Uint8Array(0), () => {
             replaying = false;
+            ready.current = true;
+            pasteWaiting.current();
           });
         },
         output: (data) => {
@@ -177,6 +192,7 @@ export function ClassicTerminal(props: Props) {
 
     return () => {
       disposed = true;
+      ready.current = false;
       for (const cleanup of cleanups) cleanup();
       cancelAnimationFrame(frame);
       observer?.disconnect();
@@ -186,6 +202,30 @@ export function ClassicTerminal(props: Props) {
       term.current = null;
     };
   }, [terminalId]);
+
+  // A command from search goes in as a paste: the shell takes it as text,
+  // and Enter is still to be pressed. Lines of it without bracketed paste
+  // would each run, so then it stays out. A terminal just opened for it
+  // takes it once its history is drawn.
+  pasteWaiting.current = () => {
+    const t = term.current;
+    const p = waiting.current;
+    if (!t || !p || !ready.current) return;
+    waiting.current = null;
+    if (p.text.includes("\n") && !t.modes.bracketedPasteMode) {
+      props.notify?.("This command has several lines, and the classic mode " +
+        "would run each as it goes in. Switch to Line under the terminal.");
+      return;
+    }
+    t.paste(p.text);
+    t.focus();
+  };
+  useEffect(() => {
+    const p = props.paste;
+    if (!p || props.ended || !takePaste(p.n)) return;
+    waiting.current = p;
+    pasteWaiting.current();
+  });
 
   // The theme follows the page's.
   useEffect(() => {

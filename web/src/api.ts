@@ -189,6 +189,9 @@ export interface Me {
   projectTint: ProjectTint;
   plan: string;
   email: string | null;
+  /** One's own photo (0.1.7): where the page loads it from, or null for the
+   * initials. The app before signing in sends none. */
+  photo?: string | null;
 }
 
 export type TerminalState = "connecting" | "open" | "ended" | "gone";
@@ -628,6 +631,96 @@ export async function saveTheme(theme: Theme): Promise<void> {
 
 export async function saveProjectTint(projectTint: ProjectTint): Promise<void> {
   await check(await fetch("/api/me", change("PATCH", { projectTint })));
+}
+
+/** One's own photo (0.1.7): the JPEG the page made, 256 pixels square.
+ * Where it is loaded from now. */
+export async function savePhoto(jpeg: Blob): Promise<{ photo: string }> {
+  return (await check(await fetch("/api/me/photo", {
+    method: "PUT",
+    headers: { "content-type": "image/jpeg", "x-tterm": "1" },
+    body: jpeg,
+  }))).json();
+}
+
+export async function removePhoto(): Promise<void> {
+  await check(await fetch("/api/me/photo",
+    { method: "DELETE", headers: { "x-tterm": "1" } }));
+}
+
+// ------------------------------------------- search over everything (0.1.7)
+
+/** A command found, or one whose output has the words: where it ran, how it
+ * ended, and lines of its output (its start, or around the place). */
+export interface FoundBlock {
+  terminalId: string;
+  seq: number;
+  command: string;
+  cwd: string;
+  home: string;
+  branch: string;
+  exitCode: number | null;
+  startedAt: number | null;
+  finishedAt: number | null;
+  machineId: string;
+  machine: string;
+  machineKind: MachineKind;
+  /** The machine was taken out of tTerm Web; its history stays. */
+  removed: boolean;
+  projectId: string;
+  code: string;
+  project: string;
+  /** Its terminal as the tab names it: P/web-01 · deploy. */
+  terminal: string;
+  ended: boolean;
+  endedAt: number | null;
+  /** Commands only: how many times it ran there. */
+  runs?: number;
+  /** Output only: the line with the words. */
+  line?: string;
+  lines: string[];
+  /** Which of `lines` has the words; -1 for none. */
+  hit: number;
+  /** Output only: the line's number in the output, as search reads it. */
+  lineNo?: number;
+}
+
+export interface FoundNote {
+  noteId: string;
+  title: string;
+  folderId: string;
+  folder: string;
+  projectId: string;
+  code: string;
+  project: string;
+  editedAt: number | null;
+  /** The words are all in its title. */
+  inTitle: boolean;
+  /** The block where the words are, and its first line. */
+  blockId: string | null;
+  text: string;
+  lines: { text: string; type: BlockType; done: boolean }[];
+  hit: number;
+}
+
+export interface Found {
+  /** The words searched for, in lower case. */
+  words: string[];
+  commands: FoundBlock[];
+  output: FoundBlock[];
+  notes: FoundNote[];
+  /** Nothing typed: the commands run most on the machine asked about. */
+  recent: FoundBlock[];
+  more: { commands?: boolean; output?: boolean; notes?: boolean };
+}
+
+export async function searchAll(query: string, near: string | null,
+  signal?: AbortSignal): Promise<Found> {
+  const params = new URLSearchParams({ q: query });
+  if (near) params.set("near", near);
+  const response = await fetch(`/api/search?${params}`,
+    { cache: "no-store", signal });
+  return (await check(response)).json();
 }
 
 // ----------------------------------------------------- projects (0.1.1)

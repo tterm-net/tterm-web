@@ -357,3 +357,24 @@ export const Bullet = (p: Props) => (
 export const Paragraph = (p: Props) => (
   <Stroke {...p}><path d="M4 7h16M4 12h16M4 17h10" /></Stroke>
 );
+
+/** A camera: the photo of an account (0.1.7). */
+export const Camera = (p: Props) => (
+  <Stroke {...p}>
+    <path d="M4 8h3l2-3h6l2 3h3v11H4z" />
+    <circle cx="12" cy="13" r="3.5" />
+  </Stroke>
+);
+
+/** What a command printed, found by search (0.1.7). */
+export const Output = (p: Props) => (
+  <Stroke {...p}>
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <path d="M7 9h10M7 13h10M7 17h6" />
+  </Stroke>
+);
+
+/** Something to do, in search (0.1.7). */
+export const Bolt = (p: Props) => (
+  <Stroke {...p}><path d="M13 3L5 14h6l-1 7 8-11h-6l1-7z" /></Stroke>
+);

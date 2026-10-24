@@ -4,7 +4,15 @@ tTerm in the browser: a real terminal with command blocks, for people who work
 with servers and for their teams. Projects, roles, a journal of who ran what,
 and watching a colleague's terminal, always with them knowing.
 
-**Status:** early development. Version 0.1.6 lets tTerm for the computer
+**Status:** early development. Version 0.1.7 searches everything: Cmd+K,
+or Search at the top, finds the commands of every terminal of yours, ended
+ones too, what they printed, notes, whole, terminals, machines, projects
+and things to do; Enter opens a command in its terminal, at its block,
+marked, and Cmd+Enter puts it into the line of the terminal in front,
+not run. Account takes a photo of your own, cut to a circle in the
+browser and kept by tTerm as 256 pixels with nothing else of the file;
+it shows where your name is written, the initials stay where a badge
+alone says whose a terminal is. Version 0.1.6 lets tTerm for the computer
 sign in with the browser: the app opens tTerm there, the person allows it,
 and a one-time code goes back to the app on that very computer, which
 trades it with a secret of its own (PKCE) for a device key; the app shows
@@ -266,8 +274,17 @@ brings the tab back; a note stays in its folder. In the sidebar a click on a
 machine or a folder folds or unfolds it, and what is folded stays so in this
 browser; the "+" beside it opens a terminal there or starts a note. "+" on
 the line of tabs opens a terminal on any machine, and Cmd+K on a Mac,
-Ctrl+Shift+K elsewhere, jumps to any terminal, note or machine or does what
-the page can; plain Ctrl stays the terminal's. Folded blocks, and a feed cleared with `clear` or Ctrl+L, stay
+Ctrl+Shift+K elsewhere, searches everything (from 0.1.7): the commands of
+every terminal of yours, ended ones too, as long as the project keeps their
+output, what they printed, notes, whole, terminals, machines, projects and
+what the page can do; plain Ctrl stays the terminal's. Buttons over its list
+keep to one kind, and so does a word in front: `c:` commands, `o:` output,
+`n:` notes, `t:` terminals, `m:` machines, `p:` projects, `>` things to do.
+Enter opens a command in its terminal at its block, marked, a note at the
+block with the words; Cmd+Enter (Ctrl+Enter elsewhere) puts a command into
+the line of the terminal in front without running it. The core keeps what a
+command printed as plain text for this too, the start and the end of a long
+output, and makes it in the background for blocks from before 0.1.7. Folded blocks, and a feed cleared with `clear` or Ctrl+L, stay
 so after Classic and back or a reload, in this browser. A tab's dot is its machine: green on line, a turning ring while
 a command runs, a hollow ring while the computer is away. When the page
 loses tTerm Web, a strip says so until it is back.

@@ -5,16 +5,34 @@
 // account. The theme, project colors, devices and support's address are on
 // Settings (Settings.tsx), and Sign out is in the menu itself. Tabs stay
 // above it; Close or Esc goes back.
+//
+// From 0.1.7 one's own photo too, as approved on the canvas of 23.10: the
+// photo, or the initials, with a camera on it; Change photo and Remove
+// photo, or Add a photo; the photo is cut to a circle in PhotoDialog.
 
 import { useEffect, useRef, useState } from "react";
-import { loadAccount, saveName, type AccountInfo, type Me } from "./api";
-import { Close } from "./icons";
+import {
+  loadAccount, removePhoto, saveName, type AccountInfo, type Me,
+} from "./api";
+import { Face } from "./Face";
+import { Camera, Close } from "./icons";
+import { PhotoDialog } from "./PhotoDialog";
 
 interface Props {
   me: Me;
   onRenamed: (named: { name: string; firstName: string; initials: string }) => void;
+  /** A new photo, or null when it was removed. */
+  onPhoto: (photo: string | null) => void;
+  notify: (text: string) => void;
   onClose: () => void;
 }
+
+/** What a photo may be when chosen: the page makes the 256-pixel JPEG of it
+ * itself. */
+const PHOTO_TYPES = ["image/jpeg", "image/png", "image/webp"];
+const PHOTO_MAX = 5 * 1024 * 1024;
+export const NOT_A_PHOTO = "This file is not a photo tTerm takes. Choose a " +
+  "JPEG, PNG or WebP of up to 5 MB.";
 
 export const SUPPORT = "support@tterm.net";
 
@@ -89,6 +107,11 @@ export function Account(props: Props) {
   const editingNow = useRef(false);
   editingNow.current = editing;
   const nameInput = useRef<HTMLInputElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [photoProblem, setPhotoProblem] = useState<string | null>(null);
+  /** The photo chosen, loaded, while it is being cut to a circle. */
+  const [cropping, setCropping] = useState<HTMLImageElement | null>(null);
+  const [removing, setRemoving] = useState(false);
 
   useEffect(() => {
     loadAccount().then(setInfo)
@@ -128,6 +151,49 @@ export function Account(props: Props) {
     }
   };
 
+  const choosePhoto = () => {
+    setPhotoProblem(null);
+    fileInput.current?.click();
+  };
+  /** The file chosen: read here, and if it is a photo, to the circle. */
+  const chosen = (file: File | undefined) => {
+    if (!file) return;
+    setPhotoProblem(null);
+    if (!PHOTO_TYPES.includes(file.type) || !file.size || file.size > PHOTO_MAX) {
+      setPhotoProblem(NOT_A_PHOTO);
+      return;
+    }
+    const reader = new FileReader();
+    reader.onerror = () => setPhotoProblem(NOT_A_PHOTO);
+    reader.onload = () => {
+      const image = new Image();
+      image.onerror = () => setPhotoProblem(NOT_A_PHOTO);
+      image.onload = () => {
+        if (image.naturalWidth < 16 || image.naturalHeight < 16) {
+          setPhotoProblem(NOT_A_PHOTO);
+          return;
+        }
+        setCropping(image);
+      };
+      image.src = String(reader.result);
+    };
+    reader.readAsDataURL(file);
+  };
+  const dropPhoto = async () => {
+    if (removing) return;
+    setRemoving(true);
+    setPhotoProblem(null);
+    try {
+      await removePhoto();
+      props.onPhoto(null);
+      props.notify("Photo removed: your initials are back.");
+    } catch (error) {
+      setPhotoProblem((error as Error).message);
+    } finally {
+      setRemoving(false);
+    }
+  };
+
   const support = info?.legal.support ?? SUPPORT;
 
   return (
@@ -136,7 +202,12 @@ export function Account(props: Props) {
 
       <section className="account-card profile-card" aria-label="Profile">
         <div className="profile-row">
-          <span className="avatar big mine" aria-hidden="true">{me.initials}</span>
+          <button type="button" className="profile-photo" onClick={choosePhoto}
+            title={me.photo ? "Change photo" : "Add a photo"}
+            aria-label={me.photo ? "Change photo" : "Add a photo"}>
+            <Face initials={me.initials} photo={me.photo} className="huge mine" />
+            <span className="photo-badge" aria-hidden="true"><Camera size={13} /></span>
+          </button>
           {editing ? (
             <form className="profile-edit" onSubmit={(event) => {
               event.preventDefault();
@@ -180,6 +251,33 @@ export function Account(props: Props) {
           )}
         </div>
         {nameProblem && <div className="error-box" role="alert">{nameProblem}</div>}
+        <div className="profile-photo-row">
+          {me.photo ? (
+            <>
+              <button type="button" className="button-plain small" onClick={choosePhoto}>
+                Change photo
+              </button>
+              <button type="button" className="button-plain small quiet"
+                disabled={removing} onClick={() => void dropPhoto()}>
+                Remove photo
+              </button>
+            </>
+          ) : (
+            <button type="button" className="button-plain small" onClick={choosePhoto}>
+              Add a photo
+            </button>
+          )}
+          <span className="hint">It shows next to your name, in place of your
+            initials.</span>
+        </div>
+        {photoProblem && <div className="error-box" role="alert">{photoProblem}</div>}
+        <input ref={fileInput} type="file" accept={PHOTO_TYPES.join(",")} hidden
+          aria-label="Choose a photo"
+          onChange={(event) => {
+            chosen(event.target.files?.[0]);
+            // The same file chosen again is news too.
+            event.target.value = "";
+          }} />
         <p className="profile-note">
           You sign in with this address. To change it, write
           to <a href={`mailto:${support}`}>{support}</a>.
@@ -215,6 +313,16 @@ export function Account(props: Props) {
           )}
         </div>
       </section>
+
+      {cropping && (
+        <PhotoDialog image={cropping}
+          onSaved={(photo) => {
+            setCropping(null);
+            props.onPhoto(photo);
+            props.notify("Your photo is in: at the bottom of the sidebar and in its menu.");
+          }}
+          onCancel={() => setCropping(null)} />
+      )}
 
       <footer className="account-foot">
         <span className="hint">

@@ -1,5 +1,6 @@
 // The one thin line on top, as approved on 11.10: the sidebar's ⟩, the tabs,
-// "+" for a terminal on any machine, and "Jump to" for the palette. From
+// "+" for a terminal on any machine, and "Jump to" for the palette, from
+// 0.1.7 Search, as the palette searches everything (Search.tsx). From
 // 0.1.0 a tab is a terminal, a note or a project's page, from any project:
 // each starts with what it is and the project's code, faint.
 //
@@ -173,9 +174,9 @@ export function TabBar(props: Props) {
           </span>
         )}
         <button type="button" className="jump" onClick={props.onJump}
-          title="Go to any terminal, note or machine, or do anything here">
+          title="Search commands, their output, notes, terminals, machines, and what there is to do">
           <Search size={14} />
-          <span className="jump-text">Jump to</span>
+          <span className="jump-text">Search</span>
           <kbd>{JUMP_KEYS}</kbd>
         </button>
       </div>

@@ -158,6 +158,8 @@ interface Props {
   /** The arrow up from the first block: back to the title. */
   onLeaveTop: () => void;
   notify: (text: string) => void;
+  /** The block search opened (0.1.7), marked until the note is written in. */
+  found: string | null;
 }
 
 export function NoteEditor(props: Props) {
@@ -512,7 +514,8 @@ export function NoteEditor(props: Props) {
   return (
     <div className="note-blocks">
       {props.blocks.map((b) => (
-        <div key={b.id} className="nb-wrap">
+        <div key={b.id} className={props.found === b.id ? "nb-wrap found" : "nb-wrap"}
+          data-block={b.id}>
           <Row b={b} lonely={lonely} readOnly={readOnly}
             who={b.type === "todo" ? tickedBy(b, props.people, props.meId) : ""}
             register={register} onText={onText} onKey={onKey} onPaste={onPaste}

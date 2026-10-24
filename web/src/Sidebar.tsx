@@ -32,6 +32,7 @@ import {
 import { hereWord } from "./local";
 import { NameInput } from "./NameInput";
 import { Avatar, NoteIcon } from "./ProjectPage";
+import { Face } from "./Face";
 import { titled } from "./noteText";
 import { manages, writes } from "./rights";
 import type { Dot } from "./TabBar";
@@ -489,7 +490,7 @@ function AccountPlace(props: {
           </>
         ) : (
           <>
-            <span className="avatar mine" aria-hidden="true">{me.initials}</span>
+            <Face initials={me.initials} photo={me.photo} className="mine" />
             <span className="account-text">
               <strong>{me.firstName}</strong>
               {props.cutOff ? (
@@ -521,9 +522,12 @@ function AccountPlace(props: {
             </>
           ) : (
             <>
-              <div className="menu-head">
-                <strong id="account-menu-name">{me.name}</strong>
-                {me.email && <span id="account-menu-note">{me.email}</span>}
+              <div className="menu-head with-avatar">
+                <Face initials={me.initials} photo={me.photo} className="mine menu-avatar" />
+                <span className="menu-head-text">
+                  <strong id="account-menu-name">{me.name}</strong>
+                  {me.email && <span id="account-menu-note">{me.email}</span>}
+                </span>
               </div>
               <div className="menu-line" role="separator" />
               <MenuItem icon={<Gear size={15} />} text="Settings"

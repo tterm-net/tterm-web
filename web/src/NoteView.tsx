@@ -20,6 +20,7 @@ import {
   type Base, type Doc,
 } from "./drafts";
 import { colorClass } from "./colors";
+import { forgetNoteMark, goneThere, useFoundNote, wentThere } from "./found";
 import { Check, Folder as FolderIcon } from "./icons";
 import { MenuButton, NoteMenuItems } from "./Menus";
 import { fit, NoteEditor } from "./NoteEditor";
@@ -467,7 +468,23 @@ export function NoteView(props: Props) {
     if (blocks === now.blocks) return;
     show({ ...now, blocks });
     changed();
-  }, [show, changed]);
+    // Written in: the mark of search has done its job (0.1.7).
+    forgetNoteMark(noteId);
+  }, [show, changed, noteId]);
+
+  // The block search opened (0.1.7), in the middle, once the note is drawn.
+  const found = useFoundNote(noteId);
+  const hasDoc = !!doc;
+  useEffect(() => {
+    if (!found?.blockId || !hasDoc || !active || wentThere(found.n)) return;
+    const frame = requestAnimationFrame(() => {
+      document.querySelector<HTMLElement>(
+        `.note-view:not(.behind) [data-block="${found.blockId}"]`)
+        ?.scrollIntoView({ block: "center" });
+      goneThere(found.n);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [found?.n, found?.blockId, hasDoc, active]);
 
   const onTitle = (value: string) => {
     const now = docRef.current;
@@ -812,7 +829,7 @@ export function NoteView(props: Props) {
         <NoteEditor blocks={doc.blocks} onChange={onBlocks} onTick={onTick}
           people={note.people} meId={me.id} readOnly={!note.canWrite}
           focusFirst={focusFirst} onLeaveTop={() => title.current?.focus()}
-          notify={props.notify} />
+          notify={props.notify} found={found?.blockId ?? null} />
       </>
     );
   }

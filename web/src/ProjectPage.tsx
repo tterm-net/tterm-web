@@ -15,6 +15,7 @@ import type {
   Folder, Machine, MachineKind, Me, NoteSummary, Project, TerminalInfo, Who,
 } from "./api";
 import { shortPath } from "./BlockView";
+import { Face } from "./Face";
 import { colorClass, terminalName } from "./colors";
 import {
   Computer, Doc, Folder as FolderIcon, FolderPlus, ListCheck, Lock, Pencil,
@@ -82,17 +83,19 @@ interface Naming {
 
 /** A person's initials in a circle, amber for oneself: 26, 22 or 18 pixels
  * across, or the account's 30. */
-export function Avatar({ who, me, size }: {
+/** Whose a terminal or a note is. `named`: the name is written next to it,
+ * so one's own photo may stand in for the initials (0.1.7, Face.tsx). */
+export function Avatar({ who, me, size, named }: {
   who: Who | null;
   me: Me;
   size?: "small" | "tiny" | "xs";
+  named?: boolean;
 }) {
   const mine = !who || who.id === me.id;
+  const className = `${size ?? ""}${mine ? " mine" : ""}`.trim();
   return (
-    <span className={`avatar${size ? ` ${size}` : ""}${mine ? " mine" : ""}`}
-      aria-hidden="true">
-      {who?.initials ?? me.initials}
-    </span>
+    <Face initials={who?.initials ?? me.initials}
+      photo={named && mine ? me.photo : null} className={className} />
   );
 }
 
@@ -279,7 +282,7 @@ function NoteRow(props: {
           </span>
         </span>
         <span className="pp-who">
-          <Avatar who={editor} me={me} size="tiny" />
+          <Avatar who={editor} me={me} size="tiny" named />
           {name}, {ago(n.editedAt)}
         </span>
       </button>

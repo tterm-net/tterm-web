@@ -27,7 +27,7 @@ export function keepKeys(home: () => Home | null): () => void {
   // (0.1.4) keeps the keys as well: it opens in the sidebar, over a live
   // terminal. Other menus are on pages, which may stay open behind it.
   const dialogOpen = () => document.querySelector(
-    ".dialog, .finder, .sidebar [role='menu'], .terminal-view:not(.behind) .picker") !== null;
+    ".dialog, .finder, .search-palette, .sidebar [role='menu'], .terminal-view:not(.behind) .picker") !== null;
   const target = (): Home | null => {
     const h = home();
     if (!h?.element) return null;
@@ -82,7 +82,7 @@ export function keepKeys(home: () => Home | null): () => void {
  * the sidebar say (0.1.2), and a terminal coming up does not take them.
  * Nor while a window or the palette is open over it (0.1.5). */
 export function typingElsewhere(own: Element | null | undefined): boolean {
-  if (document.querySelector(".dialog, .finder") !== null) return true;
+  if (document.querySelector(".dialog, .finder, .search-palette") !== null) return true;
   const active = document.activeElement;
   return !!active?.closest("input, textarea, select, [contenteditable='true']") &&
     !own?.contains(active);

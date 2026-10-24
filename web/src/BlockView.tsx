@@ -2,10 +2,11 @@
 // it ran, and its output. A finished block's output is text (see render.ts);
 // the running one shows the live terminal in its place.
 
-import { useEffect, useState, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import {
   Branch, Collapse, Copy, CopyText, Cross, Expand, Link, Rerun, Stop,
 } from "./icons";
+import { markIn, marked } from "./marks";
 import type { Rendered } from "./render";
 
 /** Lines of a long output shown before "Show all". */
@@ -44,6 +45,8 @@ interface Props {
   clipRef?: RefObject<HTMLDivElement | null>;
   clipHeight?: number;
   flash: boolean;
+  /** Search opened this block (0.1.7): the words to mark in it. */
+  found: string[] | null;
   /** The command with its prompt, and the output under it. */
   onCopyBlock: (block: FeedBlock) => void;
   onCopyOutput: (block: FeedBlock) => void;
@@ -108,6 +111,23 @@ export function BlockView(props: Props) {
   const screenOnly = !!block.rendered?.alt && lines.length === 0;
   const more = !screenOnly && (hidden > 0 || ((block.partial || block.cut ||
     block.rendered?.limited) && block.stored && !block.expanded));
+  // The words search found, marked in the output as drawn (0.1.7). Drawn
+  // again (Show all), it is marked again.
+  const out = useRef<HTMLPreElement>(null);
+  const found = props.found;
+  const html = shown.map((l) => l.html).join("\n");
+  useLayoutEffect(() => {
+    const pre = out.current;
+    if (!pre) return;
+    // Marks of another search go first: the output as it was drawn.
+    const marks = pre.querySelectorAll("mark.found-mark");
+    if (marks.length) {
+      marks.forEach((m) => m.replaceWith(m.textContent ?? ""));
+      pre.normalize();
+    }
+    if (found) markIn(pre, found, "found-mark");
+  }, [found, html]);
+
   const what = block.state === "input" ? "not started by the shell"
     : running ? "running"
     : failed ? `failed with exit code ${block.exitCode}`
@@ -126,12 +146,15 @@ export function BlockView(props: Props) {
   return (
     <section id={`b${block.seqStart}`}
       className={"block" + (running ? " live" : "") + (failed ? " failed" : "") +
-        (props.flash ? " flash" : "")}
+        (props.flash ? " flash" : "") + (found ? " found" : "")}
       aria-label={`${block.command}, ${what}`}>
       <div className="block-head">
         {mark}
-        <code className="block-command">{block.command}</code>
+        <code className="block-command">
+          {found ? marked(block.command, found, "found-mark") : block.command}
+        </code>
         <span className="block-meta">
+          {found && <span className="found-pill">Found</span>}
           {block.state === "input" && (
             <span className="amber" title="The shell is waiting for the rest of it (an open quote or heredoc), or did not take it. Type into the block, or Stop.">
               not started
@@ -205,10 +228,8 @@ export function BlockView(props: Props) {
             </button>
           )}
           {shown.length > 0 && (
-            <pre className="out"
-              dangerouslySetInnerHTML={{
-                __html: shown.map((l) => l.html).join("\n"),
-              }} />
+            <pre className="out" ref={out}
+              dangerouslySetInnerHTML={{ __html: html }} />
           )}
           {block.state === "done" && block.rendered === null && (
             <span className="block-pending" aria-hidden="true">…</span>

@@ -737,7 +737,8 @@ async def test_010_keeps_the_devices_and_sessions_there_are(h):
                     "INSERT INTO sessions (user_id, token_hash, device_id, "
                     "method) VALUES ($1, $2, $3, $4)", user,
                     method.encode(), device, method)
-        assert await db.migrate(pool) == ["010_app_sign_in"]
+        # 010, and whatever came after it (from 0.1.7).
+        assert (await db.migrate(pool))[0] == "010_app_sign_in"
         row = await pool.fetchrow("SELECT kind, pin_hash FROM devices")
         assert row["kind"] == "browser" and row["pin_hash"] == b"p"
         assert await pool.fetchval(

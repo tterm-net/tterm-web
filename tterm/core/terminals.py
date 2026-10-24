@@ -46,7 +46,7 @@ from typing import Awaitable, Callable
 
 import asyncpg
 
-from . import accounts, complete, shell, ssh, transport, trust
+from . import accounts, complete, search, shell, ssh, transport, trust
 from .accounts import Person
 from .signer_client import SignerClient
 from .transport import LinkError
@@ -548,22 +548,27 @@ class Terminal:
                           output: bytes, cut: bool, seq_end: int,
                           finished_at: dt.datetime) -> None:
         try:
+            # What it printed as text, for search (0.1.7): a megabyte of
+            # output is work, not for the event loop.
+            text = await asyncio.to_thread(search.plain, output)
             await self.pool.execute(
                 """
                 INSERT INTO blocks (terminal_id, kind, seq_start, seq_end,
                                     command, started_by, started_at,
                                     finished_at, exit_code, cwd, branch,
-                                    output, output_cut, cols, expires_at)
+                                    output, output_cut, cols, expires_at,
+                                    output_text)
                 VALUES ($1, 'command', $2, $3, $4, $5, $6, $7, $8, $9, $10,
                         $11, $12, $14,
                         now() + make_interval(days => (
-                            SELECT output_days FROM projects WHERE id = $13)))
+                            SELECT output_days FROM projects WHERE id = $13)),
+                        $15)
                 """,
                 self.id, block.seq_start, seq_end, block.command,
                 self.owner.id, block.started_at, finished_at, exit_code,
                 block.cwd or None, block.branch or None,
                 zlib.compress(output, 6), cut, self.machine.project_id,
-                block.cols)
+                block.cols, text)
         except Exception:               # noqa: BLE001 - the screen goes on
             log.exception("could not save a block of terminal %s", self.id)
 
@@ -886,6 +891,8 @@ class Terminals:
         #: One opening at a time per person, so that their count holds.
         self._opening: dict[uuid.UUID, asyncio.Lock] = {}
         self._sweeper: asyncio.Task | None = None
+        #: Makes the text to search of blocks from before 0.1.7, once.
+        self._filler: asyncio.Task | None = None
         #: The most terminals open at once since the last look (peaks), in
         #: all and for one person: the usage counts take them hourly.
         self._peak = 0
@@ -898,6 +905,15 @@ class Terminals:
             "UPDATE terminals SET closed_at = now(), end_reason = $1 "
             "WHERE closed_at IS NULL", "tTerm Web stopped.")
         self._sweeper = asyncio.create_task(self._sweep())
+        self._filler = asyncio.create_task(self._fill())
+
+    async def _fill(self) -> None:
+        try:
+            await search.fill_texts(self.pool)
+        except asyncio.CancelledError:
+            raise
+        except Exception:               # noqa: BLE001 - search waits, nothing else
+            log.exception("could not make the text of earlier blocks for search")
 
     async def open(self, person: Person, machine_id: uuid.UUID, cols: int,
                    rows: int) -> Terminal:
@@ -1130,10 +1146,11 @@ class Terminals:
                              return_exceptions=True)
 
     async def stop(self) -> None:
-        if self._sweeper is not None:
-            self._sweeper.cancel()
-            with contextlib.suppress(BaseException):
-                await self._sweeper
+        for task in (self._sweeper, self._filler):
+            if task is not None:
+                task.cancel()
+                with contextlib.suppress(BaseException):
+                    await task
         await asyncio.gather(*(t.stop("tTerm Web stopped.")
                                for t in list(self._live.values())),
                              return_exceptions=True)

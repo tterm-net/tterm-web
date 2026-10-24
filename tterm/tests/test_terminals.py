@@ -399,8 +399,9 @@ async def test_a_terminal_runs_over_ssh_and_keeps_blocks(h):
                 async def saved() -> bool:
                     nonlocal rows
                     rows = await core.pool.fetch(
-                        "SELECT command, exit_code, cwd, output, output_cut "
-                        "FROM blocks WHERE terminal_id = $1 ORDER BY id", t.id)
+                        "SELECT command, exit_code, cwd, output, output_cut, "
+                        "output_text FROM blocks WHERE terminal_id = $1 "
+                        "ORDER BY id", t.id)
                     return len(rows) >= 3
 
                 end = time.monotonic() + 10
@@ -414,6 +415,8 @@ async def test_a_terminal_runs_over_ssh_and_keeps_blocks(h):
                     os.path.realpath(home)
                 output = zlib.decompress(rows[0]["output"])
                 assert b"hello" in output and b"\x1b]6973" not in output
+                # Its text, for search (0.1.7).
+                assert rows[0]["output_text"] == "hello", rows[0]["output_text"]
             second = await core.terminals.open(core.owner, machine_id, 80, 24)
             assert second.name == "2" and second.label == "P/lab · 2"
             await _until(lambda: second.state == "open", what="the second")

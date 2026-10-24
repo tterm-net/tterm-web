@@ -17,6 +17,7 @@ import { endTerminal, terminalInfo, type TerminalInfo,
 import { shortPath } from "./BlockView";
 import { ClassicTerminal, type ViewEvents } from "./ClassicTerminal";
 import { FeedTerminal } from "./FeedTerminal";
+import { useFoundBlock, wentThere } from "./found";
 import { ModeToggle } from "./InputLine";
 import type { Shown } from "./theme";
 import { since } from "./time";
@@ -65,6 +66,8 @@ interface Props {
   /** Whether the machine is still in tTerm Web: one removed gets no new
    * terminal. */
   machineThere: (machineId: string) => boolean;
+  /** A command search put here (0.1.7), for the line: not run. */
+  paste: { text: string; n: number } | null;
 }
 
 export function TerminalView(props: Props) {
@@ -77,6 +80,13 @@ export function TerminalView(props: Props) {
   const [, setTick] = useState(0);
   const changed = useRef(props.onChanged);
   changed.current = props.onChanged;
+
+  // A block search opened here (0.1.7) is shown in Line, where blocks are.
+  // The mode chosen for other terminals stays as it was.
+  const found = useFoundBlock(terminalId);
+  useEffect(() => {
+    if (found && !wentThere(found.n)) setMode("line");
+  }, [found?.n]);
 
   // What the terminal is, even before the socket says it.
   useEffect(() => {
@@ -182,7 +192,7 @@ export function TerminalView(props: Props) {
             <div className="classic-wrap">
               <ClassicTerminal key={`c-${terminalId}`} terminalId={terminalId}
                 shownTheme={shownTheme} ended={isEnded} active={active}
-                events={events} />
+                events={events} paste={props.paste} notify={props.notify} />
             </div>
             {!isEnded && (
               <footer className="classic-footer">
@@ -201,7 +211,8 @@ export function TerminalView(props: Props) {
           <FeedTerminal key={`f-${terminalId}`} terminalId={terminalId}
             shownTheme={shownTheme} ended={isEnded} active={active}
             events={events} machine={machine} home={info?.home ?? ""}
-            onClassic={() => choose("classic")} notify={props.notify} />
+            onClassic={() => choose("classic")} notify={props.notify}
+            paste={props.paste} />
         )}
         {state === "connecting" && !missing && (
           <div className="terminal-note" role="status">

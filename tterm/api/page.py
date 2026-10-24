@@ -25,7 +25,8 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel
 
 from .. import __version__
-from ..core import accounts, auth, letters, machines, notes, projects, ssh
+from ..core import (accounts, auth, letters, machines, notes, photos,
+                    projects, search, ssh)
 from ..core.mail import Mailer
 from ..core.terminals import NotAllowed, NotOpen, Terminal, Terminals
 from .connect import client_ip
@@ -636,6 +637,8 @@ def create_page_app(pool: asyncpg.Pool, dist: Path, page_url: str,
                 "projectTint": await projects.tint_of(pool, me.id),
                 "plan": me.plan,
                 "email": me.email,
+                # One's own photo (0.1.7), or null for the initials.
+                "photo": await photos.url_of(pool, me.id),
             },
             "projects": listed,
             "terminals": ([t.describe() for t in terminals.live(me.id)]
@@ -688,6 +691,64 @@ def create_page_app(pool: asyncpg.Pool, dist: Path, page_url: str,
             "devices": await auth.devices(pool, me.id, session.device_id),
             "legal": legal,
         })
+
+    # --------------------------------------------- the photo (0.1.7)
+
+    @app.put("/api/me/photo")
+    async def put_photo(request: Request,
+                        session: auth.Session = Depends(signed_in)) -> Response:
+        """One's own photo: the JPEG the page made, 256 pixels square, cut
+        to what draws the picture (core/photos.py)."""
+        kind = request.headers.get("content-type", "").split(";")[0].strip()
+        if kind != "image/jpeg":
+            return _json({"error": "The photo comes as a JPEG."}, 415)
+        size = request.headers.get("content-length", "")
+        if not size.isdigit():
+            return _json({"error": "Say how long the request is."}, 411)
+        if int(size) > photos.SIZE_MAX:
+            return _json({"error": "The photo is too big."}, 413)
+        data = await request.body()
+        try:
+            url = await photos.put(pool, session.person.id, data)
+        except photos.NotAPhoto as exc:
+            return _json({"error": f"tTerm cannot take this photo: {exc}"}, 422)
+        return _json({"photo": url})
+
+    @app.delete("/api/me/photo")
+    async def remove_photo(session: auth.Session = Depends(signed_in)) -> Response:
+        await photos.remove(pool, session.person.id)
+        return _json({"photo": None})
+
+    @app.get("/api/photos/{user_id}")
+    async def photo(user_id: uuid.UUID, v: str | None = None,
+                    session: auth.Session = Depends(signed_in)) -> Response:
+        """Someone's photo, for whoever may see it: themselves, and from 0.2
+        those in a project with them. Its address names its version: that
+        one the browser keeps."""
+        found = await photos.get(pool, session.person.id, user_id)
+        if found is None:
+            return _json({"error": "no such photo"}, 404)
+        image, version = found
+        cache = ("private, max-age=31536000, immutable" if v == version
+                 else "private, no-cache")
+        return Response(image, media_type="image/jpeg",
+                        headers={"cache-control": cache})
+
+    # ------------------------------------------- search over everything
+
+    @app.get("/api/search")
+    async def search_all(q: str = "", near: str = "",
+                         session: auth.Session = Depends(signed_in)) -> Response:
+        """Commands, their output and notes with every word of `q` in them
+        (0.1.7); nothing typed, the commands run most on the machine
+        `near`. The page finds terminals, machines and projects itself."""
+        try:
+            machine = uuid.UUID(near) if near else None
+        except ValueError:
+            machine = None
+        found = await search.search(pool, session.person.id, q[:search.QUERY_MAX],
+                                    near=machine)
+        return _json(found)
 
     @app.post("/api/installs")
     async def new_install(request: InstallRequest,
