@@ -4,7 +4,13 @@ tTerm in the browser: a real terminal with command blocks, for people who work
 with servers and for their teams. Projects, roles, a journal of who ran what,
 and watching a colleague's terminal, always with them knowing.
 
-**Status:** early development. Version 0.1.5 shows New project and Add
+**Status:** early development. Version 0.1.6 lets tTerm for the computer
+sign in with the browser: the app opens tTerm there, the person allows it,
+and a one-time code goes back to the app on that very computer, which
+trades it with a secret of its own (PKCE) for a device key; the app shows
+in Settings under Devices, and Forget signs it out. In the app the page
+marks the computer it runs on and says when tTerm cannot be reached.
+Version 0.1.5 shows New project and Add
 machine in the app before signing in too: there they tell what an account
 brings and what the Free plan gives, and offer to sign in. Settings ends
 with support's address alone. Version 0.1.4 turns the account at the

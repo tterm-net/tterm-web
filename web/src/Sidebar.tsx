@@ -17,14 +17,19 @@
 // a card about signing in, and at the bottom Not signed in, whose menu has
 // Settings and Sign in. From 0.1.5 + at Machines and New project are there
 // before signing in too, and say what signing in brings (NeedAccount.tsx).
+// From 0.1.6, in the app signed in, the computer it runs on is marked: its
+// icon on an amber square and "this Mac" (variant B, canvas version 70);
+// without the connection the cloud's machines are grey, and the account
+// says Offline.
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Machine, Me, Project, Role, TerminalInfo } from "./api";
 import { colorClass, terminalName } from "./colors";
 import {
-  ChevronDown, Close, Computer, Doc, Folder as FolderIcon, FolderOpen, Gear,
-  Logo, Moon, People, Person, Pin, Plus, Server, SignIn, SignOut, Sun,
+  ChevronDown, Close, CloudOff, Computer, Doc, Folder as FolderIcon, FolderOpen,
+  Gear, Logo, Moon, People, Person, Pin, Plus, Server, SignIn, SignOut, Sun,
 } from "./icons";
+import { hereWord } from "./local";
 import { NameInput } from "./NameInput";
 import { Avatar, NoteIcon } from "./ProjectPage";
 import { titled } from "./noteText";
@@ -81,6 +86,8 @@ interface Props {
   notYet: (what: string) => void;
   /** The app before signing in (0.1.4): this computer only. */
   local: boolean;
+  /** The app signed in, without the connection to tTerm (0.1.6). */
+  cutOff?: boolean;
   /** The page of the account's menu shown now, if one is (0.1.4). */
   page: AccountPage | null;
   onSettings: () => void;
@@ -129,20 +136,32 @@ export function Sidebar(props: Props) {
     const open = !folded.has(key);
     const mine = terminals.filter((t) => t.machineId === m.id);
     const computer = m.kind === "computer";
-    const offline = computer && !m.online;
-    const seen = offline ? lastSeen(m.lastSeen) : "";
+    const here = !!m.here;
+    // In the app without the connection the cloud's machines wait for it;
+    // the computer it runs on works on.
+    const waits = !!props.cutOff && !here;
+    const offline = (computer && !m.online && !here) || waits;
+    const seen = offline && !waits ? lastSeen(m.lastSeen) : "";
     return (
       <div key={m.id} className="sb-group">
         <div className="sb-row">
           <Chevron open={open} onClick={() => onFold(key)} />
           <button type="button" className={offline ? "sb-name offline" : "sb-name"}
             aria-expanded={open}
-            title={offline
+            title={waits
+              ? `${m.name} comes back with the connection to tTerm`
+              : offline
               ? `${m.name} is offline: asleep, or its agent is not running${seen ? ` (${seen})` : ""}`
+              : here
+              ? `${m.name}, ${hereWord()}: its terminals run right here, also ` +
+                "without the internet"
               : `${open ? "Fold" : "Unfold"} ${m.name}`}
             onClick={() => onFold(key)}>
-            {computer ? <Computer size={14} /> : <Server size={14} />}
+            {here ? (
+              <span className="here-mark" aria-hidden="true"><Computer size={13} /></span>
+            ) : computer ? <Computer size={14} /> : <Server size={14} />}
             <span className="sb-text">{m.name}</span>
+            {here && <span className="here-pill">{hereWord()}</span>}
             {!open && mine.length > 0 && <span className="sb-count">{mine.length}</span>}
             {computer && (
               <span className={offline ? "sb-state away" : "sb-state on"}
@@ -331,6 +350,7 @@ export function Sidebar(props: Props) {
 
       <div className="sidebar-foot">
         <AccountPlace me={me} local={local} page={props.page}
+          cutOff={!!props.cutOff}
           onSettings={props.onSettings} onAccount={props.onAccount}
           onSignOut={props.onSignOut} onSignIn={props.onSignIn} />
         <button type="button" className="icon-button"
@@ -389,6 +409,8 @@ function MenuItem(props: {
 function AccountPlace(props: {
   me: Me;
   local: boolean;
+  /** In the app without the connection: Offline instead of the plan. */
+  cutOff: boolean;
   page: AccountPage | null;
   onSettings: () => void;
   onAccount: () => void;
@@ -470,7 +492,11 @@ function AccountPlace(props: {
             <span className="avatar mine" aria-hidden="true">{me.initials}</span>
             <span className="account-text">
               <strong>{me.firstName}</strong>
-              <span>{plan}</span>
+              {props.cutOff ? (
+                <span className="account-offline">
+                  <CloudOff size={13} />Offline, trying again
+                </span>
+              ) : <span>{plan}</span>}
             </span>
           </>
         )}

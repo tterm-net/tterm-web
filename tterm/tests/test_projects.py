@@ -619,7 +619,9 @@ async def test_older_projects_get_colors_in_turn(h):
                     "INSERT INTO projects (owner_id, name, code, created_at) "
                     "VALUES ($1, $2, $2, now() - make_interval(mins => $3))",
                     owner, code, minutes)
-        assert await db.migrate(pool) == ["009_projects"]
+        applied = await db.migrate(pool)
+        # 009 first, and whatever came after it (010 from 0.1.6).
+        assert applied[0] == "009_projects", applied
         rows = await pool.fetch("SELECT owner_id, code, color FROM projects "
                                 "ORDER BY created_at")
         colors = {(r["owner_id"], r["code"]): r["color"] for r in rows}

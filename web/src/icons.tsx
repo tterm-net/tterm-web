@@ -113,6 +113,15 @@ export const Computer = (p: Props) => (
 );
 
 /** A person: the account. */
+/** No connection to tTerm, in the app (0.1.6). */
+export const CloudOff = (p: Props) => (
+  <Stroke {...p}>
+    <path d="M22.61 16.95A5 5 0 0 0 18 10h-1.26a8 8 0 0 0-7.05-6" />
+    <path d="M5 5a8 8 0 0 0 4 15h9a5 5 0 0 0 1.7-.3" />
+    <path d="M1 1l22 22" />
+  </Stroke>
+);
+
 export const Person = (p: Props) => (
   <Stroke {...p}>
     <circle cx="12" cy="8" r="4" />

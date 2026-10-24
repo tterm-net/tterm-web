@@ -8,12 +8,15 @@
 // A note says on the right whether what was typed is saved. From 0.1.1 the
 // project's code is in its color, and a double click on a terminal's tab
 // names the terminal: Enter saves, Esc cancels. From 0.1.2 the same goes in
-// the sidebar and on the project's page (NameInput).
+// the sidebar and on the project's page (NameInput). From 0.1.6, in the
+// app signed in, a terminal of the computer it runs on has the same amber
+// square as in the sidebar; without the connection, a terminal of the
+// cloud says that it waits for it.
 
 import { useRef, type ReactNode } from "react";
 import type { ProjectColor } from "./api";
 import { colorClass } from "./colors";
-import { Check, Close, Doc, ListCheck, Plus, Search } from "./icons";
+import { Check, Close, CloudOff, Computer, Doc, ListCheck, Plus, Search } from "./icons";
 import { NameInput } from "./NameInput";
 import { JUMP_KEYS, type TabKind } from "./tabs";
 
@@ -41,6 +44,10 @@ export interface TabView {
   machine?: string;
   name?: string;
   canRename?: boolean;
+  /** In the app signed in (0.1.6): a terminal of the computer it runs on. */
+  here?: boolean;
+  /** In the app without the connection: a terminal of the cloud, waiting. */
+  cutOff?: boolean;
 }
 
 /** How saving goes in the note in front. */
@@ -70,7 +77,15 @@ interface Props {
 
 function Lead({ tab }: { tab: TabView }) {
   if (tab.kind === "terminal") {
-    return <span className={`dot ${tab.dot ?? "busy"}`} aria-hidden="true" />;
+    return (
+      <>
+        <span className={`dot ${tab.dot ?? "busy"}`} aria-hidden="true" />
+        {tab.here && (
+          <span className="here-mark small" aria-hidden="true"><Computer size={11} /></span>
+        )}
+        {tab.cutOff && <CloudOff size={14} className="tab-icon cut-off" />}
+      </>
+    );
   }
   if (tab.kind === "note") {
     return tab.checklist ? <ListCheck size={14} className="tab-icon" />

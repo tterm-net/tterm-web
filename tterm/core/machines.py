@@ -424,6 +424,123 @@ async def add_computer(pool: asyncpg.Pool, claimed: asyncpg.Record,
     return machine_id, final
 
 
+class ThisComputerRefused(Exception):
+    """Why the app's computer is no machine of the person's: an HTTP status
+    for the page and the words for the person."""
+
+    def __init__(self, status: int, message: str) -> None:
+        super().__init__(message)
+        self.status = status
+
+
+_KNOWN_COMPUTER = """
+    SELECT m.id, m.name, m.kind, m.removed_at, m.project_id, p.code,
+           (SELECT pm.role FROM project_members pm
+            WHERE pm.project_id = m.project_id AND pm.user_id = $2
+              AND (pm.until IS NULL OR pm.until > now())) AS role
+    FROM machines m JOIN projects p ON p.id = m.project_id
+    WHERE m.agent_token_hash = $1
+"""
+
+
+def _found_computer(known: asyncpg.Record) -> dict:
+    """The answer for a computer that has the key: the person's, or why
+    not."""
+    if known["removed_at"] is not None:
+        raise ThisComputerRefused(
+            410, "This computer's key stopped working when it was removed "
+                 "from tTerm Web: tTerm makes it a new one.")
+    if known["kind"] != "computer" or known["role"] not in ("owner", "admin"):
+        raise ThisComputerRefused(
+            409, "This computer is in tTerm Web under another account.")
+    return {"machine": {"id": str(known["id"]), "name": known["name"],
+                        "projectId": str(known["project_id"]),
+                        "code": known["code"]},
+            "created": False}
+
+
+async def this_computer(pool: asyncpg.Pool, *, user_id: uuid.UUID,
+                        key: str, name: str, os_name: str = "",
+                        app: str = "") -> dict:
+    """tTerm for the computer, signed in, says which computer it runs on
+    (0.1.6), with the computer's own key: the one in ~/.tterm-web/env that
+    the agent keeps, or a new one the app writes there. The app shows that
+    it has the key by sending it, as the agent does in its hello; only its
+    hash is kept, as always.
+
+    The computer of the person's with that key, if there is one; otherwise
+    a new computer in their Personal, offline until something connects with
+    the key: the agent, or from the app's step 3 the app itself. Refused:
+    a key of a removed computer, and a key that is the token of a command
+    from Add a machine (410: neither can be the computer's own; the app
+    makes a new one); a computer in a project the person does not manage
+    (409). A token is not taken because others may have seen it: shown in
+    Add a machine, the command started by hand uses it for the computer's
+    key, and whoever claimed it first would get that computer."""
+    key_hash = token_hash(key)
+    machine_name_ = machine_name(name, default="computer")
+    async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))",
+                           f"this-computer:{user_id}")
+        known = await conn.fetchrow(_KNOWN_COMPUTER, key_hash, user_id)
+        if known is not None:
+            return _found_computer(known)
+        if await conn.fetchval(
+                "SELECT EXISTS (SELECT 1 FROM install_tokens "
+                "WHERE token_hash = $1)", key_hash):
+            raise ThisComputerRefused(
+                410, "This key is the token of a command from Add a machine, "
+                     "not a computer's own: tTerm makes it a new one.")
+        personal = await conn.fetchrow(
+            "SELECT id, code FROM projects WHERE owner_id = $1 "
+            "ORDER BY created_at, id LIMIT 1", user_id)
+        if personal is None:
+            raise ThisComputerRefused(404, "This account has no Personal "
+                                           "project.")
+        project_id = personal["id"]
+        # The project first, then its owner: as add_computer does.
+        await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))",
+                           str(project_id))
+        try:
+            await _make_room(conn, project_id)
+        except LimitReached as exc:
+            raise ThisComputerRefused(403, str(exc)) from None
+        taken = {r["name"] for r in await conn.fetch(
+            "SELECT name FROM machines WHERE project_id = $1 AND "
+            "removed_at IS NULL", project_id)}
+        final = free_name(machine_name_, taken)
+        passport = {key: value for key, value in (("os", os_name),
+                                                  ("agent", app)) if value}
+        try:
+            async with conn.transaction():
+                machine_id = await conn.fetchval(
+                    """
+                    INSERT INTO machines (project_id, kind, name,
+                                          agent_token_hash, passport, created_by)
+                    VALUES ($1, 'computer', $2, $3, $4::jsonb, $5)
+                    RETURNING id
+                    """, project_id, final, key_hash, json.dumps(passport),
+                    user_id)
+        except asyncpg.UniqueViolationError:
+            # A computer with the key came meanwhile: its agent joined just
+            # now (then it is the person's own), or it is someone else's.
+            known = await conn.fetchrow(_KNOWN_COMPUTER, key_hash, user_id)
+            if known is None:
+                raise ThisComputerRefused(
+                    409, "This computer is in tTerm Web under another "
+                         "account.") from None
+            return _found_computer(known)
+        await accounts.journal(conn, "machine.added", project_id=project_id,
+                               user_id=user_id, machine_id=machine_id,
+                               details={"name": final, "kind": "computer",
+                                        "os": os_name or None,
+                                        "agent": app or None, "via": "app"})
+    log.info("machine.added: computer %s, by its app", final)
+    return {"machine": {"id": str(machine_id), "name": final,
+                        "projectId": str(project_id), "code": personal["code"]},
+            "created": True}
+
+
 async def confirm_install(pool: asyncpg.Pool, token: str,
                           machine_id: uuid.UUID) -> bool:
     """The command from Add a machine, run on a computer that is in tTerm Web

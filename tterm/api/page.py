@@ -13,9 +13,11 @@ from __future__ import annotations
 import asyncio
 import html
 import json
+import re
 import secrets
 import uuid
 from pathlib import Path
+from urllib.parse import urlencode
 
 import asyncpg
 from fastapi import Depends, FastAPI, Request, WebSocket
@@ -74,6 +76,41 @@ class SignUpBody(BaseModel):
     #: The one tick, for both documents: the Terms of Service and the Privacy
     #: Policy.
     agree: bool = False
+
+
+class AppAllowBody(BaseModel):
+    """What the app put in the address of /connect, as the page in the
+    browser read it (0.1.6)."""
+    app: str
+    name: str
+    port: int
+    challenge: str
+    state: str
+
+
+class AppExchangeBody(BaseModel):
+    code: str
+    verifier: str
+
+
+class AppSessionBody(BaseModel):
+    key: str
+
+
+class ThisComputerBody(BaseModel):
+    #: The computer's own key, as the agent sends it in its hello: only its
+    #: hash is kept.
+    key: str
+    name: str = ""
+    os: str = ""
+    app: str = ""
+
+
+#: The app's own address on its computer, where the browser takes the code.
+APP_RETURN = "http://127.0.0.1:{port}/signed-in"
+#: What the app says its state is: what new_token and secrets.token_urlsafe
+#: make, of any reasonable length. Whole strings only (fullmatch).
+APP_STATE_RE = re.compile(r"[A-Za-z0-9_-]{16,128}")
 
 
 class SignedOut(Exception):
@@ -430,6 +467,19 @@ def create_page_app(pool: asyncpg.Pool, dist: Path, page_url: str,
         clear_cookie(response, auth.DEVICE_COOKIE)
         return response
 
+    @app.post("/api/auth/end-session")
+    async def end_session(request: Request) -> Response:
+        """Ends this session only, as eight hours away would: a trusted
+        browser stays one, so that the quick code brings the person back.
+        The page asks for it when something wants a sign-in made just now,
+        such as allowing an app (0.1.6)."""
+        ended = await auth.sign_out(pool, cookie(request, auth.SESSION_COOKIE))
+        if ended is not None:
+            await cut(lambda s: s.id == ended)
+        response = _json({"ended": ended is not None})
+        clear_cookie(response, auth.SESSION_COOKIE)
+        return response
+
     @app.post("/api/auth/signout-everywhere")
     async def sign_out_everywhere(
             session: auth.Session = Depends(signed_in)) -> Response:
@@ -462,6 +512,99 @@ def create_page_app(pool: asyncpg.Pool, dist: Path, page_url: str,
             clear_cookie(response, auth.DEVICE_COOKIE)
             clear_cookie(response, auth.SESSION_COOKIE)
         return response
+
+    # ---------------------------- the app on a computer signs in (0.1.6)
+
+    app_over = ("This sign-in is over. Start again in tTerm with Sign in "
+                "with your browser.")
+
+    @app.post("/api/auth/app/allow")
+    async def allow_app(body: AppAllowBody,
+                        session: auth.Session = Depends(signed_in)) -> Response:
+        """The person allows the app that opened /connect in this browser.
+        The answer is the app's own address on 127.0.0.1 with a one-time
+        code: the page goes there, on this very computer, and nowhere else
+        could the code be of use without the app's secret."""
+        name = auth.computer_name(body.name)
+        if (body.app not in auth.APPS or name is None
+                or not 1024 <= body.port <= 65535
+                or not auth.is_challenge(body.challenge)
+                or not APP_STATE_RE.fullmatch(body.state)):
+            return _json({"error": "This link is not complete. Start again in "
+                          "tTerm with Sign in with your browser."}, 422)
+        try:
+            code = await auth.allow_app(pool, session, app=body.app, name=name,
+                                        challenge=body.challenge)
+        except auth.Refused as exc:
+            return refused(exc)
+        query = urlencode({"code": code, "state": body.state})
+        return _json({"redirect": f"{APP_RETURN.format(port=body.port)}?{query}"})
+
+    @app.post("/api/auth/app/exchange")
+    async def exchange_app(body: AppExchangeBody, request: Request) -> Response:
+        """The app, with the code the browser brought it and its own secret:
+        its device key, which it keeps in the keychain, and a first session.
+        The session goes in the session cookie, named here: an app keeps no
+        cookies of its own."""
+        if not auth.is_token(body.code) or not auth.is_verifier(body.verifier):
+            return refused(auth.AppGrantOver(app_over))
+        try:
+            signed = await auth.exchange_app(
+                pool, mailer, code=body.code, verifier=body.verifier,
+                ip=client_ip(request), page_url=page_url, support=support)
+        except auth.Refused as exc:
+            return refused(exc)
+        return _json({
+            "key": signed.key, "deviceId": str(signed.device_id),
+            "label": signed.label, "session": signed.token,
+            "cookie": cookie_name(auth.SESSION_COOKIE),
+            "me": {"id": str(signed.person.id), "name": signed.person.name,
+                   "email": signed.person.email},
+            "hub": machines.hub_url(connect_url),
+        })
+
+    @app.post("/api/auth/app/session")
+    async def app_session(body: AppSessionBody, request: Request) -> Response:
+        """A session for the app by its device key, when it starts and when
+        its session ended. A key no longer trusted: 410, and the app shows
+        this computer only, as before signing in."""
+        forgotten = ("This app was signed out of tTerm. Sign in again with "
+                     "your browser.")
+        if not auth.is_token(body.key):
+            return refused(auth.DeviceForgotten(forgotten))
+        try:
+            token, ended = await auth.app_session(pool, key=body.key,
+                                                  ip=client_ip(request))
+        except auth.Refused as exc:
+            return refused(exc)
+        if ended:
+            await cut(lambda s: s.id in ended)
+        return _json({"session": token,
+                      "cookie": cookie_name(auth.SESSION_COOKIE)})
+
+    @app.post("/api/computers/this")
+    async def this_computer(body: ThisComputerBody,
+                            session: auth.Session = Depends(signed_in)) -> Response:
+        """Which computer the app runs on, by the computer's own key (only
+        its hash is kept): one of the person's, or a new one in Personal
+        (machines.this_computer). Only from the app's own session."""
+        if session.method != "app":
+            return _json({"error": "Only tTerm for the computer says which "
+                          "computer it runs on."}, 403)
+        if not machines.KEY_RE.fullmatch(body.key):
+            return _json({"error": "Say the computer's own key, as its agent "
+                          "has it."}, 422)
+        os_name = "".join(ch for ch in body.os if ch.isprintable())[:200]
+        app_name = "".join(ch for ch in body.app if ch.isprintable())[:32]
+        try:
+            found = await machines.this_computer(
+                pool, user_id=session.person.id, key=body.key,
+                name=auth.computer_name(body.name) or "computer",
+                os_name=os_name, app=app_name)
+        except machines.ThisComputerRefused as exc:
+            return _json({"error": str(exc)}, exc.status)
+        return _json({**found, "hub": machines.hub_url(connect_url)},
+                     201 if found["created"] else 200)
 
     @app.get("/health")
     async def health() -> Response:

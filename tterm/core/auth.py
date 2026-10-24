@@ -23,9 +23,30 @@ without anything done, on Sign out, or with its device. Only hashes are
 kept: of the random tokens plainly, of the codes and the quick codes with a
 secret of this server's that never goes to the database (`auth.key` in the
 data folder), so that a copy of the database alone guesses nothing.
+
+From 0.1.6 tTerm for the computer signs in with the browser (stage 3 of the
+app). The app opens /connect in the browser with a challenge: the SHA-256
+of a secret only the app knows (PKCE, RFC 7636). The person, signed in
+there, allows it (allow_app), and the page takes a one-time code to the app
+on 127.0.0.1, on that very computer, as RFC 8252 has it for apps on a
+computer. The app trades the code and its secret for a device key of its own
+(exchange_app): a device of kind "app", with no quick code, which the app
+keeps in the system's keychain and asks sessions with (app_session). A link
+someone else sends leads their browser to its own 127.0.0.1, so allowing it
+gives them nothing; and a code caught on the way is no use without the
+secret. Forget in Devices and Forget all devices sign the app out, as they
+do a browser.
+
+Allowing an app makes a key that lasts, so, as for the quick code, it takes
+a sign-in made just now (APP_ALLOW_FRESH): whoever finds a browser open, or
+watches one, hands out no key. An older session is asked to confirm, with
+the quick code or a code from email, and the page then allows. A code not
+yet traded dies with the session that allowed it: Sign out and Forget all
+devices take it back too.
 """
 from __future__ import annotations
 
+import base64
 import contextlib
 import datetime as dt
 import hashlib
@@ -80,6 +101,24 @@ TOUCH_EVERY = dt.timedelta(minutes=1)
 SESSION_COOKIE = "tterm-session"
 DEVICE_COOKIE = "tterm-device"
 BROWSER_COOKIE = "tterm-browser"
+
+#: The apps that sign in with the browser, as the device's label names them.
+APPS = {"mac": "Mac", "windows": "Windows", "linux": "Linux"}
+#: What the browser allowed works this long, once.
+APP_GRANT_MINUTES = 2
+#: Apps one person may allow in an hour: far more than anyone signs in.
+APP_GRANTS_PER_HOUR = 20
+#: A computer's name in the device's label, at most.
+COMPUTER_NAME_MAX = 64
+#: Allowing an app takes a sign-in this recent, as the quick code does.
+APP_ALLOW_FRESH = PIN_OFFER
+#: RFC 7636: the challenge is the base64url of a SHA-256, the secret 43 to
+#: 128 of these characters. Whole strings only (fullmatch): "$" would let a
+#: newline at the end through.
+_CHALLENGE = re.compile(r"[A-Za-z0-9_-]{43}")
+_VERIFIER = re.compile(r"[A-Za-z0-9._~-]{43,128}")
+#: A one-time code or a device key, as new_token makes them.
+_TOKEN = re.compile(r"[A-Za-z0-9_-]{32,64}")
 
 #: An address as people have them: no quotes, no brackets, no spaces.
 _EMAIL = re.compile(r"^[a-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}"
@@ -245,6 +284,41 @@ def device_label(user_agent: str) -> str:
     else:
         return browser
     return f"{browser} on {system}"
+
+
+def computer_name(raw: object) -> str | None:
+    """The computer's name as its app says it, for the device's label and
+    the page in the browser: its spaces tidied, printable, up to
+    COMPUTER_NAME_MAX; None if it cannot be one."""
+    if not isinstance(raw, str):
+        return None
+    name = " ".join(raw.split())
+    if not 1 <= len(name) <= COMPUTER_NAME_MAX or not name.isprintable():
+        return None
+    return name
+
+
+def app_label(app: str, name: str) -> str:
+    """"tTerm for Mac on MacBook-Pro-Denis": the app's device in Devices."""
+    return f"tTerm for {APPS.get(app, 'the computer')} on {name}"
+
+
+def pkce_challenge(verifier: str) -> str:
+    """The challenge of a secret, as RFC 7636 makes it (S256)."""
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+
+
+def is_challenge(raw: object) -> bool:
+    return isinstance(raw, str) and bool(_CHALLENGE.fullmatch(raw))
+
+
+def is_verifier(raw: object) -> bool:
+    return isinstance(raw, str) and bool(_VERIFIER.fullmatch(raw))
+
+
+def is_token(raw: object) -> bool:
+    return isinstance(raw, str) and bool(_TOKEN.fullmatch(raw))
 
 
 # ------------------------------------------------------------------ codes
@@ -538,7 +612,8 @@ async def trust_device(pool: asyncpg.Pool, secret: bytes, session: "Session",
         if replaces:
             old = await conn.fetchval(
                 "SELECT id FROM devices WHERE key_hash = $1 "
-                "AND forgotten_at IS NULL", token_hash(replaces))
+                "AND kind = 'browser' AND forgotten_at IS NULL",
+                token_hash(replaces))
             if old is not None:
                 await _forget(conn, old)
         await accounts.journal(conn, "user.device_trusted",
@@ -556,14 +631,15 @@ class Device:
 
 
 async def device(pool: asyncpg.Pool, key: str | None) -> Device | None:
-    """The device this browser is, if it is one still trusted."""
+    """The device this browser is, if it is one still trusted. An app's key
+    is no browser's (0.1.6): it has no quick code."""
     if not key:
         return None
     row = await pool.fetchrow(
         """
         SELECT d.id, d.label, u.name, u.email FROM devices d
         JOIN users u ON u.id = d.user_id
-        WHERE d.key_hash = $1 AND d.forgotten_at IS NULL
+        WHERE d.key_hash = $1 AND d.kind = 'browser' AND d.forgotten_at IS NULL
           AND d.last_used_at > now() - make_interval(days => $2)
         """, token_hash(key), DEVICE_DAYS)
     if row is None:
@@ -586,7 +662,8 @@ async def check_pin(pool: asyncpg.Pool, secret: bytes, *, key: str, pin: str,
                    d.last_used_at > now() - make_interval(days => $2) AS fresh,
                    u.name, u.theme, u.plan_id, u.email
             FROM devices d JOIN users u ON u.id = d.user_id
-            WHERE d.key_hash = $1 AND d.forgotten_at IS NULL
+            WHERE d.key_hash = $1 AND d.kind = 'browser'
+              AND d.forgotten_at IS NULL
             FOR UPDATE OF d
             """, key_hash, DEVICE_DAYS)
         if row is None:
@@ -647,12 +724,14 @@ async def _forget(conn: asyncpg.Connection,
 
 async def devices(pool: asyncpg.Pool, user_id: uuid.UUID,
                   current: uuid.UUID | None) -> list[dict]:
+    """The person's devices: browsers with a quick code and, from 0.1.6,
+    apps signed in with the browser ("kind")."""
     rows = await pool.fetch(
-        "SELECT id, label, created_at, last_used_at FROM devices "
+        "SELECT id, kind, label, created_at, last_used_at FROM devices "
         "WHERE user_id = $1 AND forgotten_at IS NULL "
         "AND last_used_at > now() - make_interval(days => $2) "
         "ORDER BY last_used_at DESC", user_id, DEVICE_DAYS)
-    return [{"id": str(r["id"]), "label": r["label"],
+    return [{"id": str(r["id"]), "kind": r["kind"], "label": r["label"],
              "createdAt": int(r["created_at"].timestamp() * 1000),
              "lastUsed": int(r["last_used_at"].timestamp() * 1000),
              "current": r["id"] == current} for r in rows]
@@ -672,6 +751,174 @@ async def forget_device(pool: asyncpg.Pool, user_id: uuid.UUID,
         await accounts.journal(conn, "user.device_forgotten", user_id=user_id,
                                details={"why": "by hand"})
     return ended
+
+
+# ------------------------------------- the app on a computer (from 0.1.6)
+
+class AppGrantOver(Refused):
+    """The code from the browser is unknown, used, too old, came without its
+    secret, or its session ended: the app starts signing in again."""
+    status = 410
+
+
+class ConfirmFirst(Refused):
+    """Allowing an app takes a sign-in made just now: the page asks the
+    person to confirm it is them, then allows."""
+    status = 403
+
+
+async def allow_app(pool: asyncpg.Pool, session: "Session", *, app: str,
+                    name: str, challenge: str) -> str:
+    """The person, signed in in this browser, allows the app that opened it:
+    a code for that app, which works for APP_GRANT_MINUTES, once, only with
+    the secret whose challenge this is, and only while this session is on.
+    `app` is a key of APPS, `name` clean (computer_name), `challenge`
+    checked (is_challenge). Not from an app's own session: apps are allowed
+    in a browser; and only within APP_ALLOW_FRESH of signing in."""
+    if session.method == "app":
+        raise Refused("Allow an app in a browser signed in to tTerm.")
+    if session.age > APP_ALLOW_FRESH:
+        raise ConfirmFirst("Confirm it is you first: a new app gets a key "
+                           "that lasts.", confirm=True)
+    code = new_token()
+    async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))",
+                           f"app-grants:{session.person.id}")
+        recent = await conn.fetchval(
+            "SELECT count(*) FROM app_grants WHERE user_id = $1 "
+            "AND created_at > now() - interval '1 hour'", session.person.id)
+        if recent >= APP_GRANTS_PER_HOUR:
+            raise TooSoon("Too many apps were allowed in the last hour. Try "
+                          "again in an hour.", wait=3600)
+        await conn.execute(
+            "INSERT INTO app_grants (user_id, session_id, code_hash, challenge, "
+            "app, name, expires_at) VALUES ($1, $2, $3, $4, $5, $6, "
+            "now() + make_interval(mins => $7))",
+            session.person.id, session.id, token_hash(code), challenge, app,
+            name, APP_GRANT_MINUTES)
+        await accounts.journal(conn, "user.app_allowed",
+                               user_id=session.person.id,
+                               details={"app": app_label(app, name)})
+    return code
+
+
+@dataclass(frozen=True)
+class AppSignedIn:
+    person: Person
+    #: The app's device key, for its keychain: it asks sessions with it.
+    key: str
+    device_id: uuid.UUID
+    label: str
+    #: The first session's token.
+    token: str
+
+
+async def exchange_app(pool: asyncpg.Pool, mailer: Mailer, *, code: str,
+                       verifier: str, ip: str, page_url: str,
+                       support: str = letters.SUPPORT) -> AppSignedIn:
+    """The app trades the browser's code and its own secret for a device key
+    of its own and a first session. One try per code: a wrong secret spends
+    it, as a used or old code is spent. The person hears of the new app by
+    email, as of every sign-in from a browser tTerm does not know."""
+    over = AppGrantOver("This sign-in is over. Start again in tTerm with "
+                        "Sign in with your browser.")
+    signed: AppSignedIn | None = None
+    async with pool.acquire() as conn, conn.transaction():
+        # The person's sign-ins one at a time with Forget all devices: one
+        # that comes while it runs waits for it, and then finds the session
+        # that allowed the app ended.
+        owner = await conn.fetchval(
+            "SELECT user_id FROM app_grants WHERE code_hash = $1",
+            token_hash(code))
+        if owner is not None:
+            await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))",
+                               f"sign-in:{owner}")
+        # Only while the session that allowed it is on: Sign out and Forget
+        # all devices end it, and with it what it allowed.
+        grant = await conn.fetchrow(
+            """
+            UPDATE app_grants g SET used_at = now()
+            FROM sessions s
+            WHERE g.code_hash = $1 AND g.used_at IS NULL
+              AND g.expires_at > now()
+              AND s.id = g.session_id AND s.ended_at IS NULL
+            RETURNING g.user_id, g.challenge, g.app, g.name
+            """, token_hash(code))
+        if grant is not None and hmac.compare_digest(
+                grant["challenge"].encode(), pkce_challenge(verifier).encode()):
+            user = await conn.fetchrow(
+                "SELECT id, name, theme, plan_id, email FROM users WHERE id = $1",
+                grant["user_id"])
+            person = Person(user["id"], user["name"], user["theme"],
+                            user["plan_id"], user["email"])
+            label = app_label(grant["app"], grant["name"])
+            key = new_token()
+            device_id = await conn.fetchval(
+                "INSERT INTO devices (user_id, kind, key_hash, pin_hash, label) "
+                "VALUES ($1, 'app', $2, NULL, $3) RETURNING id",
+                person.id, token_hash(key), label[:200])
+            token, _ = await _new_session(conn, person.id, method="app",
+                                          label=label, ip=ip,
+                                          device_id=device_id)
+            await accounts.journal(conn, "user.device_trusted",
+                                   user_id=person.id,
+                                   details={"device": label, "kind": "app"})
+            await accounts.journal(conn, "user.signed_in", user_id=person.id,
+                                   details={"how": "app", "device": label,
+                                            "ip": ip})
+            signed = AppSignedIn(person, key, device_id, label, token)
+    # Raised after the transaction, which keeps the code spent.
+    if signed is None:
+        raise over
+    if signed.person.email:
+        with contextlib.suppress(MailFailed):
+            await mailer.send(letters.sign_in_email(
+                to=signed.person.email, label=signed.label, ip=ip,
+                at=dt.datetime.now(dt.timezone.utc), page_url=page_url,
+                support=support, app=True))
+    return signed
+
+
+async def app_session(pool: asyncpg.Pool, *, key: str,
+                      ip: str) -> tuple[str, list[uuid.UUID]]:
+    """A session for the app, by its device key: when it starts, and when
+    its session ended (eight hours without anything done). Only the key of
+    an app still trusted and used within DEVICE_DAYS; the app has one
+    session at a time, so its others end. The token, and the sessions that
+    ended."""
+    refusal: Refused | None = None
+    async with pool.acquire() as conn, conn.transaction():
+        row = await conn.fetchrow(
+            """
+            SELECT id, user_id, label,
+                   last_used_at > now() - make_interval(days => $2) AS fresh
+            FROM devices
+            WHERE key_hash = $1 AND kind = 'app' AND forgotten_at IS NULL
+            FOR UPDATE
+            """, token_hash(key), DEVICE_DAYS)
+        if row is None:
+            refusal = DeviceForgotten("This app was signed out of tTerm. Sign "
+                                      "in again with your browser.")
+        elif not row["fresh"]:
+            await _forget(conn, row["id"])
+            refusal = DeviceForgotten(f"This app was not used for {DEVICE_DAYS} "
+                                      "days. Sign in again with your browser.")
+        else:
+            ended = [r["id"] for r in await conn.fetch(
+                "UPDATE sessions SET ended_at = now() WHERE device_id = $1 "
+                "AND ended_at IS NULL RETURNING id", row["id"])]
+            await conn.execute("UPDATE devices SET last_used_at = now() "
+                               "WHERE id = $1", row["id"])
+            token, _ = await _new_session(conn, row["user_id"], method="app",
+                                          label=row["label"], ip=ip,
+                                          device_id=row["id"])
+            await accounts.journal(conn, "user.signed_in",
+                                   user_id=row["user_id"],
+                                   details={"how": "app", "device": row["label"],
+                                            "ip": ip})
+    if refusal is not None:
+        raise refusal
+    return token, ended
 
 
 # --------------------------------------------------------------- sessions
@@ -805,6 +1052,10 @@ async def sign_out_everywhere(pool: asyncpg.Pool, user_id: uuid.UUID) -> None:
     "Forget all devices" (0.0.10; in Settings from 0.1.4), so that it reads
     like Forget for one."""
     async with pool.acquire() as conn, conn.transaction():
+        # As exchange_app takes it (0.1.6): an app's sign-in that comes
+        # meanwhile waits, and finds this done.
+        await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))",
+                           f"sign-in:{user_id}")
         await conn.execute("UPDATE devices SET forgotten_at = now() "
                            "WHERE user_id = $1 AND forgotten_at IS NULL", user_id)
         await conn.execute("UPDATE sessions SET ended_at = now() "
@@ -815,11 +1066,15 @@ async def sign_out_everywhere(pool: asyncpg.Pool, user_id: uuid.UUID) -> None:
 
 async def sweep(pool: asyncpg.Pool) -> None:
     """Old codes and long-ended sessions go, and devices forgotten or not
-    signed in with for DEVICE_DAYS (0.0.12). So does what is kept only
+    signed in with for DEVICE_DAYS (0.0.12), and from 0.1.6 the codes
+    browsers gave apps, after a day. So does what is kept only
     for a while: commands with their output (30 days unless the project
     says less) and the journal (a year)."""
     await pool.execute("DELETE FROM login_codes "
                        "WHERE created_at < now() - interval '2 days'")
+    # What browsers allowed apps: two minutes of use, a day for the record.
+    await pool.execute("DELETE FROM app_grants "
+                       "WHERE created_at < now() - interval '1 day'")
     await pool.execute("DELETE FROM sessions WHERE ended_at < now() - interval "
                        "'30 days' OR last_seen_at < now() - interval '30 days'")
     # Such a device signs no one in again, so nothing new starts on it. Its

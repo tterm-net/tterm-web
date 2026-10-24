@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Account } from "./Account";
 import { AddMachine } from "./AddMachine";
+import { AppLinkWindow, AppWelcome } from "./AppSignIn";
 import {
   CoreError, createFolder, createNote, createProject, deleteFolder, deleteNote,
   deleteProject, editProject, endTerminal, loadNote, loadState, moveMachine,
   moveNote, NoteGone, onSignedOut, openTerminal, removeMachine, renameFolder,
-  renameTerminal, saveProjectTint, saveTheme, SignedOut, signInApp, signOut, type Folder,
+  renameTerminal, saveProjectTint, saveTheme, SignedOut, signInApp, signOut,
+  welcomeSeen, type Folder,
   type Machine, type MachineKind, type Note, type NoteSummary, type Project,
   type ProjectFields, type ProjectTint, type State, type TerminalInfo,
   type Theme,
@@ -14,10 +16,11 @@ import { colorClass } from "./colors";
 import { Confirm, Removed } from "./Confirm";
 import { Finder, type FinderGroup, type FinderItem } from "./Finder";
 import {
-  ChevronRight, Close, Computer, Doc, Folder as FolderIcon, Gear, ListCheck, Moon,
-  Pencil, Person, Pin, Plus, Server, SignIn as SignInIcon, SignOut as SignOutIcon,
-  Sun, Trash,
+  ChevronRight, Close, CloudOff, Computer, Doc, Folder as FolderIcon, Gear, ListCheck,
+  Moon, Pencil, Person, Pin, Plus, Server, SignIn as SignInIcon,
+  SignOut as SignOutIcon, Sun, Trash,
 } from "./icons";
+import { hereWord } from "./local";
 import { LocalOnly } from "./local";
 import { Machines } from "./Machines";
 import { FolderDialog } from "./Menus";
@@ -82,6 +85,10 @@ const SESSION_ENDED = "Your session ended. Sign in again: your terminals " +
 /** The core is on this very computer (the owner's laptop): then it is the
  * window running it that is worth a look. */
 const LOCAL = ["localhost", "127.0.0.1", "[::1]"].includes(location.hostname);
+
+function capital(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
 
 /** A first guess at the window in characters, for the shell to start with;
  * the terminal measures itself exactly as soon as it is on screen. */
@@ -314,6 +321,11 @@ export function App() {
   const [saveStates, setSaveStates] = useState<Record<string, SaveState>>({});
   /** Not signed in: the sign-in screen, with a note on why, if there is one. */
   const [signedOut, setSignedOut] = useState<{ note: string | null } | null>(null);
+  /** In the app before signing in (0.1.6): the window that waits for the
+   * browser, with the code the browser shows too. */
+  const [linking, setLinking] = useState<string | null>(null);
+  /** The app's welcome, once Later or Sign in was pressed on it. */
+  const [welcomeGone, setWelcomeGone] = useState(false);
   const openTimer = useRef<number | undefined>(undefined);
   const closeTimer = useRef<number | undefined>(undefined);
   const toastTimer = useRef<number | undefined>(undefined);
@@ -386,6 +398,12 @@ export function App() {
    * behind it. A note from Sign out itself wins over one from the socket
    * closing because of it. */
   const endSession = useCallback((note: string | null, firm = true) => {
+    // In the app signed in (0.1.6) the page starts over instead: the engine
+    // has this computer only then, as before signing in.
+    if (stateNow.current?.app) {
+      location.reload();
+      return;
+    }
     lastEmail.current = stateNow.current?.me.email ?? lastEmail.current;
     setSignedOut((was) => (firm || !was ? { note } : was));
     setState(null);
@@ -983,6 +1001,9 @@ export function App() {
     window.clearTimeout(toastTimer.current);
   }, []);
 
+  /** Signed in in the app, and tTerm cannot be reached now (0.1.6). */
+  const cutOff = !!state?.app && !!state?.offline;
+
   // The lists as shown: what the core sent, with what open notes typed.
   const projects = useMemo(() => (state ? withLive(state.projects, live) : []),
     [state, live]);
@@ -1026,9 +1047,11 @@ export function App() {
       : dot === "ended" ? `${full}: ended`
       : dot === "busy" && status?.running ? `${full}${where}: a command is running`
       : `${full}${where}`;
+    const there = home?.machines.find((m) => m.id === known?.machineId);
     return {
       id: tab, kind, code: slash > 0 ? full.slice(0, slash) : "", color: home?.color,
       label: slash > 0 ? full.slice(slash + 1) : full, dot,
+      here: !!there?.here, cutOff: cutOff && !!there && !there.here,
       machine, name: known?.name, canRename,
       title: canRename ? `${said}\nDouble-click to rename` : said,
       closeTitle: "Close the tab. The terminal keeps running, in the sidebar " +
@@ -1160,9 +1183,36 @@ export function App() {
     if (!pinned) setOpen(false);
     setPalette(false);
     signInApp()
-      .then(() => notYet("Go on in your browser: sign in there, and allow this computer."))
+      .then((started) => {
+        // An engine before 0.3.0 gives no code: then only the words.
+        if (started.code) setLinking(started.code);
+        else notYet("Go on in your browser: sign in there, and allow this computer.");
+      })
       .catch((error: Error) => notYet(error.message));
   };
+  const linkWindow = linking && (
+    <AppLinkWindow code={linking} onDone={() => location.reload()}
+      onOver={(why) => {
+        setLinking(null);
+        if (why) notYet(why);
+      }} />
+  );
+  // The app's first start, before signing in: its welcome.
+  if (local && state.welcome && !welcomeGone) {
+    const leave = () => {
+      setWelcomeGone(true);
+      welcomeSeen().catch(() => {});
+    };
+    return (
+      <>
+        <AppWelcome onLater={leave} onSignIn={() => {
+          leave();
+          signInHere();
+        }} />
+        {toast && <div className="toast" role="status">{toast}</div>}
+      </>
+    );
+  }
   const frontKind = current ? tabKind(current) : null;
   const runningHere = frontKind === "terminal"
     ? liveTerminals.find((t) => t.id === current) : undefined;
@@ -1188,13 +1238,17 @@ export function App() {
       title: `${p.code} · ${p.name}`,
       items: p.machines.map((m): FinderItem => {
         const offline = m.kind === "computer" && !m.online;
+        // In the app without the connection, the cloud's machines wait too.
+        const waits = cutOff && !m.here;
         return {
           key: `m-${m.id}`,
           label: `${p.code}/${m.name}`,
-          hint: offline ? ["offline", lastSeen(m.lastSeen)].filter(Boolean).join(", ")
+          hint: m.here ? hereWord()
+            : waits ? "no connection"
+            : offline ? ["offline", lastSeen(m.lastSeen)].filter(Boolean).join(", ")
             : m.os ?? m.host ?? undefined,
           icon: m.kind === "server" ? <Server size={15} /> : <Computer size={15} />,
-          muted: offline,
+          muted: offline || waits,
           words: [m.name, m.host, m.os, m.kind].filter(Boolean).join(" "),
           run: () => newTerminal(m),
         };
@@ -1504,6 +1558,16 @@ export function App() {
             Connection lost. Reconnecting; your terminals keep running.
           </div>
         )}
+        {cutOff && (
+          <div className="offline-strip" role="status">
+            <CloudOff size={17} />
+            <span>
+              <strong>No connection to tTerm.</strong>{" "}
+              {capital(hereWord())} works as usual. Terminals on servers go on
+              there and come back here with the connection.
+            </span>
+          </div>
+        )}
       </div>
 
       {sidebarShown && (
@@ -1552,6 +1616,7 @@ export function App() {
           onOpenNote={(noteId) => away(() => openTab(noteTab(noteId)))()}
           onNewProject={() => away(startProject)()}
           local={local}
+          cutOff={cutOff}
           page={pageOpen}
           onSettings={() => openPage("settings")}
           onAccount={() => openPage("account")}
@@ -1596,6 +1661,8 @@ export function App() {
           onSave={(name) => saveFolder(naming, name)}
           onCancel={() => setNaming(null)} />
       )}
+
+      {linkWindow}
 
       {needAccount && (
         <NeedAccount key={needAccount} need={needAccount}

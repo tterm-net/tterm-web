@@ -65,6 +65,9 @@ export interface Machine {
   agent?: AgentInfo | null;
   /** When its agent was last connected, in milliseconds. */
   lastSeen?: number | null;
+  /** In tTerm for the computer signed in (0.1.6): the computer the app runs
+   * on, whose terminals run right here. tTerm Web never sends it. */
+  here?: boolean;
 }
 
 /** A machine taken out of tTerm Web. For a server, whether tTerm Web took
@@ -297,6 +300,15 @@ export interface State {
   /** In tTerm for the computer before signing in (0.1.4): this computer
    * only, see local.ts. tTerm Web never sends it. */
   local?: boolean;
+  /** Before signing in, on the app's first start (0.1.6): the welcome with
+   * Sign in with your browser and Later. */
+  welcome?: boolean;
+  /** In tTerm for the computer signed in (0.1.6): its engine brings the
+   * cloud to the page, and the computer it runs on is `here`. */
+  app?: boolean;
+  /** Signed in in the app, and tTerm cannot be reached now: the computer
+   * works on, the rest waits for the connection (0.1.6). */
+  offline?: boolean;
 }
 
 export interface Install {
@@ -432,7 +444,10 @@ export interface SignUpFirst {
 
 export interface Device {
   id: string;
-  /** "Chrome on macOS". */
+  /** A browser with a quick code, or from 0.1.6 tTerm for the computer,
+   * signed in with the browser. */
+  kind?: "browser" | "app";
+  /** "Chrome on macOS", "tTerm for Mac on MacBook-Pro-Denis". */
   label: string;
   createdAt: number;
   lastUsed: number;
@@ -504,12 +519,62 @@ export function signOut(): Promise<void> {
 }
 
 /** Sign in, from tTerm for the computer before signing in (0.1.4): the
- * app signs in with the browser. Its engine answers; until it can, it says
- * why not, and that is what the page shows. */
-export async function signInApp(): Promise<{ code?: string }> {
-  const response = await check(await fetch("/api/auth/link", change("POST", {})));
+ * app signs in with the browser. Its engine answers with the code the
+ * browser shows too (0.1.6); an engine from before says why not, and that
+ * is what the page shows. `again` opens the page in the browser once more. */
+export async function signInApp(again = false): Promise<{ code?: string }> {
+  const response = await check(await fetch("/api/auth/link",
+    change("POST", again ? { again: true } : {})));
   // An answer with nothing in it is fine too.
   return response.json().catch(() => ({}));
+}
+
+/** How signing in the app goes (0.1.6), as its engine says: waiting for
+ * the browser, done, or over with why. */
+export interface AppLinkState {
+  state: "waiting" | "done" | "failed" | "cancelled" | "none";
+  error?: string;
+}
+
+export async function appLinkState(): Promise<AppLinkState> {
+  const response = await fetch("/api/auth/link", { cache: "no-store" });
+  return (await check(response)).json();
+}
+
+/** Cancel, in the window of the app that waits for the browser. */
+export async function cancelAppLink(): Promise<void> {
+  await check(await fetch("/api/auth/link", change("DELETE", {})));
+}
+
+/** Later, on the app's welcome: it does not come again (0.1.6). */
+export async function welcomeSeen(): Promise<void> {
+  await check(await fetch("/api/app/welcome", change("POST", { seen: true })));
+}
+
+/** Allowing an app takes a sign-in made just now: the person confirms it
+ * is them first (0.1.6). */
+export class ConfirmFirst extends CoreError {}
+
+/** The browser, signed in, allows the app that opened /connect (0.1.6):
+ * the app's own address on 127.0.0.1, where the page goes next. */
+export async function allowApp(link: {
+  app: string; name: string; port: number; challenge: string; state: string;
+}): Promise<{ redirect: string }> {
+  const response = await fetch("/api/auth/app/allow", change("POST", link));
+  if (response.status === 403) {
+    const body: { error?: string; confirm?: boolean } =
+      await response.clone().json().catch(() => ({}));
+    if (body.confirm) {
+      throw new ConfirmFirst(body.error ?? "Confirm it is you first.", 403);
+    }
+  }
+  return (await check(response)).json();
+}
+
+/** Ends this session only, keeping a trusted browser trusted: to confirm
+ * with a sign-in made just now (0.1.6). */
+export async function endSession(): Promise<void> {
+  await check(await fetch("/api/auth/end-session", change("POST", {})));
 }
 
 /** Forget all devices: every session ends and no browser is trusted any

@@ -5202,3 +5202,238 @@ code {
   flex: none;
   color: var(--green-ink);
 }
+
+/* ------------------------------------------------ the app signed in (0.1.6)
+ * Variant B of the canvas of 23.10 (version 70): of all the machines only
+ * the computer the app runs on is marked, its icon on an amber square and
+ * "this Mac", in the sidebar and on its tabs. */
+
+.here-mark {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: var(--amber);
+  color: var(--on-accent);
+}
+
+.here-mark.small {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+}
+
+/* Not the grey of the other icons in a row. */
+.sb-name .here-mark svg,
+.here-mark svg {
+  color: inherit;
+  opacity: 1;
+}
+
+.here-pill {
+  flex: none;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 7px;
+  border-radius: 9px;
+  background: var(--amber-tint);
+  color: var(--amber-ink);
+  font: 700 10.5px var(--font-ui);
+  white-space: nowrap;
+}
+
+/* No connection to tTerm, laid over the top of the stage as the lost
+ * connection's strip is, so that no terminal changes size. */
+.offline-strip {
+  position: absolute;
+  z-index: 15;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 16px;
+  background: var(--amber-tint);
+  backdrop-filter: blur(6px);
+  border-bottom: 1px solid var(--amber-ring);
+  color: var(--dim);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.offline-strip svg {
+  flex: none;
+  margin-top: 1px;
+  color: var(--amber-ink);
+}
+
+.offline-strip strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.account-text .account-offline {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--amber-ink);
+}
+
+.account-offline svg {
+  flex: none;
+}
+
+.tab-icon.cut-off {
+  color: var(--amber-ink);
+}
+
+/* The app's first start: Sign in with your browser, or Later. */
+.app-welcome .signin-form > .button-accent.big.wide.app-welcome-in {
+  margin-top: 32px;
+}
+
+.app-welcome .button-plain.big.wide.app-welcome-later {
+  height: 48px;
+  margin-top: 10px;
+  font-size: 15px;
+}
+
+.app-welcome-note {
+  margin: 20px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--faint);
+}
+
+/* The window that waits for the browser, with the code it shows too. */
+.dialog.app-link {
+  max-width: 440px;
+  gap: 16px;
+}
+
+.app-link h2 {
+  margin: 0;
+  font: 800 20px/1.25 var(--font-ui);
+  letter-spacing: -0.01em;
+}
+
+.app-link p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--dim);
+}
+
+.app-link-code {
+  align-self: flex-start;
+  padding: 10px 16px;
+  border-radius: 10px;
+  background: var(--raised);
+  font: 700 26px/1 var(--font-mono);
+  letter-spacing: 0.12em;
+  color: var(--ink);
+}
+
+.app-link-small {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--faint);
+}
+
+.app-link-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* Cancel: as quiet as the canvas has it, no frame. */
+.button-plain.app-link-cancel {
+  border-color: transparent;
+  color: var(--dim);
+}
+
+.button-plain.app-link-cancel:hover {
+  color: var(--ink);
+}
+
+/* /connect in the browser: Allow tTerm for Mac? */
+.connect-icon {
+  align-self: center;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  background: var(--raised);
+  color: var(--dim);
+}
+
+.connect-form h1 {
+  margin-top: 16px;
+  font-size: 24px;
+}
+
+.connect-form .connect-lead {
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.connect-check {
+  margin-top: 20px;
+  font-size: 12px;
+  color: var(--faint);
+}
+
+.connect-code {
+  align-self: center;
+  margin-top: 8px;
+  padding: 10px 16px;
+  border-radius: 10px;
+  background: var(--raised);
+  font: 700 22px/1 var(--font-mono);
+  letter-spacing: 0.12em;
+  color: var(--ink);
+}
+
+.signin-form > .button-accent.big.wide.connect-allow {
+  height: 46px;
+  margin-top: 22px;
+}
+
+.connect-cancel {
+  align-self: center;
+  margin-top: 14px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--dim);
+  font: 600 14px var(--font-ui);
+  cursor: pointer;
+}
+
+.connect-cancel:hover {
+  color: var(--ink);
+}
+
+.connect-cancel:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.connect-small {
+  margin: 18px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--faint);
+}
+
+.connect-form .error-box {
+  margin-top: 16px;
+  text-align: left;
+}

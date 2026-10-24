@@ -11,12 +11,16 @@ import "./styles/app.css";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
+import { Connect } from "./Connect";
 
 const root = document.getElementById("root");
 if (root) {
+  // /connect: tTerm for the computer signs in with this browser (0.1.6), a
+  // page of its own, without the terminals.
+  const connect = /^\/connect\/?$/.test(location.pathname);
   createRoot(root).render(
     <StrictMode>
-      <App />
+      {connect ? <Connect /> : <App />}
     </StrictMode>,
   );
 }

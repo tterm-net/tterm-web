@@ -87,24 +87,35 @@ def code_email(*, to: str, code: str, minutes: int, page_url: str,
 
 
 def sign_in_email(*, to: str, label: str, ip: str, at: dt.datetime,
-                  page_url: str, support: str = SUPPORT) -> Email:
+                  page_url: str, support: str = SUPPORT,
+                  app: bool = False) -> Email:
     """The note about a sign-in with a code from this address, in a
     browser tTerm Web did not know: what it was, and what to do if it was
     not the person. Forget all devices is on Settings (from 0.1.4; before
-    that on the account page)."""
+    that on the account page). From 0.1.6 also about an app on a computer
+    that a browser signed in to the account allowed (`app`)."""
     subject = "New sign-in to tTerm"
-    lead = f"Someone signed in as {to} with a code from this email."
-    rows = [("Browser", label)]
+    if app:
+        lead = (f"{label} signed in as {to}: a browser signed in to this "
+                "account allowed it.")
+        rows = [("App", label)]
+        step1 = ("Open Settings in tTerm and forget the app under Devices, or "
+                 "press Forget all devices: every browser and app signs out.")
+        note = (f"tTerm writes to {to} about every sign-in from a browser or "
+                "an app it did not know.")
+    else:
+        lead = f"Someone signed in as {to} with a code from this email."
+        rows = [("Browser", label)]
+        step1 = ("Open Settings in tTerm and press Forget all devices: every "
+                 "browser signs out.")
+        note = (f"tTerm writes to {to} about every sign-in from a browser it "
+                "did not know.")
     if ip:
         rows.append(("Address", ip))
     rows.append(("Time", when(at)))
     settings = page_url.rstrip("/") + "/settings"
-    step1 = ("Open Settings in tTerm and press Forget all devices: every "
-             "browser signs out.")
     step2 = ("Change the password of this email, because whoever signed in "
              "could read it.")
-    note = (f"tTerm writes to {to} about every sign-in from a browser it "
-            "did not know.")
     text = ("New sign-in to tTerm\n\n"
             f"{lead}\n\n"
             + "".join(f"{name}: {value}\n" for name, value in rows)

@@ -1,7 +1,9 @@
 // The browsers where the person signs in with a quick code, on the account
 // page (from 0.0.10; a dialog of its own in 0.0.9). Forget one, and there
 // it is email again; Forget all devices ends every session and forgets them
-// all, so that one word means the same for one and for all.
+// all, so that one word means the same for one and for all. From 0.1.6 tTerm
+// on a computer, signed in with the browser, is a device too: Forget signs
+// it out, and it shows this computer only until it signs in again.
 
 import { useState } from "react";
 import { forgetAllDevices, forgetDevice, type Device } from "./api";
@@ -41,7 +43,9 @@ export function DevicesSection(props: Props) {
         return;
       }
       setDevices((all) => all.filter((d) => d.id !== device.id));
-      props.notify(`${device.label} is forgotten: there it is email again.`);
+      props.notify(device.kind === "app"
+        ? `${device.label} is signed out: there it is this computer only now.`
+        : `${device.label} is forgotten: there it is email again.`);
     } catch (error) {
       setProblem((error as Error).message);
     }
@@ -65,8 +69,9 @@ export function DevicesSection(props: Props) {
       <div className="account-section-head">
         <h2 id="ac-devices">Devices</h2>
         <p>
-          Browsers where you sign in with your quick code. Anywhere else, it
-          takes a code from email.
+          Browsers where you sign in with your quick code, and tTerm on your
+          computers, signed in with the browser. Anywhere else, it takes a
+          code from email.
         </p>
         <p>
           After 8 hours without anything done, tTerm asks for the quick code
@@ -92,8 +97,9 @@ export function DevicesSection(props: Props) {
                     {device.current && <span className="chip">This device</span>}
                   </strong>
                   <span>
-                    Trusted {when(device.createdAt)}, last sign-in{" "}
-                    {when(device.lastUsed)}
+                    {device.kind === "app"
+                      ? `Signed in ${when(device.createdAt)}, last used ${when(device.lastUsed)}`
+                      : `Trusted ${when(device.createdAt)}, last sign-in ${when(device.lastUsed)}`}
                   </span>
                 </span>
                 <button type="button" className="button-plain small"
