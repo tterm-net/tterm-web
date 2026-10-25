@@ -547,9 +547,9 @@ export function App() {
   // The page's connection to tTerm Web.
   useEffect(() => socket.onConnection(setOnline), []);
 
-  // The tab's icon (0.1.9): the dot blinks while a command runs in a
-  // terminal of this page, and is a grey ring while tTerm Web is out of
-  // reach, as the strip over the terminals says.
+  // The tab's icon (0.1.9, the arrow from 0.1.10): it blinks while a
+  // command runs in a terminal of this page, and is grey while tTerm Web is
+  // out of reach, as the strip over the terminals says.
   const terminalTabs = state && !signedOut && !problem ? shownTabs.filter(isTerminalTab) : [];
   const icon: TabIcon = terminalTabs.length > 0 && !online ? "away"
     : terminalTabs.some((id) => statuses[id]?.running) ? "blinking" : "lit";

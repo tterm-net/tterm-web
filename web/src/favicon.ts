@@ -1,34 +1,30 @@
-// The tab's icon (0.1.9): tTerm's own with a green dot in the top right
-// corner, so that a tab of the web is not taken for the site's (the owner,
-// 25.10; the site and tTerm for the computer keep the icon without it). The
-// dot is 38% of the side, as Claude's is, with a cut round it through which
-// the strip of tabs shows, light or dark: approved on the canvas, version 77.
+// The tab's icon: tTerm's own, the arrow green instead of amber, so that a
+// tab of the web is not taken for the site's (the owner, 25.10; the site and
+// tTerm for the computer keep the amber arrow). 0.1.9 had a green dot in the
+// corner; live it looked bad, and 0.1.10 colours the arrow instead, approved
+// on the canvas, version 78: the arrow is the prompt, green is "connected".
 //
-// It blinks while a command runs in a terminal of this page, and it is a
-// grey ring while the page has lost tTerm Web. A tab does not play an
-// animation inside its icon, so the page swaps the icon itself; a tab behind
-// is slowed down by the browser, and blinks more slowly there.
+// While a command runs in a terminal of this page the arrow blinks, as a
+// cursor does, and while the page has lost tTerm Web it is grey. A tab does
+// not play an animation inside its icon, so the page swaps the icon itself;
+// a tab behind is slowed down by the browser, and blinks more slowly there.
 
-const LOGO = '<rect width="512" height="512" rx="116" fill="#131417"/>' +
-  '<path d="M118 168 L206 256 L118 344" fill="none" stroke="#E9A33F" ' +
-  'stroke-width="56" stroke-linecap="round" stroke-linejoin="round"/>' +
-  '<path d="M330 140 L330 316 C330 344 344 356 372 350" fill="none" ' +
+const TILE = '<rect width="512" height="512" rx="116" fill="#131417"/>';
+const T = '<path d="M330 140 L330 316 C330 344 344 356 372 350" fill="none" ' +
   'stroke="#EDEFF3" stroke-width="56" stroke-linecap="round"/>' +
   '<path d="M272 212 L392 212" fill="none" stroke="#EDEFF3" stroke-width="56" ' +
   'stroke-linecap="round"/>';
-const CUT = '<mask id="cut"><rect width="512" height="512" fill="#fff"/>' +
-  '<circle cx="415" cy="97" r="119" fill="#000"/></mask>';
 
-function icon(dot: string): string {
+function icon(arrow: string): string {
   return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">' +
-    `${CUT}<g mask="url(#cut)">${LOGO}</g>${dot}</svg>`;
+    `${TILE}<path d="M118 168 L206 256 L118 344" fill="none" ${arrow} ` +
+    `stroke-width="56" stroke-linecap="round" stroke-linejoin="round"/>${T}</svg>`;
 }
 
-/** The dot lit: public/favicon.svg, the icon before the page runs. */
-export const LIT = icon('<circle cx="415" cy="97" r="97" fill="#46B95C"/>');
-const DIM = icon('<circle cx="415" cy="97" r="97" fill="#46B95C" opacity=".25"/>');
-const AWAY = icon('<circle cx="415" cy="97" r="84" fill="none" stroke="#7D838E" ' +
-  'stroke-width="26"/>');
+/** The arrow lit: public/favicon.svg, the icon before the page runs. */
+export const LIT = icon('stroke="#46B95C"');
+const DIM = icon('stroke="#46B95C" stroke-opacity=".25"');
+const AWAY = icon('stroke="#7D838E"');
 /** Lit, then dim, each this long. */
 const BLINK_MS = 600;
 
