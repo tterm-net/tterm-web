@@ -7,6 +7,8 @@
 //   email → code → (a new address: the name and one tick) →
 //   a quick code → the same once more, or Not now
 //   a trusted device: its quick code; Forgot the code?, Switch account
+//   another account, from the app's Allow (0.1.8): the email first, as
+//   Switch account does
 
 import {
   useEffect, useRef, useState, type FormEvent, type ReactNode, type Ref,
@@ -41,6 +43,9 @@ interface Props {
   note?: string | null;
   /** The address to start with: whoever was signed in on this page. */
   email?: string;
+  /** Another account (0.1.8): the email first, even where this browser
+   * remembers someone and would ask their quick code. */
+  another?: boolean;
   onSignedIn: () => void;
 }
 
@@ -72,7 +77,7 @@ function tooEasy(pin: string): boolean {
 }
 
 export function SignIn(props: Props) {
-  const { onSignedIn } = props;
+  const { onSignedIn, another } = props;
   const [step, setStep] = useState<Step>({ kind: "loading" });
   const [email, setEmail] = useState(props.email ?? "");
   const [note, setNote] = useState<string | null>(props.note ?? null);
@@ -92,7 +97,7 @@ export function SignIn(props: Props) {
         if (stopped) return;
         if (state.legal) setLegal(state.legal);
         if (state.signedIn) onSignedIn();
-        else if (state.device) {
+        else if (state.device && !another) {
           setEmail(state.device.email);
           setStep({ kind: "pin", device: state.device });
         } else setStep({ kind: "email" });
@@ -106,7 +111,7 @@ export function SignIn(props: Props) {
     return () => {
       stopped = true;
     };
-  }, [onSignedIn]);
+  }, [onSignedIn, another]);
 
   const toEmail = (why: string | null, address?: string) => {
     setNote(why);
@@ -120,6 +125,12 @@ export function SignIn(props: Props) {
   };
   const inNow = (result: SignedInNow) => {
     setNote(null);
+    // Another account in a browser that remembers someone (0.1.8): no
+    // quick code is offered, it would take the place of theirs.
+    if (another) {
+      onSignedIn();
+      return;
+    }
     setStep({ kind: "offer", name: result.name, fresh: result.new });
   };
 

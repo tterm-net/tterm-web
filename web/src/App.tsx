@@ -22,7 +22,7 @@ import {
   SignOut as SignOutIcon, Sun, Trash,
 } from "./icons";
 import { hereWord } from "./local";
-import { LocalOnly } from "./local";
+import { InApp, LocalOnly } from "./local";
 import { Machines } from "./Machines";
 import { FolderDialog } from "./Menus";
 import { NeedAccount, type Need } from "./NeedAccount";
@@ -1086,6 +1086,9 @@ export function App() {
   }, [moveAsked]);
   // In the app before signing in there is no account: Settings only.
   const local = !!state?.local;
+  const inAppNow = local || !!state?.app;
+  const onlineNow = !state?.offline;
+  const inApp = useMemo(() => ({ inApp: inAppNow, online: onlineNow }), [inAppNow, onlineNow]);
   const shownPage = current ? null : pageOf(path);
   const pageOpen = local && shownPage === "account" ? null : shownPage;
   const title = front
@@ -1526,6 +1529,7 @@ export function App() {
   };
 
   return (
+    <InApp.Provider value={inApp}>
     <LocalOnly.Provider value={local}>
     <div className={`${pinned ? "app pinned" : "app"}${tint === "block" ? " tint-block" : ""}`}>
       <TabBar sidebarButton={sidebarButton} tabs={tabViews}
@@ -1902,5 +1906,6 @@ export function App() {
       {toast && <div className="toast" role="status">{toast}</div>}
     </div>
     </LocalOnly.Provider>
+    </InApp.Provider>
   );
 }

@@ -81,12 +81,14 @@ class SignUpBody(BaseModel):
 
 class AppAllowBody(BaseModel):
     """What the app put in the address of /connect, as the page in the
-    browser read it (0.1.6)."""
+    browser read it (0.1.6); and, from 0.1.8, the account the page asked
+    about, so that Allow is for that one only."""
     app: str
     name: str
     port: int
     challenge: str
     state: str
+    account: str | None = None
 
 
 class AppExchangeBody(BaseModel):
@@ -526,6 +528,13 @@ def create_page_app(pool: asyncpg.Pool, dist: Path, page_url: str,
         The answer is the app's own address on 127.0.0.1 with a one-time
         code: the page goes there, on this very computer, and nowhere else
         could the code be of use without the app's secret."""
+        if body.account is not None and body.account != str(session.person.id):
+            # Another tab of this browser signed in someone else since the
+            # page asked (0.1.8): Allow goes to no account the page did not
+            # name; the page asks again.
+            return _json({"error": "This browser is signed in to another "
+                          "account now. Check which one, then allow.",
+                          "changed": True}, 409)
         name = auth.computer_name(body.name)
         if (body.app not in auth.APPS or name is None
                 or not 1024 <= body.port <= 65535

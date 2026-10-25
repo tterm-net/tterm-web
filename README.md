@@ -4,7 +4,11 @@ tTerm in the browser: a real terminal with command blocks, for people who work
 with servers and for their teams. Projects, roles, a journal of who ran what,
 and watching a colleague's terminal, always with them knowing.
 
-**Status:** early development. Version 0.1.7 searches everything: Cmd+K,
+**Status:** early development. Version 0.1.8 lets the person allowing
+tTerm for the computer use another account than the browser's: Not you?
+under Cancel ends this browser's session and asks for an email first; and
+in the app's window a photo comes through the app, as its other requests
+do. Version 0.1.7 searches everything: Cmd+K,
 or Search at the top, finds the commands of every terminal of yours, ended
 ones too, what they printed, notes, whole, terminals, machines, projects
 and things to do; Enter opens a command in its terminal, at its block,

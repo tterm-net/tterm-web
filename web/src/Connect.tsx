@@ -7,9 +7,14 @@
 // and then this. A session older than a quarter of an hour confirms first,
 // with the quick code or a code from email, as for setting a quick code:
 // an app gets a key that lasts. Then the page allows by itself.
+//
+// Signed in as someone else than the app is for (0.1.8; the owner, 25.10:
+// "а как мне войти под другим аккаунтом?"): Not you? Use another account
+// ends this browser's session and asks for an email; once signed in, the
+// same question, for that account.
 
 import { useEffect, useState, type ReactNode } from "react";
-import { allowApp, ConfirmFirst, endSession, loadState, SignedOut, type Me } from "./api";
+import { AccountChanged, allowApp, ConfirmFirst, endSession, loadState, SignedOut, type Me } from "./api";
 import { appTitle, cancelAddress, linkCode, readLink } from "./appLink";
 import { Computer, Logo } from "./icons";
 import { SignIn } from "./SignIn";
@@ -30,16 +35,19 @@ export function Connect() {
   const [code, setCode] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  /** Allow was pressed with a session too old for it: signed in again, the
-   * page allows by itself. */
-  const [confirming, setConfirming] = useState(false);
+  /** Allow was pressed with a session too old for it, by this person (their
+   * id): signed in again as them, the page allows by itself; as someone
+   * else (Switch account), it asks that person first (0.1.8). */
+  const [confirming, setConfirming] = useState<string | null>(null);
+  /** Not you?: another account signs in, with its email. */
+  const [another, setAnother] = useState(false);
 
   const allowNow = async (me: Me) => {
     if (!link) return;
     setBusy(true);
     setProblem(null);
     try {
-      const { redirect } = await allowApp(link);
+      const { redirect } = await allowApp(link, me.id);
       setView({ kind: "going", me });
       location.assign(redirect);
     } catch (error) {
@@ -47,22 +55,30 @@ export function Connect() {
       if (error instanceof ConfirmFirst) {
         // This session only ends: a trusted browser asks its quick code.
         await endSession().catch(() => {});
-        setConfirming(true);
+        setConfirming(me.id);
         setView({ kind: "signin" });
       } else if (error instanceof SignedOut) {
         setView({ kind: "signin" });
+      } else if (error instanceof AccountChanged) {
+        // The question again, for whoever is signed in now; the words stay.
+        setProblem(error.message);
+        load(null, true);
       } else {
         setProblem((error as Error).message);
       }
     }
   };
 
-  const load = (thenAllow = false) => {
+  /** The question, for whoever is signed in; with `thenAllowFor`, allowed
+   * at once if that is still the person who pressed Allow. `keep`: the
+   * problem shown stays. */
+  const load = (thenAllowFor: string | null = null, keep = false) => {
+    if (!keep) setProblem(null);
     loadState(true)
       .then((state) => {
         applyTheme(state.me.theme);
         setView({ kind: "ask", me: state.me });
-        if (thenAllow) void allowNow(state.me);
+        if (thenAllowFor !== null && state.me.id === thenAllowFor) void allowNow(state.me);
       })
       .catch((error) => {
         if (error instanceof SignedOut) setView({ kind: "signin" });
@@ -93,10 +109,13 @@ export function Connect() {
 
   if (view.kind === "signin") {
     return (
-      <SignIn note={confirming ? `To allow ${appTitle(link)}, confirm it is you.`
+      <SignIn note={confirming !== null ? `To allow ${appTitle(link)}, confirm it is you.`
+        : another ? `Sign in with the other account, then allow ${appTitle(link)}.`
         : `Sign in, then allow ${appTitle(link)}.`}
+        another={another}
         onSignedIn={() => {
-          setConfirming(false);
+          setConfirming(null);
+          setAnother(false);
           load(confirming);
         }} />
     );
@@ -119,6 +138,26 @@ export function Connect() {
 
   const allow = () => {
     if (view.kind === "ask") void allowNow(view.me);
+  };
+
+  /** This browser's session ends; the account itself, and this browser's
+   * quick code, stay. */
+  const useAnother = async () => {
+    setBusy(true);
+    setProblem(null);
+    try {
+      await endSession();
+    } catch (error) {
+      // Ended already: the same.
+      if (!(error instanceof SignedOut)) {
+        setBusy(false);
+        setProblem((error as Error).message);
+        return;
+      }
+    }
+    setBusy(false);
+    setAnother(true);
+    setView({ kind: "signin" });
   };
 
   const title = appTitle(link);
@@ -145,6 +184,10 @@ export function Connect() {
           <button type="button" className="connect-cancel" disabled={busy}
             onClick={() => location.assign(cancelAddress(link))}>
             Cancel
+          </button>
+          <button type="button" className="connect-another" disabled={busy}
+            onClick={() => void useAnother()}>
+            Not you? Use another account
           </button>
           {problem && <div className="error-box" role="alert">{problem}</div>}
           <p className="connect-small">

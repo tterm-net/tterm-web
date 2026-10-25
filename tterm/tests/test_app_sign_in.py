@@ -764,3 +764,28 @@ async def test_an_app_device_must_have_no_quick_code(h):
                 assert "devices_pin_of_browsers" in str(exc), exc
             else:
                 raise AssertionError(f"a {kind} with pin {pin!r} went in")
+
+
+async def test_allow_is_for_the_account_the_page_asked_about(h):
+    """Found by the review of 0.1.8: another tab of the same browser may
+    sign in someone else after the page asked; Allow then goes to no one,
+    and the page asks again. A page from before 0.1.8 says no account."""
+    async with h.core(owner_email="") as core:
+        browser = Browser(core.page_port)
+        await sign_in(core, browser, EMAIL)
+        me = (await browser.call("GET", "/api/state")).json()["me"]["id"]
+        app = App(core.page_port)
+        r = await browser.call("POST", "/api/auth/app/allow",
+                               {**app.link(), "account": str(uuid.uuid4())})
+        assert r.status == 409 and r.json()["changed"] is True, r.text
+        assert await core.pool.fetchval("SELECT count(*) FROM app_grants") == 0
+        r = await browser.call("POST", "/api/auth/app/allow", {**app.link(), "account": me})
+        assert r.status == 200, r.text
+        r = await app.exchange(code_of(r.json()["redirect"]))
+        assert r.status == 200 and r.json()["me"]["email"] == EMAIL, r.text
+        other = App(core.page_port)
+        assert (await app_allow_without_account(browser, other)).status == 200
+
+
+async def app_allow_without_account(browser, app):
+    return await browser.call("POST", "/api/auth/app/allow", app.link())

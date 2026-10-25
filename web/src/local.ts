@@ -20,6 +20,12 @@ import { createContext } from "react";
 /** True in the app before signing in. */
 export const LocalOnly = createContext(false);
 
+/** In the app, signed in or not (0.1.8). Its window does not load
+ * addresses of tTerm itself, such as a photo's: the page's requests go
+ * through the app, so a photo is fetched there (Face.tsx), again when the
+ * connection is back (`online`). */
+export const InApp = createContext({ inApp: false, online: true });
+
 /** What the app's own computer is called on the page: "this Mac" on a Mac,
  * "this computer" elsewhere. */
 export function hereWord(): string {

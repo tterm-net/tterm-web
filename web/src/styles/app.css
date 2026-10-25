@@ -5426,6 +5426,28 @@ code {
   cursor: default;
 }
 
+/* Not you? Use another account (0.1.8): under Cancel, quieter. */
+.connect-another {
+  align-self: center;
+  margin-top: 10px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--faint);
+  font: 500 13px var(--font-ui);
+  cursor: pointer;
+}
+
+.connect-another:hover {
+  color: var(--ink);
+  text-decoration: underline;
+}
+
+.connect-another:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .connect-small {
   margin: 18px 0 0;
   font-size: 12px;

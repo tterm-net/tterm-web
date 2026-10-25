@@ -558,17 +558,26 @@ export async function welcomeSeen(): Promise<void> {
  * is them first (0.1.6). */
 export class ConfirmFirst extends CoreError {}
 
-/** The browser, signed in, allows the app that opened /connect (0.1.6):
- * the app's own address on 127.0.0.1, where the page goes next. */
+/** This browser is signed in to another account than the page asked about
+ * (0.1.8): another tab signed someone else in meanwhile. */
+export class AccountChanged extends CoreError {}
+
+/** The browser, signed in, allows the app that opened /connect (0.1.6) for
+ * the account the page asked about (`account`, from 0.1.8): the app's own
+ * address on 127.0.0.1, where the page goes next. */
 export async function allowApp(link: {
   app: string; name: string; port: number; challenge: string; state: string;
-}): Promise<{ redirect: string }> {
-  const response = await fetch("/api/auth/app/allow", change("POST", link));
-  if (response.status === 403) {
-    const body: { error?: string; confirm?: boolean } =
+}, account: string): Promise<{ redirect: string }> {
+  const response = await fetch("/api/auth/app/allow",
+    change("POST", { ...link, account }));
+  if (response.status === 403 || response.status === 409) {
+    const body: { error?: string; confirm?: boolean; changed?: boolean } =
       await response.clone().json().catch(() => ({}));
     if (body.confirm) {
       throw new ConfirmFirst(body.error ?? "Confirm it is you first.", 403);
+    }
+    if (body.changed) {
+      throw new AccountChanged(body.error ?? "Another account is signed in now.", 409);
     }
   }
   return (await check(response)).json();
