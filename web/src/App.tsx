@@ -14,6 +14,7 @@ import {
 } from "./api";
 import { colorClass } from "./colors";
 import { Confirm, Removed } from "./Confirm";
+import { tabIcon, type TabIcon } from "./favicon";
 import { Finder, type FinderGroup, type FinderItem } from "./Finder";
 import { foundBlock, foundNote } from "./found";
 import {
@@ -545,6 +546,14 @@ export function App() {
 
   // The page's connection to tTerm Web.
   useEffect(() => socket.onConnection(setOnline), []);
+
+  // The tab's icon (0.1.9): the dot blinks while a command runs in a
+  // terminal of this page, and is a grey ring while tTerm Web is out of
+  // reach, as the strip over the terminals says.
+  const terminalTabs = state && !signedOut && !problem ? shownTabs.filter(isTerminalTab) : [];
+  const icon: TabIcon = terminalTabs.length > 0 && !online ? "away"
+    : terminalTabs.some((id) => statuses[id]?.running) ? "blinking" : "lit";
+  useEffect(() => tabIcon(icon), [icon]);
 
   // The theme: apply the choice, and follow the system while it says so.
   useEffect(() => {

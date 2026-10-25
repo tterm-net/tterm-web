@@ -4,7 +4,11 @@ tTerm in the browser: a real terminal with command blocks, for people who work
 with servers and for their teams. Projects, roles, a journal of who ran what,
 and watching a colleague's terminal, always with them knowing.
 
-**Status:** early development. Version 0.1.8 lets the person allowing
+**Status:** early development. Version 0.1.9 gives the web an icon of
+its own, so that its tab is not taken for the site's: tTerm's, with a
+green dot in the top right corner, which blinks while a command runs in a
+terminal of the tab and is a grey ring while the page has lost tTerm Web.
+Version 0.1.8 lets the person allowing
 tTerm for the computer use another account than the browser's: Not you?
 under Cancel ends this browser's session and asks for an email first; and
 in the app's window a photo comes through the app, as its other requests
