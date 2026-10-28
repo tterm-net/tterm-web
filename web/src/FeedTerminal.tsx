@@ -24,6 +24,7 @@ import {
   blockOutput, loadFeed, loadHistory, type StoredBlock, type TerminalInfo,
 } from "./api";
 import { BlockView, shortPath, type FeedBlock } from "./BlockView";
+import { PRESSED_MS, toClipboard } from "./briefly";
 import { FONT, FONT_SIZE, HIGH, LOW, type ViewEvents } from "./ClassicTerminal";
 import { goneThere, takePaste, useFoundBlock, wentThere } from "./found";
 import { Warning } from "./icons";
@@ -133,6 +134,9 @@ interface Pending {
   command: string;
   chunks: Uint8Array[];
   timer: number;
+  /** Run again on a block (0.1.13): the new block lights up for a moment,
+   * wherever the feed was. */
+  again?: boolean;
 }
 
 interface Props {
@@ -206,6 +210,7 @@ export function FeedTerminal(props: Props) {
   /** The block up to which the feed was cleared from view. */
   const [clearedAt, setClearedAt] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
+  const flashTimer = useRef(0);
   const [loaded, setLoaded] = useState(false);
 
   const feedRef = useRef<HTMLDivElement>(null);
@@ -571,6 +576,7 @@ export function FeedTerminal(props: Props) {
           }
           if (ev.t === "C") {
             if (st.live) finishLive(ev.prev, 0, ev.at, seq - 1);
+            const again = !!st.pending?.again;
             dropInput();
             clearPending();
             startLive({
@@ -580,6 +586,14 @@ export function FeedTerminal(props: Props) {
               rendered: null, partial: false, cut: false, stored: false,
               expanded: false, collapsed: false,
             });
+            if (again) {
+              // Ringed in amber, as a block a link opens: the eye finds it.
+              const key = `s${seq}`;
+              setFlash(key);
+              window.clearTimeout(flashTimer.current);
+              flashTimer.current = window.setTimeout(
+                () => setFlash((f) => (f === key ? null : f)), PRESSED_MS);
+            }
             if (ev.command.trim()) {
               setHistory((h) => [ev.command, ...h.filter((x) => x !== ev.command)]);
             }
@@ -651,6 +665,7 @@ export function FeedTerminal(props: Props) {
       cleanups.push(() => {
         clearPending();
         cancelAnimationFrame(measuring);
+        window.clearTimeout(flashTimer.current);
       });
     };
     void start();
@@ -764,29 +779,32 @@ export function FeedTerminal(props: Props) {
   }, [loaded, props.active]);
 
   // ------------------------------------------------------------ actions
-  const run = useCallback((command: string, confirmed = false) => {
+  /** Sends a command to the shell: whether it went. */
+  const run = useCallback((command: string, confirmed = false,
+    again = false): boolean => {
     const st = s.current;
     const channel = chan.current;
-    if (!channel) return;
+    if (!channel) return false;
     if (!socket.connected) {
       notify.current("Not connected to tTerm Web right now: the command " +
         "was not sent.");
       putBack(command);
-      return;
+      return false;
     }
     if (phaseRef.current !== "prompt" || st.pending) {
       notify.current("A command is still running. It can be stopped with Ctrl+C.");
       putBack(command);
-      return;
+      return false;
     }
     setAsk(null);
     stick.current = true;
-    const pending: Pending = { command, chunks: [], timer: 0 };
+    const pending: Pending = { command, chunks: [], timer: 0, again };
     pending.timer = window.setTimeout(() => {
       if (s.current.pending === pending) waitInput.current();
     }, INPUT_WAIT_MS);
     st.pending = pending;
     channel.run(command, confirmed);
+    return true;
   }, [putBack]);
 
   // The function that shows a command waiting for more of itself lives in
@@ -819,10 +837,10 @@ export function FeedTerminal(props: Props) {
   const update = (key: string, change: Partial<FeedBlock>) =>
     setBlocks((bs) => bs.map((b) => (b.key === key ? { ...b, ...change } : b)));
 
-  const copy = (text: string, done: string) => {
-    navigator.clipboard?.writeText(text)
-      .then(() => props.notify(done))
-      .catch(() => props.notify("The browser did not let the page copy."));
+  const copy = async (text: string): Promise<boolean> => {
+    const ok = await toClipboard(text);
+    if (!ok) props.notify("The browser did not let the page copy.");
+    return ok;
   };
 
   const showAll = async (b: FeedBlock) => {
@@ -1017,13 +1035,11 @@ export function FeedTerminal(props: Props) {
               clipHeight={Math.ceil(clipRows * cellHeight)}
               flash={flash === b.key}
               found={found && found.seq === b.seqStart ? found.words : null}
-              onCopyBlock={(x) => copy(blockText(x), "Command and output copied")}
-              onCopyOutput={(x) => copy(x.rendered ? plainText(x.rendered) : "",
-                "Output copied")}
-              onRunAgain={(x) => run(x.command)}
+              onCopyBlock={(x) => copy(blockText(x))}
+              onCopyOutput={(x) => copy(x.rendered ? plainText(x.rendered) : "")}
+              onRunAgain={(x) => run(x.command, false, true)}
               onCopyLink={(x) => copy(
-                `${location.origin}/t/${terminalId}#b${x.seqStart}`,
-                "Link to the block copied")}
+                `${location.origin}/t/${terminalId}#b${x.seqStart}`)}
               onToggle={(x) => {
                 update(x.key, { collapsed: !x.collapsed });
                 if (x.seqStart >= 0) {

@@ -11,6 +11,7 @@ import {
   installStatus, newInstall, type Install, type InstallStatus,
   type MachineKind, type Project,
 } from "./api";
+import { useBriefly } from "./briefly";
 import { Check, Close, Computer, Copy, Server } from "./icons";
 
 const POLL_MS = 1500;
@@ -37,8 +38,9 @@ export function AddMachine(props: Props) {
   const [install, setInstall] = useState<Install | null>(null);
   const [status, setStatus] = useState<InstallStatus | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
-  const [copiedHand, setCopiedHand] = useState(false);
+  // Copied, with a check, for a moment after Copy (0.1.13); then Copy again.
+  const [copied, showCopied, hideCopied] = useBriefly<true>();
+  const [copiedHand, showCopiedHand, hideCopiedHand] = useBriefly<true>();
   const [now, setNow] = useState(Date.now());
   const dialog = useRef<HTMLElement>(null);
   const announced = useRef(false);
@@ -56,13 +58,13 @@ export function AddMachine(props: Props) {
     setInstall(null);
     setStatus(null);
     setProblem(null);
-    setCopied(false);
-    setCopiedHand(false);
+    hideCopied();
+    hideCopiedHand();
     announced.current = false;
     newInstall(projectId, kind)
       .then(setInstall)
       .catch((e: Error) => setProblem(e.message));
-  }, [projectId, kind]);
+  }, [projectId, kind, hideCopied, hideCopiedHand]);
 
   // A command for the chosen project and kind of machine.
   useEffect(() => {
@@ -175,9 +177,10 @@ export function AddMachine(props: Props) {
                   <div className="command-box">
                     <code>{install ? install.command : "…"}</code>
                     <button type="button" className="button-accent"
-                      onClick={() => copy(install?.command, () => setCopied(true))}
+                      onClick={() => copy(install?.command, () => showCopied(true))}
                       disabled={!install}>
-                      <Copy size={14} />
+                      {copied ? <Check size={14} className="pressed-mark" />
+                        : <Copy size={14} />}
                       {copied ? "Copied" : "Copy"}
                     </button>
                   </div>
@@ -202,8 +205,9 @@ export function AddMachine(props: Props) {
                         <code>{install.byHand}</code>
                         <button type="button" className="button-plain"
                           onClick={() => copy(install.byHand,
-                            () => setCopiedHand(true))}>
-                          <Copy size={14} />
+                            () => showCopiedHand(true))}>
+                          {copiedHand ? <Check size={14} className="pressed-mark" />
+                            : <Copy size={14} />}
                           {copiedHand ? "Copied" : "Copy"}
                         </button>
                       </div>
@@ -255,9 +259,10 @@ export function AddMachine(props: Props) {
                   <div className="command-box">
                     <code>{install ? install.command : "…"}</code>
                     <button type="button" className="button-accent"
-                      onClick={() => copy(install?.command, () => setCopied(true))}
+                      onClick={() => copy(install?.command, () => showCopied(true))}
                       disabled={!install}>
-                      <Copy size={14} />
+                      {copied ? <Check size={14} className="pressed-mark" />
+                        : <Copy size={14} />}
                       {copied ? "Copied" : "Copy"}
                     </button>
                   </div>

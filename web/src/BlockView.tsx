@@ -2,9 +2,12 @@
 // it ran, and its output. A finished block's output is text (see render.ts);
 // the running one shows the live terminal in its place.
 
-import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import {
-  Branch, Collapse, Copy, CopyText, Cross, Expand, Link, Rerun, Stop,
+  useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject,
+} from "react";
+import { useBriefly } from "./briefly";
+import {
+  Branch, Check, Close, Collapse, Copy, CopyText, Cross, Expand, Link, Rerun, Stop,
 } from "./icons";
 import { markIn, marked } from "./marks";
 import type { Rendered } from "./render";
@@ -38,6 +41,9 @@ export interface FeedBlock {
   collapsed: boolean;
 }
 
+/** What a block's copy buttons copy. */
+type Copied = "block" | "output" | "link";
+
 interface Props {
   block: FeedBlock;
   home: string;
@@ -47,11 +53,13 @@ interface Props {
   flash: boolean;
   /** Search opened this block (0.1.7): the words to mark in it. */
   found: string[] | null;
-  /** The command with its prompt, and the output under it. */
-  onCopyBlock: (block: FeedBlock) => void;
-  onCopyOutput: (block: FeedBlock) => void;
-  onRunAgain: (block: FeedBlock) => void;
-  onCopyLink: (block: FeedBlock) => void;
+  /** The command with its prompt, and the output under it. The copies
+   * answer whether the browser let the page copy; Run again, whether the
+   * command went. */
+  onCopyBlock: (block: FeedBlock) => Promise<boolean>;
+  onCopyOutput: (block: FeedBlock) => Promise<boolean>;
+  onRunAgain: (block: FeedBlock) => boolean;
+  onCopyLink: (block: FeedBlock) => Promise<boolean>;
   onToggle: (block: FeedBlock) => void;
   onShowAll: (block: FeedBlock) => void;
   onStop: () => void;
@@ -128,6 +136,22 @@ export function BlockView(props: Props) {
     if (found) markIn(pre, found, "found-mark");
   }, [found, html]);
 
+  // What a pressed button did (0.1.13): a copy, a check in the button's own
+  // colour for a moment, or a red cross when the browser refused (the toast
+  // says what to do then); Run again, one turn of its arrow, when the
+  // command went. Meanwhile the row of buttons stays, with the mouse gone.
+  const [copied, showCopied] = useBriefly<{ what: Copied; ok: boolean }>();
+  const [turned, showTurn] = useBriefly<number>();
+  const turns = useRef(0);
+  const copy = (what: Copied, done: Promise<boolean>) => {
+    void done.then((ok) => showCopied({ what, ok }));
+  };
+  const icon = (what: Copied, normal: ReactNode) => copied?.what !== what ? normal
+    : copied.ok ? <Check size={15} className="pressed-mark" />
+    : <Close size={15} className="pressed-mark" />;
+  const failedHere = (what: Copied) =>
+    copied?.what === what && !copied.ok ? "copy-failed" : undefined;
+
   const what = block.state === "input" ? "not started by the shell"
     : running ? "running"
     : failed ? `failed with exit code ${block.exitCode}`
@@ -180,24 +204,30 @@ export function BlockView(props: Props) {
             <kbd>⌃C</kbd>
           </button>
         ) : (
-          <div role="group" aria-label="Block actions" className="block-actions">
+          <div role="group" aria-label="Block actions"
+            className={"block-actions" + (copied || turned !== null ? " acted" : "")}>
             <button type="button" aria-label="Copy the command and its output"
-              title="Copy the command and its output"
-              onClick={() => props.onCopyBlock(block)}>
-              <Copy size={15} />
+              title="Copy the command and its output" className={failedHere("block")}
+              onClick={() => copy("block", props.onCopyBlock(block))}>
+              {icon("block", <Copy size={15} />)}
             </button>
             <button type="button" aria-label="Copy output" title="Copy output only"
-              onClick={() => props.onCopyOutput(block)}>
-              <CopyText size={15} />
+              className={failedHere("output")}
+              onClick={() => copy("output", props.onCopyOutput(block))}>
+              {icon("output", <CopyText size={15} />)}
             </button>
             <button type="button" aria-label="Run again" title="Run again"
-              onClick={() => props.onRunAgain(block)}>
-              <Rerun size={15} />
+              className={turned !== null ? "turn" : undefined}
+              onClick={() => {
+                if (props.onRunAgain(block)) showTurn(++turns.current);
+              }}>
+              {/* A new key each time: the turn plays again. */}
+              <Rerun key={turned ?? 0} size={15} />
             </button>
             <button type="button" aria-label="Copy link to this block"
-              title="Copy link to this block"
-              onClick={() => props.onCopyLink(block)}>
-              <Link size={15} />
+              title="Copy link to this block" className={failedHere("link")}
+              onClick={() => copy("link", props.onCopyLink(block))}>
+              {icon("link", <Link size={15} />)}
             </button>
             <button type="button"
               aria-label={block.collapsed ? "Expand block" : "Collapse block"}
@@ -205,6 +235,9 @@ export function BlockView(props: Props) {
               onClick={() => props.onToggle(block)}>
               {block.collapsed ? <Expand size={15} /> : <Collapse size={15} />}
             </button>
+            <span className="visually-hidden" role="status">
+              {copied ? (copied.ok ? "Copied" : "Not copied") : ""}
+            </span>
           </div>
         )}
       </div>

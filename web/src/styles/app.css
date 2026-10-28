@@ -2080,6 +2080,11 @@ code {
   box-shadow: 0 0 0 2px var(--amber-ring);
 }
 
+/* A new run of Run again, lit up as it starts (0.1.13). */
+.block.live.flash {
+  border-radius: 12px;
+}
+
 .block-head {
   display: flex;
   align-items: center;
@@ -2184,6 +2189,44 @@ code {
 .block-actions button:hover {
   background: var(--raised);
   color: var(--ink);
+}
+
+/* What a pressed button did (0.1.13, the canvas, version 81): a copy shows
+ * a check where its icon was, in the button's own colour, for 1.5 s, or a
+ * red cross when the browser refused; Run again turns its arrow once. While
+ * it shows, the row stays, even with the mouse gone from the block. */
+.block-actions.acted {
+  opacity: 1;
+}
+
+.block-actions button.copy-failed,
+.block-actions button.copy-failed:hover {
+  color: var(--red-ink);
+}
+
+.pressed-mark {
+  animation: ttpop 0.2s ease-out;
+}
+
+.block-actions button.turn svg {
+  animation: ttturn 0.55s cubic-bezier(0.3, 0.75, 0.35, 1);
+}
+
+@keyframes ttpop {
+  from { transform: scale(0.5); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+/* The arrow of Run again goes round to the left, as it is drawn. */
+@keyframes ttturn {
+  to { transform: rotate(-360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pressed-mark,
+  .block-actions button.turn svg {
+    animation: none;
+  }
 }
 
 .block-stop {
@@ -4143,6 +4186,9 @@ code {
   top: 8px;
   right: 8px;
   height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   padding: 0 10px;
   border: 0;
   border-radius: 7px;

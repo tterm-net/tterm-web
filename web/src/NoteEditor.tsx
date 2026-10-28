@@ -10,6 +10,7 @@ import {
   type ClipboardEvent, type KeyboardEvent,
 } from "react";
 import type { Block, BlockType, Who } from "./api";
+import { toClipboard, useBriefly } from "./briefly";
 import {
   Bullet, Check, CodeIcon, Heading, ListCheck, Minus, Paragraph,
 } from "./icons";
@@ -77,13 +78,16 @@ interface RowProps {
   onKey: (id: string, event: KeyboardEvent<HTMLElement>) => void;
   onPaste: (id: string, event: ClipboardEvent<HTMLTextAreaElement>) => void;
   onTick: (id: string, done: boolean) => void;
-  onCopy: (text: string) => void;
+  /** Whether the browser let the page copy. */
+  onCopy: (text: string) => Promise<boolean>;
 }
 
 const Row = memo(function Row(props: RowProps) {
   const { b } = props;
   const area = useRef<HTMLTextAreaElement | null>(null);
   useLayoutEffect(() => fit(area.current), [b.text, b.type]);
+  // Copied, with a check, for a moment after Copy on code (0.1.13).
+  const [copied, showCopied] = useBriefly<true>();
 
   if (b.type === "hr") {
     return (
@@ -136,8 +140,10 @@ const Row = memo(function Row(props: RowProps) {
     return (
       <div className="nb-code-row">
         {text}
-        <button type="button" className="nb-copy" onClick={() => props.onCopy(b.text)}>
-          Copy
+        <button type="button" className="nb-copy"
+          onClick={() => void props.onCopy(b.text).then((ok) => ok && showCopied(true))}>
+          {copied && <Check size={13} className="pressed-mark" />}
+          {copied ? "Copied" : "Copy"}
         </button>
       </div>
     );
@@ -500,10 +506,10 @@ export function NoteEditor(props: Props) {
   }, [change, readOnly]);
 
   const onTick = props.onTick;
-  const onCopy = useCallback((text: string) => {
-    navigator.clipboard.writeText(text)
-      .then(() => notify.current("Copied."))
-      .catch(() => notify.current("Could not copy: select the text and copy it by hand."));
+  const onCopy = useCallback(async (text: string) => {
+    const ok = await toClipboard(text);
+    if (!ok) notify.current("Could not copy: select the text and copy it by hand.");
+    return ok;
   }, []);
 
   const lonely = props.blocks.length === 1 && props.blocks[0].type === "p" &&

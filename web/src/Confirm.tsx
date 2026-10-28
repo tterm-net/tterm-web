@@ -3,7 +3,8 @@
 // nothing; the red button does it.
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Close } from "./icons";
+import { useBriefly } from "./briefly";
+import { Check, Close, Copy } from "./icons";
 
 interface Props {
   title: string;
@@ -88,7 +89,8 @@ export function Removed(props: {
   const box = useRef<HTMLElement>(null);
   const close = useRef(props.onClose);
   close.current = props.onClose;
-  const [copied, setCopied] = useState(false);
+  // Copied, with a check, for a moment after Copy (0.1.13); then Copy again.
+  const [copied, showCopied] = useBriefly<true>();
 
   useEffect(() => {
     box.current?.focus();
@@ -105,7 +107,7 @@ export function Removed(props: {
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(props.cleanup);
-      setCopied(true);
+      showCopied(true);
     } catch {
       props.notify("Could not copy: select the command and copy it by hand.");
     }
@@ -133,6 +135,7 @@ export function Removed(props: {
           <div className="command-box">
             <code>{props.cleanup}</code>
             <button type="button" className="button-accent" onClick={copy}>
+              {copied ? <Check size={14} className="pressed-mark" /> : <Copy size={14} />}
               {copied ? "Copied" : "Copy"}
             </button>
           </div>

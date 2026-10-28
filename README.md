@@ -4,7 +4,11 @@ tTerm in the browser: a real terminal with command blocks, for people who work
 with servers and for their teams. Projects, roles, a journal of who ran what,
 and watching a colleague's terminal, always with them knowing.
 
-**Status:** early development. Version 0.1.11 gives the web an icon of
+**Status:** early development. Version 0.1.13 shows on a button what
+pressing it did: a copy puts a check where the button's icon was, in the
+button's own colour, for a moment, and Copy says Copied; Run again turns
+its arrow once, and the new run is ringed in amber as it starts. Version
+0.1.11 gives the web an icon of
 its own, so that its tab is not taken for the site's: tTerm's, with the
 arrow green instead of amber, and that is all; 0.1.9 had a green dot in
 the corner and 0.1.10 a green arrow, each blinking while a command ran.
