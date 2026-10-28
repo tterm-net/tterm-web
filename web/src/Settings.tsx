@@ -5,18 +5,23 @@
 // Forget all devices; support's address at the bottom (from 0.1.5 only it:
 // the Terms of Service and the Privacy Policy are on the site and at
 // signing up). In the app before signing in (local.ts) there is no account
-// and so no devices, and the choices are kept on this computer. Tabs stay
-// above it; Close or Esc goes back.
+// and so no devices, and the choices are kept on this computer. In the app
+// signed in (0.1.14), This computer comes between the two: whether tTerm
+// Web and the phone open it (ThisComputer.tsx). Tabs stay above it; Close
+// or Esc goes back.
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { loadAccount, type AccountInfo, type ProjectTint, type Theme } from "./api";
 import { PageHead, SUPPORT, useEscCloses } from "./Account";
 import { DevicesSection } from "./Devices";
 import { Monitor, Moon, Sun } from "./icons";
+import { ThisComputerSection } from "./ThisComputer";
 
 interface Props {
   /** The app before signing in: no account, the choices kept here. */
   local: boolean;
+  /** In the app signed in: the machine it runs on, and its project. */
+  here: { name: string; project: string } | null;
   theme: Theme;
   onTheme: (theme: Theme) => void;
   tint: ProjectTint;
@@ -95,6 +100,8 @@ export function Settings(props: Props) {
           </div>
         </div>
       </section>
+
+      {!local && props.here && <ThisComputerSection here={props.here} />}
 
       {!local && (info ? (
         <DevicesSection devices={info.devices} onSignedOut={props.onSignedOut}

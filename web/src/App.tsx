@@ -1089,6 +1089,15 @@ export function App() {
   const inAppNow = local || !!state?.app;
   const onlineNow = !state?.offline;
   const inApp = useMemo(() => ({ inApp: inAppNow, online: onlineNow }), [inAppNow, onlineNow]);
+  // The computer the app runs on, signed in: This computer in Settings.
+  const hereMachine = useMemo(() => {
+    if (!state?.app) return null;
+    for (const p of state.projects) {
+      const m = p.machines.find((one) => one.here);
+      if (m) return { name: m.name, project: p.name };
+    }
+    return null;
+  }, [state]);
   const shownPage = current ? null : pageOf(path);
   const pageOpen = local && shownPage === "account" ? null : shownPage;
   const title = front
@@ -1632,7 +1641,7 @@ export function App() {
         )}
         {pageOpen === "settings" && (
           <div className="page-scroll">
-            <Settings key={pageVisit} local={local} theme={theme}
+            <Settings key={pageVisit} local={local} here={hereMachine} theme={theme}
               onTheme={chooseTheme} tint={tint} onTint={chooseTint}
               onSignedOut={(note) => {
                 // This device forgotten: nothing of the person stays here.

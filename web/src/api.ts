@@ -554,6 +554,32 @@ export async function welcomeSeen(): Promise<void> {
   await check(await fetch("/api/app/welcome", change("POST", { seen: true })));
 }
 
+/** This computer, opened from tTerm Web and the phone through the app
+ * (0.1.14, with the app 0.4.0): the switch in Settings, and how its link
+ * to tTerm Web is. Only the app's engine answers it. */
+export interface ThisComputer {
+  open: boolean;
+  status: "starting" | "off" | "signed-out" | "waiting" | "connecting"
+    | "online" | "no-network" | "removed" | "closed";
+  /** What tTerm Web calls this computer, once connected. */
+  name: string | null;
+  /** Why it cannot connect now, or why it went off. */
+  problem: string | null;
+  /** Terminals opened from tTerm Web running on this computer now. */
+  terminals: number;
+}
+
+export async function loadThisComputer(): Promise<ThisComputer> {
+  const response = await fetch("/api/app/this-computer",
+    { cache: "no-store", headers: BACKGROUND });
+  return (await check(response)).json();
+}
+
+export async function openFromWeb(open: boolean): Promise<ThisComputer> {
+  return (await check(await fetch("/api/app/this-computer",
+    change("PUT", { open })))).json();
+}
+
 /** Allowing an app takes a sign-in made just now: the person confirms it
  * is them first (0.1.6). */
 export class ConfirmFirst extends CoreError {}

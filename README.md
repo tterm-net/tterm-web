@@ -4,7 +4,13 @@ tTerm in the browser: a real terminal with command blocks, for people who work
 with servers and for their teams. Projects, roles, a journal of who ran what,
 and watching a colleague's terminal, always with them knowing.
 
-**Status:** early development. Version 0.1.13 shows on a button what
+**Status:** early development. Version 0.1.14 gives Settings in tTerm
+for the computer, signed in, a part for This computer: the switch Open
+from tTerm Web and your phone, and under it how its link to tTerm Web is
+(online, connecting and why not yet, no network, removed there, or off by
+itself and why); it comes with the app 0.4.0, which keeps that link itself
+in the agent's place, and a computer's card says "tTerm app" for it where
+an agent's version would be. Version 0.1.13 shows on a button what
 pressing it did: a copy puts a check where the button's icon was, in the
 button's own colour, for a moment, and Copy says Copied; Run again turns
 its arrow once, and the new run is ringed in amber as it starts. Version

@@ -53,7 +53,10 @@ function facts(p: Passport): [string, string][] {
       ? ` (has ${p.shells.join(", ")})` : ""}` : null],
     ["sudo", sudoText(p)],
     ["Commands", p.commands_count ? `${p.commands_count} known` : null],
-    ["Agent", p.agent ? `tterm-agent ${p.agent}` : null],
+    // tTerm for the computer keeps the link itself from 0.4.0, and says
+    // "app 0.4.0" where an agent says its version.
+    ["Agent", p.agent ? (p.agent.startsWith("app ") ? `tTerm ${p.agent}`
+      : `tterm-agent ${p.agent}`) : null],
     ["Account", p.user ?? null],
   ];
   return rows.filter((row): row is [string, string] => row[1] !== null);
