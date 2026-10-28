@@ -608,3 +608,418 @@ async def test_installer_script_shell_syntax_is_valid(h):
         pass
     else:
         raise AssertionError("a token that is not a token was put in a script")
+
+
+# ------------------------------------------------ the computer's installer
+
+def _fake_agent(version: str) -> str:
+    """The agent as its release has it, for the installer: it says its
+    version; started, it says what the real one says when it is in, and
+    runs until stopped, as itself (the installer knows it by what it runs)."""
+    return f"""#!/bin/sh
+case "$1" in --version) echo {version}; exit 0 ;; esac
+echo "$@" > "$(dirname "$0")/started-with"
+echo "[tterm-agent] version {version}, hub wss://c.test/agent"
+echo "[tterm-agent] connected as «test»"
+# Until stopped, or its folder is gone with the check's.
+while [ -d "$(dirname "$0")" ]; do sleep 1; done
+"""
+
+
+#: Stand-ins for what the installer reaches outside its home: the release
+#: on GitHub, the system's name and the user's number, the services, which
+#: start and stop the agent as launchd and systemd would. Nothing of the
+#: real computer is touched, the owner's Mac included.
+STUBS = {
+    "uname": r"""#!/bin/sh
+here=$(dirname "$0")
+case "$1" in -m) cat "$here/arch" ;; *) cat "$here/os" ;; esac
+""",
+    "id": r"""#!/bin/sh
+here=$(dirname "$0")
+case "$1" in -u) cat "$here/uid" ;; -un) echo someone ;; *) exit 1 ;; esac
+""",
+    "curl": r"""#!/bin/sh
+here=$(dirname "$0")
+out=""; url=""
+while [ $# -gt 0 ]; do
+    case "$1" in -o) out="$2"; shift 2 ;; -*) shift ;; *) url="$1"; shift ;; esac
+done
+echo "curl $url" >> "$here/asked"
+cp "$here/release-file" "$out"
+""",
+    "systemctl": r"""#!/bin/sh
+here=$(dirname "$0")
+echo "systemctl $*" >> "$here/asked"
+[ "$(cat "$here/systemd")" = on ] || exit 1
+unit="$HOME/.config/systemd/user/tterm-web-agent.service"
+case "$*" in
+    "--user enable --now tterm-web-agent.service")
+        run=$(sed -n 's/^ExecStart=//p' "$unit")
+        log=$(sed -n 's/^StandardOutput=append://p' "$unit")
+        eval "set -- $run"
+        "$@" >> "$log" 2>&1 </dev/null &
+        echo $! > "$here/running" ;;
+    "--user stop tterm-web-agent.service")
+        if [ -f "$here/running" ]; then kill "$(cat "$here/running")" 2>/dev/null; rm -f "$here/running"; fi ;;
+esac
+exit 0
+""",
+    "launchctl": r"""#!/bin/sh
+here=$(dirname "$0")
+echo "launchctl $*" >> "$here/asked"
+case "$1" in
+    load)
+        [ ! -f "$here/fail-load" ] || exit 1
+        log=$(sed -n 's/.*<key>StandardOutPath<\/key><string>\(.*\)<\/string>.*/\1/p' "$2")
+        sed -n '/<key>ProgramArguments<\/key>/,/<\/array>/s/.*<string>\(.*\)<\/string>.*/\1/p' "$2" > "$here/args"
+        set --
+        while IFS= read -r a; do set -- "$@" "$a"; done < "$here/args"
+        "$@" >> "$log" 2>&1 </dev/null &
+        echo $! > "$here/running" ;;
+    unload|remove)
+        [ -f "$here/running" ] || exit 1
+        kill "$(cat "$here/running")" 2>/dev/null; rm -f "$here/running" ;;
+esac
+""",
+    "loginctl": "#!/bin/sh\nexit 1\n",
+    # A Python new enough for agent.py, whatever this computer has: the
+    # checks stop before it would be used.
+    "python3": r"""#!/bin/sh
+case "$1" in -c) echo 313 ;; --version) echo "Python 3.13.0" ;; *) exit 1 ;; esac
+""",
+}
+
+_TOKEN = "abcDEF123_-xabcDEF123_-xabcDEF12"
+
+
+def _sha256(path: Path) -> str:
+    import hashlib
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+class _Computer:
+    """A computer of the checks': a home of its own, the stand-ins first on
+    PATH, the file the release would give."""
+
+    def __init__(self, root: Path, name: str, system: str = "Linux", arch: str = "x86_64",
+                 systemd: bool = True) -> None:
+        self.root = root
+        self.home = root / name
+        self.home.mkdir()
+        self.stubs = root / f"{name}-stubs"
+        self.stubs.mkdir()
+        for stub, text in STUBS.items():
+            (self.stubs / stub).write_text(text)
+            (self.stubs / stub).chmod(0o755)
+        self.put("os", system)
+        self.put("arch", arch)
+        self.put("systemd", "on" if systemd else "off")
+        self.put("uid", "1000")
+        (self.stubs / "asked").write_text("")
+        self.release = self.stubs / "release-file"
+        self.dir = self.home / ".tterm-web"
+        self.others: list[int] = []
+
+    def put(self, name: str, value: str) -> None:
+        (self.stubs / name).write_text(value + "\n")
+
+    def asked(self) -> list[str]:
+        return (self.stubs / "asked").read_text().splitlines()
+
+    def running(self) -> int | None:
+        """The agent a stand-in service, or start.sh, started."""
+        for pid in self._pids():
+            return pid
+        return None
+
+    def _pids(self) -> list[int]:
+        found = []
+        for path in (self.stubs / "running", self.dir / "agent.pid"):
+            if path.is_file() and path.read_text().strip().isdigit():
+                found.append(int(path.read_text().strip()))
+        return found
+
+    async def install(self, script: str, env: dict | None = None) -> tuple[int, str]:
+        proc = await asyncio.create_subprocess_exec(
+            "sh", "-s", cwd=str(self.root), stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+            env={"HOME": str(self.home), "PATH": f"{self.stubs}:/usr/bin:/bin", "LANG": "C",
+                 **(env or {})})
+        out, _ = await asyncio.wait_for(proc.communicate(script.encode()), 40)
+        await asyncio.sleep(0.2)
+        return proc.returncode, out.decode()
+
+    def settings(self) -> dict:
+        lines = (self.dir / "env").read_text().splitlines()
+        return dict(line.split("=", 1) for line in lines)
+
+    def stop(self) -> None:
+        for pid in [*self._pids(), *self.others]:
+            _end(pid)
+
+
+def _alive(pid: int | None) -> bool:
+    if not pid or pid <= 1:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    # Ended, and not yet reaped by its parent, the system.
+    try:
+        with open(f"/proc/{pid}/stat") as f:
+            return f.read().split(") ")[-1][:1] != "Z"
+    except OSError:
+        return True
+
+
+def _end(pid: int | None) -> None:
+    if pid and pid > 1:
+        try:
+            os.kill(pid, 15)
+        except ProcessLookupError:
+            pass
+
+
+def _released(connect_url: str = "https://c.test") -> tuple[str, str, dict]:
+    """The installer as tTerm Web serves it, its agent's version and the
+    checksums written in it."""
+    script = machines.render_computer_installer(token=_TOKEN, connect_url=connect_url)
+    version = re.search(r'^AGENT_VERSION="([0-9]+\.[0-9]+\.[0-9]+)"$', script, re.M).group(1)
+    sums = dict(re.findall(r'^SUM_([A-Z0-9_]+)="([0-9a-f]{64})"$', script, re.M))
+    assert set(sums) == {"MACOS", "LINUX_X86_64", "LINUX_ARM64", "PY"}, sums
+    assert re.search(r'^FILES="https://github\.com/tterm-net/tterm-app/releases/download/'
+                     r'agent-v\$AGENT_VERSION"$', script, re.M), "from tTerm's releases"
+    return script, version, sums
+
+
+def _checked_against(script: str, sums: dict, which: str, file: Path) -> str:
+    """The installer with the checksum of `file` in place of the release's:
+    its own checks, on a file at hand."""
+    changed = script.replace(f'SUM_{which}="{sums[which]}"', f'SUM_{which}="{_sha256(file)}"')
+    assert changed != script
+    return changed
+
+
+async def test_the_computer_installer_on_linux():
+    """The computer's installer on Linux with systemd (0.1.12), run for real
+    with stand-ins: the agent's file from the release, checked against the
+    checksum written in the installer and asked its version before the
+    running agent stops; one that is not it does not go in, and the running
+    agent goes on; run again, the same key, and what the agent's own
+    updates left goes; TTERM_UPDATE=off stays and is said; over agent.py
+    under systemd, the old agent stops, the unit runs the new one, Python's
+    environment goes; and a session that cannot reach the user's systemd
+    changes nothing."""
+    script, version, sums = _released()
+    root = Path(tempfile.mkdtemp(prefix="tterm-install-"))
+    boxes: list[_Computer] = []
+    try:
+        mac = _Computer(root, "linux")
+        boxes.append(mac)
+        mac.release.write_text(_fake_agent(version))
+        run = _checked_against(script, sums, "LINUX_X86_64", mac.release)
+
+        code, out = await mac.install(run)
+        assert code == 0 and "Done: the computer is connected" in out, out
+        assert f"Agent: {version}, it updates itself" in out and "systemd --user" in out, out
+        assert mac.asked()[0] == (f"curl https://github.com/tterm-net/tterm-app/releases/"
+                                  f"download/agent-v{version}/tterm-agent-linux-x86_64"), mac.asked()
+        unit = (mac.home / ".config/systemd/user/tterm-web-agent.service").read_text()
+        assert f'ExecStart="{mac.dir}/tterm-agent" --env-file "{mac.dir}/env"' in unit, unit
+        first_agent = mac.running()
+        assert _alive(first_agent)
+        assert (mac.dir / "started-with").read_text().split() == ["--env-file", str(mac.dir / "env")]
+        first = mac.settings()
+        assert first["TTERM_HUB"] == "wss://c.test/agent" and first["TTERM_TOKEN"] == _TOKEN
+        assert machines.KEY_RE.match(first["TTERM_KEY"]) and len(first["TTERM_KEY"]) == 43, first
+        assert "TTERM_UPDATE" not in first
+        assert (mac.dir / "env").stat().st_mode & 0o777 == 0o600
+        assert mac.dir.stat().st_mode & 0o777 == 0o700
+
+        # Not the release's file: refused, and the running agent goes on.
+        mac.release.write_text(_fake_agent("6.6.6"))
+        before = {p.name: p.read_bytes() for p in mac.dir.iterdir() if p.is_file()}
+        code, out = await mac.install(run)
+        assert code == 1 and "its checksum differs. Nothing was changed." in out, out
+        code, out = await mac.install(_checked_against(script, sums, "LINUX_X86_64", mac.release))
+        assert code == 1 and f"says it is 6.6.6, not {version}." in out and \
+            "Nothing was changed." in out, out
+        assert {p.name: p.read_bytes() for p in mac.dir.iterdir() if p.is_file()} == before
+        assert _alive(first_agent) and mac.running() == first_agent
+        mac.release.write_text(_fake_agent(version))
+
+        # Again, with what the agent's own updates leave behind, and off.
+        for left in ("tterm-agent.old", "tterm-agent.trial", "tterm-agent.skip",
+                     ".tterm-agent.4242.new", ".tterm-agent.trial.4242.tmp"):
+            (mac.dir / left).write_text("left")
+        code, out = await mac.install(run, {"TTERM_UPDATE": "off"})
+        assert code == 0 and "updating it" in out, out
+        assert f"Agent: {version}, it does not update itself (TTERM_UPDATE=off)" in out, out
+        assert not _alive(first_agent), "the agent before stopped"
+        assert _alive(mac.running())
+        again = mac.settings()
+        assert again["TTERM_KEY"] == first["TTERM_KEY"], "the same computer"
+        assert again["TTERM_UPDATE"] == "off"
+        assert sorted(p.name for p in mac.dir.iterdir() if "tterm-agent" in p.name) == \
+            ["tterm-agent", "tterm-agent.skip"], "a version not taken stays not taken"
+        code, out = await mac.install(run)
+        assert code == 0 and mac.settings()["TTERM_UPDATE"] == "off", out
+        code, out = await mac.install(run, {"TTERM_UPDATE": "on"})
+        assert code == 0 and "it updates itself" in out and mac.settings()["TTERM_UPDATE"] == "on", out
+
+        # Over agent.py under systemd: it stops, the unit runs the new one.
+        old = _Computer(root, "old")
+        boxes.append(old)
+        old.release.write_text(_fake_agent(version))
+        (old.dir / "venv" / "bin").mkdir(parents=True)
+        (old.dir / "agent.py").write_text('__version__ = "0.13.0"\n')
+        (old.dir / "env").write_text(
+            f"TTERM_HUB=wss://c.test/agent\nTTERM_TOKEN=used\nTTERM_KEY={'k' * 43}\n")
+        unit_path = old.home / ".config/systemd/user/tterm-web-agent.service"
+        unit_path.parent.mkdir(parents=True)
+        unit_path.write_text(f"[Service]\nExecStart={old.dir}/venv/bin/python {old.dir}/agent.py "
+                             f"--env-file {old.dir}/env\n")
+        before_agent = subprocess.Popen(["sleep", "60"])
+        old.put("running", str(before_agent.pid))
+
+        # From a session that cannot reach the user's systemd: nothing changes.
+        old.put("systemd", "off")
+        code, out = await old.install(_checked_against(script, sums, "LINUX_X86_64", old.release))
+        assert code == 1 and "this session cannot" in out, out
+        assert before_agent.poll() is None, "the agent goes on"
+        assert (old.dir / "venv").is_dir() and (old.dir / "agent.py").is_file()
+        assert "agent.py" in unit_path.read_text()
+
+        old.put("systemd", "on")
+        code, out = await old.install(_checked_against(script, sums, "LINUX_X86_64", old.release))
+        assert code == 0 and "Done" in out, out
+        assert before_agent.wait(5) is not None, "the agent before stopped"
+        assert f'ExecStart="{old.dir}/tterm-agent"' in unit_path.read_text()
+        assert not (old.dir / "venv").exists() and not (old.dir / "agent.py").exists()
+        assert old.settings()["TTERM_KEY"] == "k" * 43
+        assert _alive(old.running())
+        assert not any("launchctl" in a for b in boxes for a in b.asked())
+    finally:
+        for box in boxes:
+            box.stop()
+        shutil.rmtree(root, ignore_errors=True)
+
+
+async def test_the_computer_installer_on_a_mac():
+    """On a Mac (0.1.12): the file for macOS, its checksum and version; the
+    launchd job runs it with the settings file; over agent.py's job, the
+    old agent stops, the job runs the new one, Python's environment goes.
+    launchd is a stand-in, under a label of the checks' own."""
+    script, version, sums = _released()
+    script = script.replace('LABEL="net.tterm.web-agent"', 'LABEL="net.tterm.web-agent.checks"')
+    root = Path(tempfile.mkdtemp(prefix="tterm-install-"))
+    boxes: list[_Computer] = []
+    try:
+        import plistlib
+        mac = _Computer(root, "mac", system="Darwin", arch="arm64")
+        boxes.append(mac)
+        mac.release.write_text(_fake_agent(version))
+        run = _checked_against(script, sums, "MACOS", mac.release)
+        plist = mac.home / "Library/LaunchAgents/net.tterm.web-agent.checks.plist"
+
+        # Over agent.py's job: it stops, the job runs the new one.
+        (mac.dir / "venv" / "bin").mkdir(parents=True)
+        (mac.dir / "agent.py").write_text('__version__ = "0.13.0"\n')
+        (mac.dir / "env").write_text(
+            f"TTERM_HUB=wss://c.test/agent\nTTERM_TOKEN=used\nTTERM_KEY={'m' * 43}\n")
+        before_agent = subprocess.Popen(["sleep", "60"])
+        mac.put("running", str(before_agent.pid))
+        # launchd will not take the job: the agent before is still all there.
+        mac.put("fail-load", "yes")
+        code, out = await mac.install(run)
+        assert code == 1 and "Could not set up autostart" in out, out
+        assert (mac.dir / "venv").is_dir() and (mac.dir / "agent.py").is_file()
+        (mac.stubs / "fail-load").unlink()
+        before_agent.wait(5)
+        before_agent = subprocess.Popen(["sleep", "60"])
+        mac.put("running", str(before_agent.pid))
+        code, out = await mac.install(run)
+        assert code == 0 and "Done: the computer is connected" in out, out
+        assert "System: macos, arm64" in out and "launchd" in out, out
+        assert before_agent.wait(5) is not None, "the agent before stopped"
+        job = plistlib.loads(plist.read_bytes())
+        assert job["Label"] == "net.tterm.web-agent.checks"
+        assert job["ProgramArguments"] == [f"{mac.dir}/tterm-agent", "--env-file", f"{mac.dir}/env"], job
+        assert job["KeepAlive"] == {"SuccessfulExit": False} and job["RunAtLoad"] is True
+        assert not (mac.dir / "venv").exists() and not (mac.dir / "agent.py").exists()
+        assert mac.settings()["TTERM_KEY"] == "m" * 43
+        assert _alive(mac.running())
+        asked = mac.asked()
+        assert asked[0] == (f"curl https://github.com/tterm-net/tterm-app/releases/download/"
+                            f"agent-v{version}/tterm-agent-macos"), asked
+        assert f"launchctl load {plist}" in asked, asked
+        assert not any(a.startswith("systemctl") for a in asked), asked
+    finally:
+        for box in boxes:
+            box.stop()
+        shutil.rmtree(root, ignore_errors=True)
+
+
+async def test_the_computer_installer_without_a_service_manager():
+    """Without user services (WSL, a container; Linux only, as start.sh is
+    used only there): the agent starts in the background, agent.pid; run
+    again, the agent of agent.pid stops, and a number of agent.pid now
+    another program's is left alone; a removed computer gets a new key; the
+    agent before for a Linux the new one has no file for is checked too;
+    not as root, nor from a terminal of the agent it replaces."""
+    import sys
+    script, version, sums = _released()
+    root = Path(tempfile.mkdtemp(prefix="tterm-install-"))
+    boxes: list[_Computer] = []
+    try:
+        box = _Computer(root, "plain", systemd=False)
+        boxes.append(box)
+        box.release.write_text(_fake_agent(version))
+        run = _checked_against(script, sums, "LINUX_X86_64", box.release)
+        if sys.platform != "darwin":
+            code, out = await box.install(run)
+            assert code == 0 and "Done" in out and "No autostart on this system" in out, out
+            first_agent = box.running()
+            assert _alive(first_agent)
+            code, out = await box.install(run)
+            assert code == 0, out
+            assert not _alive(first_agent), "the agent of agent.pid stopped"
+            # After a restart agent.pid may name another program: left alone.
+            _end(box.running())
+            other = subprocess.Popen(["sleep", "60"])
+            box.others.append(other.pid)
+            (box.dir / "agent.pid").write_text(f"{other.pid}\n")
+            code, out = await box.install(run)
+            assert code == 0 and other.poll() is None, out
+
+            # Removed in tTerm Web, the agent forgot the key: a new one.
+            key = box.settings()["TTERM_KEY"]
+            (box.dir / "env").write_text("TTERM_HUB=wss://c.test/agent\nTTERM_TOKEN=used\n"
+                                         "TTERM_REMOVED=1\n")
+            code, out = await box.install(run)
+            fresh = box.settings()
+            assert code == 0 and machines.KEY_RE.match(fresh["TTERM_KEY"]), out
+            assert fresh["TTERM_KEY"] != key and "TTERM_REMOVED" not in fresh
+
+        # A Linux the new agent has no file for: agent.py, checked too.
+        box.put("arch", "riscv64")
+        box.release.write_text('__version__ = "0.13.0"\nprint("not the released one")\n')
+        code, out = await box.install(script)
+        assert code == 1 and "its checksum differs. Nothing was changed." in out, out
+        box.put("arch", "x86_64")
+
+        # Not as root; not from a terminal of the agent it would stop.
+        box.put("uid", "0")
+        code, out = await box.install(run)
+        assert code == 1 and "Do not run this as root" in out, out
+        box.put("uid", "1000")
+        (box.dir).mkdir(exist_ok=True)
+        (box.dir / "tterm-agent").write_text(_fake_agent(version))
+        code, out = await box.install(run, {"TTERM_AGENT_DIR": str(box.dir)})
+        assert code == 1 and "This terminal runs through the agent" in out, out
+    finally:
+        for box in boxes:
+            box.stop()
+        shutil.rmtree(root, ignore_errors=True)

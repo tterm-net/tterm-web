@@ -19,6 +19,7 @@ import os
 import re
 import shutil
 import signal
+import subprocess
 import sys
 import time
 import uuid
@@ -43,7 +44,15 @@ def _agent_here() -> bool:
     return False
 
 
+def _agent_is_python() -> bool:
+    """agent.py, or the agent from tterm-app: a program of its own."""
+    return AGENT.suffix == ".py"
+
+
 def _agent_version() -> str:
+    if not _agent_is_python():
+        return subprocess.run([str(AGENT), "--version"], capture_output=True,
+                              text=True, check=True).stdout.strip()
     found = re.search(r'^__version__ = "([^"]+)"', AGENT.read_text(), re.M)
     assert found, "the agent says its version"
     return found.group(1)
@@ -65,14 +74,21 @@ class Agent:
     def __init__(self, hub: str, token: str, home: Path, login: str,
                  name: str = "test-mac", key: str = "") -> None:
         # The key the installer would make (agent 0.13.0 and newer).
-        args = (hub, token, name, key) if key else (hub, token, name)
-        code = ("import asyncio, sys; sys.path.insert(0, %r); import agent; "
-                "asyncio.run(agent.main_loop(*%r))" % (str(AGENT.parent), args))
         env = {"HOME": str(home), "SHELL": login, "PATH": os.environ["PATH"],
                "USER": os.environ.get("USER", "tterm"),
                "LANG": "en_US.UTF-8" if sys.platform == "darwin" else "C.UTF-8",
                "PYTHONUNBUFFERED": "1"}
-        self.args = [sys.executable, "-c", code]
+        if _agent_is_python():
+            args = (hub, token, name, key) if key else (hub, token, name)
+            code = ("import asyncio, sys; sys.path.insert(0, %r); import agent; "
+                    "asyncio.run(agent.main_loop(*%r))" % (str(AGENT.parent), args))
+            self.args = [sys.executable, "-c", code]
+        else:
+            # The agent from tterm-app (0.14.0 and newer). In a container run
+            # as root, TTERM_AGENT is its build for checks, which does not
+            # refuse root (agent/examples/agent_for_tests.rs).
+            self.args = [str(AGENT), "--hub", hub, "--token", token,
+                         "--name", name] + (["--key", key] if key else [])
         self.env = env
         self.proc: asyncio.subprocess.Process | None = None
         self.log = b""

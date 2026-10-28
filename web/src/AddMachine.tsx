@@ -3,7 +3,8 @@
 // (from 0.0.6) runs its agent instead; the agent connects out and the window
 // sees the computer come in the same way. From 0.0.8 a computer's command is
 // an installer too, with autostart; starting the agent by hand stays, for
-// trying one that is not released yet.
+// trying one that is not released yet. From 0.1.12 the installer puts in
+// the agent from tterm-app's releases, one file, no Python.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -182,10 +183,10 @@ export function AddMachine(props: Props) {
                   </div>
                   <span className="hint">
                     In a terminal on that computer, as yourself, not with sudo.
-                    It needs Python 3.11 or newer. Works once, for the next{" "}
-                    {left} minute{left === 1 ? "" : "s"}. Run a new one later
-                    to update the agent: the computer stays as it is, its open
-                    terminals end.
+                    Works once, for the next{" "}
+                    {left} minute{left === 1 ? "" : "s"}. The agent then updates
+                    itself. A new command run later puts it in again: the
+                    computer stays as it is, its open terminals end.
                   </span>
                   {install?.byHand && (
                     <details className="by-hand">
@@ -223,10 +224,15 @@ export function AddMachine(props: Props) {
             <details className="explain">
               <summary>What the command does</summary>
               <ul>
-                <li>Puts tTerm's agent in ~/.tterm-web, with a Python
-                  environment of its own, and starts it whenever you log in
-                  (launchd on macOS, systemd on Linux). The tTerm bot's agent
-                  in ~/.tterm, if there is one, stays as it is.</li>
+                <li>Puts tTerm's agent in ~/.tterm-web, one file for this
+                  system from tTerm's releases, checked against the checksum
+                  in the command's script before it runs, and starts it
+                  whenever you log in (launchd on macOS, systemd on Linux).
+                  The tTerm bot's agent in ~/.tterm, if there is one, stays as
+                  it is.</li>
+                <li>The agent updates itself, only to versions signed by
+                  tTerm's release build, and only while no terminal is open
+                  on this computer.</li>
                 <li>Makes this computer a key of its own and keeps it there,
                   readable by you only. The token in the command only lets it
                   join, once.</li>

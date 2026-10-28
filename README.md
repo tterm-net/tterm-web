@@ -79,7 +79,7 @@ code; each person sees only their own machines and terminals, as many as
 their plan allows; and tTerm Web runs on a server of its own, set up with
 one script (`deploy/`). Version
 0.0.8 added a computer with one command that installs
-[tterm-agent](https://github.com/tterm-net/tterm-agent) and starts it
+tTerm's agent and starts it
 whenever you log in, removing machines and ending terminals, and folded
 blocks and a cleared feed that stay so. Since 0.0.7 the page is the one
 of the mockups: tabs of open terminals from any project, "+" for a terminal
@@ -96,8 +96,13 @@ teams, then a public launch.
 Related:
 
 - [tTerm](https://github.com/tterm-net/tTerm), the Telegram bot
-- [tterm-agent](https://github.com/tterm-net/tterm-agent), the agent for
-  computers without a public address
+- [tterm-app](https://github.com/tterm-net/tterm-app), the app for the
+  computer, and in `agent/` the agent for computers without a public
+  address: one file for macOS and for Linux on Intel and ARM, released
+  there, signed, and updating itself (from 0.1.12)
+- [tterm-agent](https://github.com/tterm-net/tterm-agent), the agent
+  before it, in Python: for the bot, and for a computer the new one has no
+  file for
 - [tterm.net](https://tterm.net)
 
 ## Run it on your computer
@@ -132,16 +137,23 @@ To connect a server, the server must reach your machines' address: set
 `TTERM_CONNECT_URL` to an address that leads to port 8091 on this computer,
 for instance through a Cloudflare tunnel. Then "Add a machine" gives the
 command to run on the server, and "Open a terminal" opens a shell on it. A
-computer gets a command that installs the agent instead. To try an agent
-that is not released yet, the same dialog has the command that starts it by
-hand from a checkout of
-[tterm-agent](https://github.com/tterm-net/tterm-agent), or point the
-installer at it: `export TTERM_SRC=file://$HOME/tterm-agent/agent.py` before
-running the command.
+computer gets a command that installs the agent instead: the installer
+takes the file for that system from the agent's release in
+[tterm-app](https://github.com/tterm-net/tterm-app) and checks it against
+the checksum written in the installer (`tterm/templates/install_computer.sh`)
+before it runs; the agent then updates itself, to versions the release
+build signed. To try an agent that is not released yet, hand the installer
+a file of it, `curl -fsSL …/c/TOKEN | TTERM_AGENT_FILE=$HOME/tterm-app/target/release/tterm-agent TTERM_UPDATE=off sh`:
+`TTERM_UPDATE=off` keeps it from updating itself, until a run with
+`TTERM_UPDATE=on`. The same dialog has the command that starts agent.py by hand from
+a checkout of [tterm-agent](https://github.com/tterm-net/tterm-agent); on a
+system the new agent has no file for, the installer puts agent.py in its
+place, from `TTERM_SRC` if set.
 
 The checks need the same PostgreSQL. They create throwaway databases there
 and drop them at the end. With tterm-agent checked out next to this
-repository, they run the real agent too:
+repository, they run the real agent too, or the new one with
+`TTERM_AGENT` set to its file:
 
 ```bash
 python -m tterm.tests
@@ -227,14 +239,17 @@ only the classic mode works.
 WebSocket to the machines' side and keeps it, and every terminal on that
 computer goes through it. "Add a machine", then "Computer", gives a command
 to run there as yourself: `curl -fsSL …/c/TOKEN | sh`. It puts the agent in
-`~/.tterm-web` with a Python environment of its own, makes the computer a
-key of its own (in `~/.tterm-web/env`, readable by you only; tTerm Web keeps
+`~/.tterm-web`, one file for that system from the agent's release (from
+0.1.12; before, agent.py with a Python environment of its own), makes the
+computer a key of its own (in `~/.tterm-web/env`, readable by you only; tTerm Web keeps
 only its hash), and starts the agent whenever you log in: launchd on macOS,
 systemd on Linux, or in the background until the next restart where there
 is neither. The token in the command lets the computer join once within ten
-minutes. The same command run there again, with a new token, updates the
-agent and keeps the key, so the computer stays the machine it was; its open
-terminals end, as the agent restarts. `~/.tterm-web/uninstall.sh` removes
+minutes. The agent then updates itself, to versions tTerm's release build
+signed and only while none of its terminals is open. The same command run
+there again, with a new token, puts the agent in again and keeps the key,
+so the computer stays the machine it was; its open terminals end, as the
+agent restarts. `~/.tterm-web/uninstall.sh` removes
 it all; the tTerm bot's agent in `~/.tterm` is never touched. Through that connection the
 agent starts the shell a terminal asks for, in a terminal of the page's size,
 and passes the bytes both ways untouched; it also runs the small sh scripts
