@@ -45,6 +45,14 @@ export const Link = (p: Props) => (
   </Stroke>
 );
 
+/** Two arrows round, the other way: Restart to update (0.1.15). */
+export const Restart = (p: Props) => (
+  <Stroke {...p}>
+    <path d="M21 12a9 9 0 1 1-2.64-6.36L21 8" />
+    <path d="M21 3v5h-5" />
+  </Stroke>
+);
+
 export const Rerun = (p: Props) => (
   <Stroke {...p}>
     <path d="M3 12a9 9 0 1 0 3-6.7" />

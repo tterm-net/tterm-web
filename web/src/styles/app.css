@@ -6303,3 +6303,231 @@ mark.found-mark {
     transition: none;
   }
 }
+
+
+/* ----------------------------------------- The app updating itself (0.1.15)
+ * As on the canvas of 29.10 (version 85), only in the app: while a new
+ * version is ready, Restart to update in the top bar before Search (A),
+ * there with the sidebar closed too, and a card above the account (B), the
+ * two together; once after the restart, a line at the bottom; in Settings,
+ * Updates: Update by itself or Ask me first, and how it is now. */
+
+.update-pill {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--amber-ring);
+  border-radius: 8px;
+  background: var(--amber-tint);
+  color: var(--amber-ink);
+  font: 700 12px var(--font-ui);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.update-pill:hover:not(:disabled) {
+  border-color: var(--amber);
+}
+
+.update-pill:disabled {
+  cursor: default;
+  opacity: .7;
+}
+
+.update-pill:focus-visible {
+  outline: 2px solid var(--amber-ring);
+  outline-offset: 2px;
+}
+
+@media (max-width: 720px) {
+  .update-pill {
+    padding: 0 8px;
+  }
+
+  .update-pill-text {
+    display: none;
+  }
+}
+
+.update-card {
+  margin: 0 8px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--amber-ring);
+  border-radius: 12px;
+  background: var(--amber-tint);
+}
+
+.update-card-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  color: var(--amber-ink);
+}
+
+.update-card-head svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.update-card-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--dim);
+}
+
+.update-card-text strong {
+  font: 700 13px var(--font-ui);
+  color: var(--ink);
+}
+
+.update-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding-left: 26px;
+  font: 600 12px var(--font-ui);
+}
+
+.update-card-actions .button-accent {
+  height: 30px;
+}
+
+.update-toast {
+  position: fixed;
+  z-index: 40;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: calc(100vw - 32px);
+  padding: 6px 6px 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--raised);
+  color: var(--ink);
+  box-shadow: var(--shadow);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.update-toast-mark {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--green-tint);
+  color: var(--green-ink);
+}
+
+.update-toast a {
+  font-weight: 600;
+}
+
+.update-modes {
+  display: flex;
+  flex-direction: column;
+}
+
+.update-mode {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  cursor: pointer;
+}
+
+.update-mode + .update-mode {
+  border-top: 1px solid var(--raised);
+}
+
+.update-mode input {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 3px 0 0;
+  accent-color: var(--amber);
+}
+
+.update-mode-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.update-mode-text > span:last-child {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--dim);
+}
+
+.update-mode-name {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.update-recommended {
+  padding: 1px 8px;
+  border-radius: 9px;
+  background: var(--amber-tint);
+  color: var(--amber-ink);
+  font: 700 10.5px var(--font-ui);
+}
+
+.update-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 0 16px;
+  padding: 12px 0 14px;
+  border-top: 1px solid var(--raised);
+  font-size: 13px;
+}
+
+.update-line-text {
+  flex: 1 1 260px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.update-line-detail {
+  line-height: 1.5;
+  color: var(--dim);
+}
+
+.update-line-warn {
+  flex: none;
+  align-self: flex-start;
+  margin-top: 1px;
+  color: var(--amber-ink);
+}
+
+.update-line-note {
+  flex-basis: 100%;
+  font-size: 12.5px;
+  color: var(--faint);
+}
+
+.update-line .button-accent {
+  align-self: center;
+}

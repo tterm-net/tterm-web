@@ -4,7 +4,16 @@ tTerm in the browser: a real terminal with command blocks, for people who work
 with servers and for their teams. Projects, roles, a journal of who ran what,
 and watching a colleague's terminal, always with them knowing.
 
-**Status:** early development. Version 0.1.14 gives Settings in tTerm
+**Status:** early development. Version 0.1.15 shows how tTerm for the
+Mac updates itself, with the app 0.5.0: while a new version is ready,
+Restart to update in the top bar next to Search and a card above the
+account in the sidebar; once after the restart, tTerm is updated with
+What's new; and in Settings, Updates, where it updates by itself
+(recommended, the default: as tTerm quits, and in the menu bar with
+nothing running on the Mac) or asks first, with how it is now, Check now,
+why it cannot update itself where it runs and, from the disk image, Move
+to Applications. tTerm's menu's Check for Updates… opens Settings there.
+Version 0.1.14 gives Settings in tTerm
 for the computer, signed in, a part for This computer: the switch Open
 from tTerm Web and your phone, and under it how its link to tTerm Web is
 (online, connecting and why not yet, no network, removed there, or off by

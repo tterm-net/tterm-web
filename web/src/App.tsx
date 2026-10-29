@@ -46,6 +46,7 @@ import {
   tabTarget, TABS_MAX,
 } from "./tabs";
 import { TerminalView, type TabStatus } from "./TerminalView";
+import { UpdateCard, UpdatePill, UpdateState, UpdatedToast, useAppUpdate } from "./Updates";
 import {
   applyTheme, onSystemThemeChange, rememberedPin, rememberPin, shown,
   type Shown,
@@ -1116,6 +1117,23 @@ export function App() {
   useEffect(() => {
     if (!local) setNeedAccount(null);
   }, [local]);
+  // The app updating itself (0.1.15, Updates.tsx); and tTerm's menu's
+  // Check for Updates…, which opens Settings at Updates (the app's shim).
+  const updates = useAppUpdate(inAppNow);
+  const openPageNow = useRef<(which: AccountPage) => void>(() => {});
+  useEffect(() => {
+    const onApp = (event: Event) => {
+      const action = (event as CustomEvent<{ action?: string }>).detail?.action;
+      if (action !== "updates") return;
+      openPageNow.current("settings");
+      updates.look();
+      window.setTimeout(() => {
+        document.getElementById("st-updates")?.scrollIntoView({ block: "start" });
+      }, 60);
+    };
+    window.addEventListener("tterm-app", onApp);
+    return () => window.removeEventListener("tterm-app", onApp);
+  }, [updates.look]);
 
   if (signedOut) {
     return (
@@ -1188,6 +1206,7 @@ export function App() {
     if (was) navigate(`/${which}`, true, mark);
     else navigate(`/${which}`, false, { pageFrom: location.pathname });
   };
+  openPageNow.current = openPage;
   /** Back to where the page was opened from: the step before it in the
    * history, which its entry remembers (Back and Forward keep that right).
    * Opened by its address, as a bookmark, to the machines page instead,
@@ -1540,8 +1559,10 @@ export function App() {
   return (
     <InApp.Provider value={inApp}>
     <LocalOnly.Provider value={local}>
+    <UpdateState.Provider value={updates}>
     <div className={`${pinned ? "app pinned" : "app"}${tint === "block" ? " tint-block" : ""}`}>
       <TabBar sidebarButton={sidebarButton} tabs={tabViews}
+        update={<UpdatePill />}
         current={current} onSelect={(tab) => navigate(tabPath(tab))}
         onClose={closeTab}
         picking={picking}
@@ -1685,6 +1706,7 @@ export function App() {
         <Sidebar
           me={state.me}
           projects={projects}
+          updateCard={<UpdateCard />}
           pinned={pinned}
           shownTheme={shownTheme}
           onToggleTheme={toggleTheme}
@@ -1913,7 +1935,9 @@ export function App() {
       )}
 
       {toast && <div className="toast" role="status">{toast}</div>}
+      {!toast && <UpdatedToast />}
     </div>
+    </UpdateState.Provider>
     </LocalOnly.Provider>
     </InApp.Provider>
   );

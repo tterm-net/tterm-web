@@ -12,7 +12,8 @@
 // the sidebar and on the project's page (NameInput). From 0.1.6, in the
 // app signed in, a terminal of the computer it runs on has the same amber
 // square as in the sidebar; without the connection, a terminal of the
-// cloud says that it waits for it.
+// cloud says that it waits for it. From 0.1.15, in the app with a new
+// version ready, Restart to update before Search (Updates.tsx).
 
 import { useRef, type ReactNode } from "react";
 import type { ProjectColor } from "./api";
@@ -74,6 +75,8 @@ interface Props {
   onStartRename: (id: string) => void;
   onRename: (id: string, name: string) => void;
   onStopRename: (id: string) => void;
+  /** Before Search: Restart to update, in the app (0.1.15). */
+  update?: ReactNode;
 }
 
 function Lead({ tab }: { tab: TabView }) {
@@ -173,6 +176,7 @@ export function TabBar(props: Props) {
             {props.saving.text}
           </span>
         )}
+        {props.update}
         <button type="button" className="jump" onClick={props.onJump}
           title="Search commands, their output, notes, terminals, machines, and what there is to do">
           <Search size={14} />

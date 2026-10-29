@@ -7,15 +7,18 @@
 // signing up). In the app before signing in (local.ts) there is no account
 // and so no devices, and the choices are kept on this computer. In the app
 // signed in (0.1.14), This computer comes between the two: whether tTerm
-// Web and the phone open it (ThisComputer.tsx). Tabs stay above it; Close
-// or Esc goes back.
+// Web and the phone open it (ThisComputer.tsx). In the app, signed in or
+// not (0.1.15), Updates: how tTerm for Mac takes its new versions
+// (Updates.tsx). Tabs stay above it; Close or Esc goes back.
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { loadAccount, type AccountInfo, type ProjectTint, type Theme } from "./api";
 import { PageHead, SUPPORT, useEscCloses } from "./Account";
 import { DevicesSection } from "./Devices";
 import { Monitor, Moon, Sun } from "./icons";
+import { InApp } from "./local";
 import { ThisComputerSection } from "./ThisComputer";
+import { UpdatesSection } from "./Updates";
 
 interface Props {
   /** The app before signing in: no account, the choices kept here. */
@@ -45,6 +48,7 @@ const TINTS: { value: ProjectTint; label: string }[] = [
 
 export function Settings(props: Props) {
   const { local } = props;
+  const { inApp } = useContext(InApp);
   const [info, setInfo] = useState<AccountInfo | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const nothingTyped = useRef(false);
@@ -102,6 +106,8 @@ export function Settings(props: Props) {
       </section>
 
       {!local && props.here && <ThisComputerSection here={props.here} />}
+
+      {inApp && <UpdatesSection />}
 
       {!local && (info ? (
         <DevicesSection devices={info.devices} onSignedOut={props.onSignedOut}

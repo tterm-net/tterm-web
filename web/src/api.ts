@@ -580,6 +580,62 @@ export async function openFromWeb(open: boolean): Promise<ThisComputer> {
     change("PUT", { open })))).json();
 }
 
+/** tTerm for Mac updating itself (0.1.15, with the app 0.5.0): Settings'
+ * Updates, Restart to update in the top bar and above the account, and
+ * once, tTerm is updated. Only the app's engine answers it. */
+export type UpdateMode = "auto" | "ask";
+
+export interface AppUpdate {
+  /** The version this app is. */
+  version: string;
+  /** Update by itself, or Ask me first. */
+  mode: UpdateMode;
+  state: "idle" | "checking" | "downloading" | "ready" | "installing" | "failed"
+    | "unavailable";
+  /** The version ready, or on its way. */
+  next: string | null;
+  /** Its release's page, for What's new. */
+  notes: string | null;
+  readyAt: number | null;
+  checkedAt: number | null;
+  /** Why it failed, or why the app cannot update itself here. */
+  problem: string | null;
+  /** It runs from the disk image: Move to Applications helps. */
+  movable: boolean;
+  /** Just updated, until the page has said so. */
+  updated: { from: string; to: string; notes: string } | null;
+  /** A version that did not start here and went back. */
+  note: string | null;
+}
+
+export async function loadUpdate(): Promise<AppUpdate> {
+  const response = await fetch("/api/app/update", { cache: "no-store", headers: BACKGROUND });
+  return (await check(response)).json();
+}
+
+export async function setUpdateMode(mode: UpdateMode): Promise<AppUpdate> {
+  return (await check(await fetch("/api/app/update", change("PUT", { mode })))).json();
+}
+
+export async function checkUpdate(): Promise<AppUpdate> {
+  return (await check(await fetch("/api/app/update/check", change("POST", {})))).json();
+}
+
+/** The app asks first when terminals would end, then quits for it. */
+export async function restartToUpdate(): Promise<AppUpdate> {
+  return (await check(await fetch("/api/app/update/restart", change("POST", {})))).json();
+}
+
+/** From the disk image: the app moves itself, after asking. */
+export async function moveToApplications(): Promise<AppUpdate> {
+  return (await check(await fetch("/api/app/update/move", change("POST", {})))).json();
+}
+
+/** tTerm is updated, said: not again. */
+export async function updateSeen(): Promise<AppUpdate> {
+  return (await check(await fetch("/api/app/update/seen", change("POST", {})))).json();
+}
+
 /** Allowing an app takes a sign-in made just now: the person confirms it
  * is them first (0.1.6). */
 export class ConfirmFirst extends CoreError {}

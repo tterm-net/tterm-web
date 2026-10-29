@@ -20,7 +20,8 @@
 // From 0.1.6, in the app signed in, the computer it runs on is marked: its
 // icon on an amber square and "this Mac" (variant B, canvas version 70);
 // without the connection the cloud's machines are grey, and the account
-// says Offline.
+// says Offline. From 0.1.15, in the app with a new version ready, a card
+// above the account says so, with Restart (Updates.tsx).
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Machine, Me, Project, Role, TerminalInfo } from "./api";
@@ -50,6 +51,8 @@ const ROLE_LABEL: Record<Role, string> = {
 interface Props {
   me: Me;
   projects: Project[];
+  /** Above the account: a new version of the app ready (0.1.15). */
+  updateCard?: ReactNode;
   pinned: boolean;
   shownTheme: Shown;
   onToggleTheme: () => void;
@@ -349,6 +352,7 @@ export function Sidebar(props: Props) {
         {local && <SignInCard onSignIn={props.onSignIn} />}
       </div>
 
+      {props.updateCard}
       <div className="sidebar-foot">
         <AccountPlace me={me} local={local} page={props.page}
           cutOff={!!props.cutOff}
