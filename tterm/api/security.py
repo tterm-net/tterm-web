@@ -112,12 +112,19 @@ def page_origins(page_url: str) -> tuple[set[str], set[str]]:
 
 
 class PageGuard:
-    """Lets through only what comes from the page itself, at its address."""
+    """Lets through only what comes from the page itself, at its address.
 
-    def __init__(self, app: ASGIApp, page_url: str) -> None:
+    `open_paths` (0.1.29) take changes without the page's header: those an
+    AI app sends with its token, which has no cookie (/mcp, /oauth/token).
+    A foreign Origin is refused there too, as MCP asks against DNS
+    rebinding; none at all, as from an app's server, goes."""
+
+    def __init__(self, app: ASGIApp, page_url: str,
+                 open_paths: frozenset[str] = frozenset()) -> None:
         self.app = app
         self.page_url = page_url
         self.hosts, self.origins = page_origins(page_url)
+        self.open_paths = open_paths
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] not in ("http", "websocket"):
@@ -134,8 +141,10 @@ class PageGuard:
                 await self._refuse(scope, send, 403, "Not from this page")
                 return
         elif scope["method"] not in SAFE_METHODS:
-            if headers.get(REQUEST_HEADER) != "1" or (
-                    origin is not None and origin not in self.origins):
+            header_ok = (headers.get(REQUEST_HEADER) == "1"
+                         or scope.get("path") in self.open_paths)
+            if not header_ok or (origin is not None
+                                 and origin not in self.origins):
                 await self._refuse(scope, send, 403, "Not from this page")
                 return
         await self.app(scope, receive, send)

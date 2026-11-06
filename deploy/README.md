@@ -66,6 +66,13 @@ to support (0.1.25) sends through the same key to `TTERM_SUPPORT_EMAIL`
 that address must take mail (on tterm.net, Cloudflare's Email Routing
 forwards it).
 
+## AI through MCP
+
+An AI (Claude, ChatGPT, Cursor and others) connects to tTerm at
+`https://app.example.com/mcp` (0.1.29), for every account, with nothing
+to set here: `/mcp`, `/oauth/…` and `/.well-known/oauth-…` go to the core
+with the rest of the page's addresses.
+
 ## Updating
 
 ```bash

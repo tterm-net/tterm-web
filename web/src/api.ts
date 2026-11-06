@@ -286,6 +286,8 @@ export interface StoredBlock {
   notes: LogNote[];
   redacted: Redaction | null;
   canNote: boolean;
+  /** The AI that read it (0.1.29): its eye goes on the block. */
+  aiRead?: { id: string; name: string }[];
 }
 
 export interface Feed {
@@ -349,6 +351,10 @@ export interface State {
   /** The core asks a device to prove its keys open before anything of a
    * guarded machine reaches it (0.1.28, keys.ts). */
   proofs?: boolean;
+  /** AI through MCP (0.1.29): the AI that may see the terminals of which
+   * machines. tTerm for the computer before signing in sends none, and has
+   * no AI then. */
+  ai?: { watching: AiWatching[] };
 }
 
 export interface Install {
@@ -1627,4 +1633,192 @@ export async function moveToCloud(body: { project: string;
   servers: { alias: string; method: MoveMethod }[];
   keys: { path: string; passphrase?: string }[] }): Promise<MoveResult[]> {
   return (await (await check(await fetch("/api/app/move", change("POST", body)))).json()).results;
+}
+
+// ------------------------------------------------- AI through MCP (0.1.29)
+
+/** Where an AI app takes the person back to: a site (with its host, and the
+ * app's name when the host is known: claude.ai is Claude), this computer
+ * (127.0.0.1, localhost) or an app on it by its own scheme. */
+export interface AiPlace {
+  kind: "web" | "local" | "app";
+  host?: string | null;
+  known?: string | null;
+  port?: number | null;
+  scheme?: string;
+}
+
+/** What an AI may do: see, and from 0.1.30 propose commands and write
+ * notes in the log. */
+export interface AiCan {
+  see: boolean;
+  propose: boolean;
+  notes: boolean;
+}
+
+/** A machine an AI may see, and what of it. */
+export interface AiMachine {
+  id: string;
+  name: string;
+  kind: MachineKind;
+  projectId: string;
+  project: string;
+  code: string;
+  terminals: boolean;
+  log: boolean;
+  /** Under the person's keys: it sees it only while they are open on the
+   * device it follows. */
+  guarded: boolean;
+}
+
+/** An AI the person connected, as Settings › AI lists it. */
+export interface AiConnection {
+  id: string;
+  kind: "oauth" | "key";
+  /** As tTerm calls it: Claude for claude.ai, else what it calls itself. */
+  name: string;
+  /** What it calls itself. */
+  said: string;
+  /** claude.ai, chatgpt.com, 127.0.0.1, cursor:. */
+  returnsTo: string;
+  can: AiCan;
+  /** Until when, in milliseconds; null until the person takes it back. */
+  until: number | null;
+  createdAt: number;
+  connectedAt: number;
+  lastCall: number | null;
+  /** The device its machines under the keys follow. */
+  keysDevice: { id: string; label: string | null } | null;
+  keysSession: string | null;
+  /** The keys are open there now. */
+  keysOpen: boolean;
+  /** That device is this one. */
+  keysHere: boolean;
+  zone: string;
+  machines: AiMachine[];
+}
+
+export interface AiState {
+  /** tTerm's address for MCP: https://app.tterm.net/mcp. */
+  url: string;
+  connections: AiConnection[];
+  keys: { guarding: boolean; open: boolean };
+}
+
+/** The AI that may see the terminals of these machines, in /api/state. */
+export interface AiWatching {
+  id: string;
+  name: string;
+  can: AiCan;
+  until: number | null;
+  machines: string[];
+  keysOpen: boolean;
+}
+
+export interface AiRequestMachine {
+  id: string;
+  name: string;
+  kind: MachineKind;
+  os: string | null;
+  method: LoginMethod | null;
+  guarded: boolean;
+  mine: boolean;
+}
+
+/** A request to connect, as /connect-ai shows it. */
+export interface AiRequest {
+  request: {
+    id: string;
+    name: string;
+    said: string;
+    place: AiPlace;
+    /** It calls itself Claude or ChatGPT and takes the person elsewhere. */
+    warning: { claims: string; real: string; host: string } | null;
+    scope: string | null;
+    expiresAt: number;
+  };
+  projects: { id: string; name: string; code: string; color: ProjectColor; role: Role;
+    machines: AiRequestMachine[] }[];
+  /** The same app's latest connection, to start from. */
+  same: AiConnection | null;
+  me: { id: string; name: string; email: string | null };
+  /** Whether machines under the keys need them open, whether they are open
+   * on this device, and whether the vault has a password to type. */
+  keys: { guarding: boolean; open: boolean; password: boolean };
+}
+
+/** "forever", or days; for a change also "keep". */
+export type AiTerm = "forever" | "30" | "7" | "1" | "keep";
+
+export interface AiChoice {
+  machines: { id: string; terminals: boolean; log: boolean }[];
+  can: AiCan;
+  term: AiTerm;
+  /** This device's time zone: the times the AI reads are in it. */
+  zone: string;
+  /** The vault password's proof, for machines under the keys. */
+  auth?: string;
+  /** The account the page showed (Allow). */
+  account?: string;
+}
+
+/** The request to connect is over: answered, or ten minutes old. */
+export class AiRequestOver extends CoreError {}
+
+export async function loadAi(): Promise<AiState> {
+  return (await check(await fetch("/api/ai", { cache: "no-store" }))).json();
+}
+
+export async function loadAiRequest(id: string): Promise<AiRequest> {
+  const response = await fetch(`/api/ai/requests/${encodeURIComponent(id)}`,
+    { cache: "no-store" });
+  if (response.status === 404 || response.status === 410) {
+    const body = await response.clone().json().catch(() => ({}));
+    throw new AiRequestOver(String(body.error ?? ""), response.status, body);
+  }
+  return (await check(response)).json();
+}
+
+/** Allow: where the browser goes next, back to the app with its code. */
+export async function allowAi(id: string, choice: AiChoice): Promise<{ redirect: string }> {
+  const response = await fetch(`/api/ai/requests/${encodeURIComponent(id)}/allow`,
+    change("POST", choice));
+  if (response.status === 403 || response.status === 409 || response.status === 410) {
+    const body: { error?: string; confirm?: boolean; changed?: boolean } =
+      await response.clone().json().catch(() => ({}));
+    if (body.confirm) throw new ConfirmFirst(body.error ?? say("api.confirm_first"), 403);
+    if (body.changed) throw new AccountChanged(body.error ?? say("api.account_changed"), 409);
+    if (response.status === 410) throw new AiRequestOver(body.error ?? "", 410, body);
+  }
+  return (await check(response)).json();
+}
+
+/** Cancel on /connect-ai: back to the app, which hears it was refused. */
+export async function denyAi(id: string): Promise<{ redirect: string }> {
+  return (await check(await fetch(`/api/ai/requests/${encodeURIComponent(id)}/deny`,
+    change("POST", {})))).json();
+}
+
+/** Change: the connection as saved. */
+export async function changeAi(id: string, choice: AiChoice): Promise<AiConnection> {
+  return (await check(await fetch(`/api/ai/connections/${encodeURIComponent(id)}`,
+    change("PATCH", choice)))).json();
+}
+
+/** Forget: the AI is disconnected at once. */
+export async function forgetAi(id: string): Promise<void> {
+  await check(await fetch(`/api/ai/connections/${encodeURIComponent(id)}`,
+    change("DELETE", {})));
+}
+
+/** Disconnect from the project: it sees none of its machines any more. */
+export async function aiLeaveProject(id: string, projectId: string): Promise<void> {
+  await check(await fetch(`/api/ai/connections/${encodeURIComponent(id)}/projects/${
+    encodeURIComponent(projectId)}`, change("DELETE", {})));
+}
+
+/** Disconnect all AI: how many were connected. */
+export async function forgetAllAi(): Promise<number> {
+  return (await (await check(await fetch("/api/ai/forget-all", change("POST", {})))).json())
+    .forgotten;
 }

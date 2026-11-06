@@ -215,6 +215,7 @@ settings.tint_block = Todo el proyecto
 settings.general = General
 settings.group_preferences = Preferencias
 settings.group_security = Seguridad
+settings.group_connections = Conexiones
 # For screen readers: the list of the sections.
 settings.sections = Secciones de la configuración
 # The search over Settings, and what it says when no section has the words typed.
@@ -238,6 +239,7 @@ settings.payment_note = Aparecerán aquí con los planes de pago.
 # Words the search finds a section by, besides its name; never shown. In English, then in the language.
 settings.keys_words = ssh keys vault password passphrase servers claves bóveda contraseña frase servidores
 settings.devices_words = devices browsers sessions signed in forget sign out dispositivos navegadores sesiones olvidar cerrar sesión
+settings.ai_words = AI MCP Claude ChatGPT Cursor connector assistant model IA inteligencia artificial conector asistente modelo
 settings.computer_words = this computer mac connection esta computadora conexión
 settings.updates_words = updates version new restart check actualizaciones versión nueva reiniciar comprobar
 
@@ -769,7 +771,7 @@ devices.browser_times = De confianza desde {created}, último inicio de sesión 
 devices.forget = Olvidar
 # The heading, and the red button that does it.
 devices.forget_all = Olvidar todos los dispositivos
-devices.forget_all_text = Se olvidan todos los dispositivos y se cierran todas las sesiones, también esta. Después, cada navegador pedirá un código por correo. Tus terminales siguen en marcha.
+devices.forget_all_text = Se olvidan todos los dispositivos y se cierran todas las sesiones, también esta, y se desconectan todas las IA conectadas. Después, cada navegador pedirá un código por correo. Tus terminales siguen en marcha.
 # The button that asks first.
 devices.forget_all_ask = Olvidar todos los dispositivos…
 
@@ -2067,3 +2069,184 @@ moved.how_mac_many = <b>{servers}</b> solo se abren a través de esta Mac: mient
 moved.keys_one = <b>{keys}</b> ya está en tu bóveda, cifrada: se abre con la contraseña de la bóveda y, en esta Mac, con Touch ID. Configuración › Claves la muestra en todos tus dispositivos.
 moved.keys_many = <b>{keys}</b> ya están en tu bóveda, cifradas: se abren con la contraseña de la bóveda y, en esta Mac, con Touch ID. Configuración › Claves las muestra en todos tus dispositivos.
 moved.no_keys = No se movió ninguna clave: tus claves se quedan en esta Mac.
+
+# ------------------------------------------------ ai: AI through MCP (Ai.tsx, AiChoice.tsx, aiText.ts)
+# An AI app (Claude, ChatGPT, Claude Code, Cursor, any with MCP) the person
+# lets see their terminals and the machines' logs. {ai} is its name, as
+# tTerm calls it: Claude. Claude, ChatGPT, Claude Code and Cursor are
+# product names, not translated. The item in Settings, under Connections.
+ai.item = IA
+ai.title = IA conectada
+ai.about = Claude, ChatGPT, Cursor u otra IA a la que dejas ver tus terminales. Lee lo que le permitiste; los comandos siempre los ejecutas tú.
+ai.connect = Conectar una IA…
+ai.none = Aún no hay ninguna IA conectada
+ai.none_text = Conecta Claude, ChatGPT, Claude Code o Cursor: verá directamente la salida de tus comandos y ya no tendrás que copiarla al chat.
+ai.sees_nothing = Ahora no ve ninguna máquina: marca algunas en «Cambiar».
+ai.change = Cambiar
+ai.forget = Olvidar
+ai.forgotten = Se desconectó {ai}: ya no ve nada de tTerm.
+ai.all_forgotten = one: Se desconectó la IA. | other: Se desconectaron {n} conexiones de IA.
+ai.forget_all = Desconectar todas las IA
+ai.forget_all_text = Se olvidan todas las conexiones de IA a la vez: ninguna IA vuelve a ver nada de tTerm. Tus terminales siguen en marcha.
+ai.forget_all_ask = Desconectar todas las IA…
+ai.saved = Ahora {ai} ve lo que elegiste.
+# What the AI may do, as chips in the lists.
+ai.chip_see = Mira
+ai.chip_propose = Propone comandos
+ai.chip_notes = Escribe notas
+# How long it may stay: after "Looks ·", or as a line of its own.
+ai.until_forever = hasta que lo retires
+# {day} is a day: 5 Dec.
+ai.until_day = hasta el {day}
+# {term} is one of the two above, with a capital: "Until 5 Dec · last asked 2 hours ago".
+ai.times = {term} · última consulta {ago}
+ai.times_never = {term} · aún sin consultas
+# Its machines, a project at a time: "Personal: web-01, droplet; only the
+# log of db-internal". {machines} is a list.
+ai.project_machines = {project}: {machines}
+ai.only_log = solo la bitácora de {machines}
+ai.only_terminals = solo las terminales de {machines}
+# Where it takes you back, after its name.
+ai.title_web = {name} · {place}
+ai.title_here = {name} en esta computadora
+ai.title_app = {name}, una aplicación en esta computadora
+# The machines under the keys: {machines} is a list, {where} is one of the
+# three below: where the keys are open or closed.
+ai.keys_seen = Ve {machines} mientras las claves estén abiertas {where}.
+ai.keys_not_seen = Ahora no ve {machines}: las claves están cerradas {where}.
+ai.keys_where_here = en este dispositivo
+# {device} as Settings › Devices names it: Chrome on macOS.
+ai.keys_where_device = en {device}
+ai.keys_where_browser = en el navegador desde el que se autorizó
+# The window that says how to connect an AI.
+ai.how_title = Conectar una IA
+ai.how_lead = La IA verá las terminales que elijas. Los comandos los ejecutas tú.
+ai.how_copy = Copia la dirección de tTerm
+ai.copy = Copiar
+ai.copied = Copiado
+ai.how_add = Añádela a la IA
+ai.how_where = Dónde se conecta
+ai.how_other = Otra IA
+ai.how_claude = En Claude, abre Conectores y añade un conector personalizado con esta dirección. Cuando Claude lo pida, inicia sesión. En el plan gratuito de Claude puedes añadir un solo conector personalizado.
+ai.how_chatgpt = En la versión web de ChatGPT, añade en Plugins un servidor MCP personalizado con esta dirección e inicia sesión. En un chat, escribe @ y elige tTerm. Está disponible en ChatGPT Pro, Business, Enterprise y Edu.
+ai.how_code_run = En una terminal, ejecuta:
+# <c>…</c> is a command, in code type.
+ai.how_code_then = Luego escribe <c>/mcp</c> en Claude Code, elige tterm e inicia sesión.
+ai.how_cursor = En Cursor, abre la configuración de MCP y añade un servidor con esta dirección. Cuando Cursor lo pida, inicia sesión.
+ai.how_any = Sirve cualquier IA que se conecte a servidores MCP remotos. Qué indicar:
+ai.how_address = Dirección
+ai.how_transport = Transporte
+ai.how_transport_value = HTTP (Streamable HTTP)
+ai.how_signin = Inicio de sesión
+ai.how_signin_value = OAuth: la IA abre una página de tTerm donde autorizas lo que puede hacer
+ai.how_allow = Autoriza el acceso en tTerm
+ai.how_allow_text = Se abre una página de tTerm: inicia sesión, marca las máquinas, elige qué puede hacer la IA y durante cuánto tiempo, y presiona «Autorizar». Después, la IA aparece aquí.
+ai.how_keys = La IA solo ve las máquinas bajo tus claves (con tu propia clave, a través de tu Mac, la propia Mac) mientras las claves estén abiertas en el dispositivo desde el que autorizaste el acceso.
+# Change: the same choice as when it was allowed.
+ai.change_title = Cambiar lo que puede hacer {ai}
+ai.change_keys_here = A partir de ahora, el acceso a las máquinas bajo tus claves depende de este dispositivo.
+ai.save = Guardar
+# The project's page.
+ai.project_title = IA
+ai.project_about = Qué IA puede ver las máquinas de este proyecto. Todas, en todos los proyectos: Configuración › IA
+ai.project_connect = Conectar una IA
+ai.project_none = Ninguna IA ve las máquinas de este proyecto.
+ai.allowed_by_you = (con tu autorización)
+ai.leave = Desconectar del proyecto
+ai.leave_title = {ai} deja de ver las máquinas de {project}; en los demás proyectos sigue como está
+ai.left_project = {ai} ya no ve ninguna máquina de {project}.
+ai.project_table = Qué ve {ai} en {project}
+ai.machine = Máquina
+ai.terminals = Terminales
+ai.log = Bitácora
+ai.keys_follow = Solo la ve mientras tus claves estén abiertas en el dispositivo desde el que se autorizó
+ai.while_open = mientras las claves estén abiertas
+ai.yes = sí
+ai.no = no
+ai.project_new_machines = La IA no ve las máquinas nuevas del proyecto hasta que las marques en «Cambiar».
+# The terminal: the chip in the bar, and its window.
+ai.chip_one = {ai} está mirando
+ai.chip_more = one: {ai} y otra IA están mirando | other: {ai} y {n} más están mirando
+ai.chip_title = Esta terminal es visible para {ai}
+ai.pop_text = Ve los comandos y la salida de esta terminal cuando le pides algo. Aquí no escribe nada.
+ai.pop_closed = Ahora no ve esta máquina: las claves están cerradas en el dispositivo desde el que se autorizó.
+ai.pop_forget = Olvidar {ai}
+ai.pop_settings = Configuración › IA
+# The eye at a block the AI read, and at a terminal in the sidebar.
+ai.read_title = Salida leída por {ai}
+# For screen readers, after the terminal's name.
+ai.eye_hidden = , visible para {ai}
+# The choice: on the allow page and in Change.
+ai.project = Proyecto
+ai.machines = Máquinas
+ai.machines_of = Máquinas de {project}
+ai.no_machines = Este proyecto no tiene máquinas.
+ai.under_keys = bajo tus claves
+# How a machine opens, under its name.
+ai.how_line = línea de tTerm
+ai.how_key = tu clave
+ai.how_mac = a través de tu Mac
+ai.how_computer = tu computadora
+# For screen readers: the tick of a machine's terminals, of its log.
+ai.terminals_of = Terminales de {machine}
+ai.log_of = Bitácora de {machine}
+ai.machines_note = Terminales: los comandos y la salida de tus terminales en la máquina. Bitácora: lo que se ejecutó en la máquina, quién lo ejecutó y cuándo.
+ai.can_title = Qué puede hacer {ai}
+ai.can_see = Mirar
+ai.can_see_text = Los comandos, su salida y la bitácora de las máquinas marcadas arriba.
+ai.cannot = {ai} no puede escribir ni ejecutar comandos por su cuenta, abrir terminales ni tomar claves.
+ai.term = Durante cuánto tiempo
+ai.term_forever = Hasta que lo retire (sin plazo)
+# {day}: 5 Dec.
+ai.term_days = one: {n} día, hasta el {day} | other: {n} días, hasta el {day}
+# In Change: as it is now. {until} is "until you take it back" or "until 5 Dec".
+ai.term_keep = Como ahora: {until}
+ai.term_forever_note = {ai} no se desconecta hasta que presiones «Olvidar» en Configuración › IA.
+ai.term_days_note = Cuando venza el plazo, {ai} te volverá a pedir permiso.
+# {projects} is a list of projects: Personal and Client X; {until}: "until you take it back", "until 5 Dec".
+ai.summary = one: {ai} podrá ver {n} máquina de {projects}, {until}. | other: {ai} podrá ver {n} máquinas de {projects}, {until}.
+ai.summary_none = Aún no se eligió nada.
+# Machines under the keys, ticked. {machines} is a list.
+ai.keys_locked = Bajo tus claves: {machines}
+ai.keys_text = Para que {ai} pueda verlas, abre las claves. Verá estas máquinas solo mientras las claves estén abiertas en este dispositivo.
+ai.keys_password = Contraseña de la bóveda
+ai.keys_open = Abrir las claves
+ai.keys_opening = Abriendo…
+ai.keys_no_password = Tu bóveda no tiene contraseña: abre las claves en tTerm en otra pestaña de este dispositivo y vuelve a comprobarlo.
+ai.keys_check = Volver a comprobar
+ai.keys_open_here = Las claves están abiertas en este navegador. {machines}: {ai} podrá verlas mientras las claves sigan abiertas aquí, hasta que presiones «Bloquear», cierres sesión o pasen 8 horas sin actividad.
+ai.keys_password_ok = La contraseña es correcta. {machines}: {ai} podrá verlas mientras las claves estén abiertas en tTerm en este dispositivo, hasta que presiones «Bloquear», cierres sesión o pasen 8 horas sin actividad.
+
+# ---------------------------------- connect_ai: the page an AI app opens to connect (ConnectAi.tsx)
+connect_ai.title_tab = Conectar una IA
+connect_ai.title = ¿Conectar {ai} a tTerm?
+# <b>…</b> is bold. {place}: claude.ai, or "an app on this computer".
+connect_ai.asks_web = <b>{ai}</b> pide acceso a tu cuenta <b>{email}</b> y, tras «Autorizar», te lleva de vuelta a <b>{place}</b>.
+connect_ai.asks_here = <b>{ai}</b> pide acceso a tu cuenta <b>{email}</b> y, tras «Autorizar», te lleva de vuelta a {place}.
+connect_ai.place_here = una aplicación en esta computadora
+# {scheme} is the app's own scheme: cursor.
+connect_ai.place_app = la aplicación {scheme} en esta computadora
+connect_ai.not_you = ¿No eres tú?
+# An app that calls itself Claude and takes you elsewhere. {claims}: Claude; {host}: where it goes back; {real}: claude.ai.
+connect_ai.warning = Se presenta como {claims}, pero te lleva de vuelta a {host}, no a {real}. Autoriza solo si conoces esta aplicación.
+connect_ai.said = Se presenta como «{said}».
+connect_ai.goes_to = Lo que {ai} lee va a {place}, como si lo copiaras al chat.
+connect_ai.goes_to_here = Lo que {ai} lee va a la aplicación en esta computadora y, desde allí, adonde la aplicación lo envíe.
+connect_ai.forget_any_time = Se puede desconectar en cualquier momento: Configuración › IA, «Olvidar».
+connect_ai.why_none = Marca al menos una máquina.
+connect_ai.why_keys = Primero abre las claves o desmarca las máquinas que están bajo ellas.
+connect_ai.keys_first = Las claves están cerradas en este dispositivo: ábrelas o desmarca las máquinas que están bajo ellas.
+connect_ai.back = Volviendo a {ai}…
+connect_ai.back_note = Para cambiar el acceso o desconectar: Configuración › IA.
+connect_ai.back_app = Si {ai} no se abrió, vuelve a la aplicación: allí termina de conectarse.
+connect_ai.over_title = Esta solicitud ya no es válida
+connect_ai.over = Ya se respondió, o estuvo esperando más de diez minutos. Vuelve a conectar tTerm en la aplicación de IA.
+connect_ai.problem_client = tTerm no conoce esta aplicación. Vuelve a conectar tTerm en ella: primero se registrará.
+connect_ai.problem_redirect = La aplicación pide llevarte de vuelta a un lugar que no registró. Vuelve a conectar tTerm en ella.
+connect_ai.problem_request = La solicitud está incompleta. Vuelve a conectar tTerm en la aplicación de IA.
+connect_ai.account_changed = Ahora este navegador tiene la sesión iniciada en otra cuenta. Comprueba cuál y luego autoriza.
+# Before signing in the page does not know the AI's name yet: {app} is "the AI".
+connect_ai.the_ai = la IA
+connect_ai.confirm = Para autorizar a {app}, confirma que eres tú.
+connect_ai.signin_other = Inicia sesión con la otra cuenta y luego autoriza a {app}.
+connect_ai.signin_then = Inicia sesión y luego autoriza a {app}.

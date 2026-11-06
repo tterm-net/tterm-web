@@ -25,11 +25,12 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from .. import __version__
-from ..core import (accounts, auth, letters, logs, machines, notes,
+from ..core import (accounts, ai, auth, letters, logs, machines, notes,
                     photos, projects, reach, search, ssh, support, vault)
 from ..core.mail import Mailer
 from ..core.terminals import (KeysClosed, NotAllowed, NotOpen, Terminal,
                               Terminals)
+from .ai import OPEN_PATHS, add_ai
 from .connect import client_ip
 from .security import PAGE_HEADERS, AddHeaders, PageGuard, page_csp
 from .ws import SIGNED_OUT_CLOSE, PageSocket, page_json
@@ -352,6 +353,15 @@ def create_page_app(pool: asyncpg.Pool, dist: Path, page_url: str,
     def keys_open(session: auth.Session) -> bool:
         return any(s.keys_open for s in sockets if s.session.id == session.id)
 
+    def keys_open_on(device_id: uuid.UUID | None,
+                     session_id: uuid.UUID | None) -> bool:
+        """Whether the keys are open on a device (0.1.29: the one an AI was
+        allowed from): a socket of its proved them, whichever of its sessions
+        that is; for a browser that is not a trusted device, of that session."""
+        return any(s.keys_open for s in sockets
+                   if (device_id is not None and s.session.device_id == device_id)
+                   or (session_id is not None and s.session.id == session_id))
+
     async def guarding(session: auth.Session) -> bool:
         async with pool.acquire() as conn:
             return await vault.guarding(conn, session.person.id)
@@ -420,6 +430,15 @@ def create_page_app(pool: asyncpg.Pool, dist: Path, page_url: str,
         targets = [s for s in sockets if s.user_id == user_id
                    and (exclude_session is None
                         or s.session.id != exclude_session)]
+        await asyncio.gather(*(s.json(message) for s in targets),
+                             return_exceptions=True)
+
+    async def to_pages_seeing(user_id: uuid.UUID, message: dict, machine) -> None:
+        """A message about a machine to the person's sockets that see it
+        (0.1.29: what an AI read of its terminal): not to those it is
+        closed to (0.1.28)."""
+        targets = [s for s in list(sockets) if s.user_id == user_id]
+        targets = [s for s in targets if not await s.closed_to(machine)]
         await asyncio.gather(*(s.json(message) for s in targets),
                              return_exceptions=True)
 
@@ -797,6 +816,7 @@ def create_page_app(pool: asyncpg.Pool, dist: Path, page_url: str,
         me = session.person
         listed = await accounts.projects_of(pool, me.id)
         closed = await closed_to(session)
+        guards = await guarding(session)
         # Each project's folders of notes, with the notes listed but not
         # their text: the sidebar and the project's page (0.1.0).
         folders = await notes.folders_of(
@@ -829,6 +849,12 @@ def create_page_app(pool: asyncpg.Pool, dist: Path, page_url: str,
             # Those closed to this device only by name (0.1.28).
             "terminals": ([shown(t, closed) for t in terminals.live(me.id)]
                           if terminals else []),
+            # AI through MCP (0.1.29): the AI that may see the terminals of
+            # which machines.
+            "ai": {"watching": [
+                {**{k: v for k, v in w.items() if k != "_keys"},
+                 "keysOpen": not guards or keys_open_on(*w["_keys"])}
+                for w in await ai.watching(pool, me.id)]},
         })
 
     @app.patch("/api/me")
@@ -1858,6 +1884,13 @@ def create_page_app(pool: asyncpg.Pool, dist: Path, page_url: str,
             return _json({"ok": False})
         return _json({"ok": await reach.reachable(body.host, body.port)})
 
+    # AI through MCP (0.1.29): what AI apps read and sign in with, /mcp,
+    # and what the page asks of it.
+    add_ai(app, pool=pool, terminals=terminals, page_url=page_url,
+           secret=secret, signed_in=signed_in,
+           keys_open=keys_open, keys_open_on=keys_open_on, guarding=guarding,
+           notify=to_pages_seeing)
+
     @app.websocket("/api/ws")
     async def socket(websocket: WebSocket) -> None:
         if terminals is None:
@@ -1917,4 +1950,5 @@ def create_page_app(pool: asyncpg.Pool, dist: Path, page_url: str,
             **NO_STORE, "content-security-policy": page_csp(nonce)})
 
     # The guard inside the headers, so that its refusals carry them too.
-    return AddHeaders(PageGuard(app, page_url), PAGE_HEADERS)
+    return AddHeaders(PageGuard(app, page_url, open_paths=OPEN_PATHS),
+                      PAGE_HEADERS)

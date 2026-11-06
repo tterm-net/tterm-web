@@ -22,7 +22,7 @@ import uvicorn
 
 from .api.connect import create_connect_app
 from .api.page import create_page_app
-from .core import accounts, auth, db, machines, stats
+from .core import accounts, ai, auth, db, machines, stats
 from .core.agents import FRAME_MAX, Agents
 from .core.terminals import Terminals
 from .core.vault import VaultRelay
@@ -224,6 +224,12 @@ class Core:
                 await auth.sweep(self.pool)
             except (OSError, asyncpg.PostgresError) as exc:
                 log.warning("could not sweep old sign-ins: %s", exc)
+            try:
+                # What AI apps left (0.1.29): requests, codes, spent tokens,
+                # connections whose time is up.
+                await ai.sweep(self.pool)
+            except (OSError, asyncpg.PostgresError) as exc:
+                log.warning("could not sweep what AI apps left: %s", exc)
             try:
                 peak, top = self.terminals.peaks() if self.terminals else (0, 0)
                 await stats.take(self.pool,

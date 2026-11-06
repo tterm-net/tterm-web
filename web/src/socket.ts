@@ -123,6 +123,7 @@ class Socket {
   private timer: number | undefined;
   private listeners = new Set<Listener>();
   private vaultListeners = new Set<VaultListener>();
+  private aiListeners = new Set<VaultListener>();
   private openListeners = new Set<() => void>();
   /** Reasons to stay connected with no channel (0.1.17): the vault. */
   private holds = 0;
@@ -176,6 +177,13 @@ class Socket {
   onVault(listener: VaultListener): () => void {
     this.vaultListeners.add(listener);
     return () => this.vaultListeners.delete(listener);
+  }
+
+  /** AI through MCP (0.1.29): what an AI read of the person's terminals
+   * (ai.read), for its eye on the blocks. */
+  onAi(listener: VaultListener): () => void {
+    this.aiListeners.add(listener);
+    return () => this.aiListeners.delete(listener);
   }
 
   /** Called each time the socket connects (again): a new socket on the
@@ -338,6 +346,10 @@ class Socket {
     }
     if (msg.ch === undefined && typeof msg.op === "string" && msg.op.startsWith("vault.")) {
       for (const listener of [...this.vaultListeners]) listener(msg);
+      return;
+    }
+    if (msg.ch === undefined && typeof msg.op === "string" && msg.op.startsWith("ai.")) {
+      for (const listener of [...this.aiListeners]) listener(msg);
       return;
     }
     const open = msg.ch !== undefined ? this.channels.get(msg.ch) : undefined;

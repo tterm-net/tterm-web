@@ -55,8 +55,8 @@ import asyncpg
 import asyncssh
 
 from .. import __version__
-from . import (accounts, complete, logs, search, shell, ssh, transport, trust,
-               vault)
+from . import (accounts, ai, complete, logs, search, shell, ssh, transport,
+               trust, vault)
 from .accounts import Person
 from .signer_client import SignerClient
 from .transport import LinkError
@@ -401,6 +401,16 @@ class Terminal:
         return {"command": b.command, "cwd": b.cwd, "branch": b.branch,
                 "seqStart": b.seq_start, "cols": b.cols,
                 "at": int(b.started_at.timestamp() * 1000)}
+
+    def running_output(self) -> tuple[dict, bytes, bool] | None:
+        """The command running now, what it printed so far (the start and
+        the end of it, as its block will keep), and whether the middle was
+        left out; None while none runs (0.1.29: what an AI reads of it)."""
+        b = self._block
+        if b is None:
+            return None
+        output, cut = b.output()
+        return self._running(), output, cut
 
     def block_at(self, seq: int) -> dict | None:
         """The command whose output goes on past the number `seq`: a replay
@@ -1370,11 +1380,15 @@ class Terminals:
         # it, and who redacted it if someone did.
         lines = await logs.of_blocks(self.pool, terminal_id, user_id,
                                      [r["seq_start"] for r in rows])
+        # Which AI read each (0.1.29): the page puts its eye on it.
+        reads = await ai.reads_of(self.pool, terminal_id,
+                                  [r["seq_start"] for r in rows])
         for b in blocks:
             line = lines.get(b["seqStart"])
             b.update(line if line is not None else
                      {"entry": None, "notes": [], "redacted": None,
                       "canNote": False})
+            b["aiRead"] = reads.get(b["seqStart"], [])
         return {"blocks": blocks, "more": more}
 
     async def block_output(self, terminal_id: uuid.UUID, user_id: uuid.UUID,

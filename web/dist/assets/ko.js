@@ -215,6 +215,7 @@ settings.tint_block = 프로젝트 전체
 settings.general = 일반
 settings.group_preferences = 환경설정
 settings.group_security = 보안
+settings.group_connections = 연결
 # For screen readers: the list of the sections.
 settings.sections = 설정 섹션
 # The search over Settings, and what it says when no section has the words typed.
@@ -238,6 +239,7 @@ settings.payment_note = 유료 요금제가 생기면 여기에 표시돼요.
 # Words the search finds a section by, besides its name; never shown. In English, then in the language.
 settings.keys_words = ssh keys vault password passphrase servers 키 보관함 비밀번호 암호 문구 서버
 settings.devices_words = devices browsers sessions signed in forget sign out 기기 브라우저 세션 로그인 지우기 로그아웃
+settings.ai_words = AI MCP Claude ChatGPT Cursor connector assistant model 인공지능 커넥터 연결 어시스턴트 비서 모델
 settings.computer_words = this computer mac connection 이 컴퓨터 연결
 settings.updates_words = updates version new restart check 업데이트 버전 새 재시작 확인
 
@@ -769,7 +771,7 @@ devices.browser_times = 신뢰 등록: {created}, 마지막 로그인: {used}
 devices.forget = 지우기
 # The heading, and the red button that does it.
 devices.forget_all = 모든 기기 지우기
-devices.forget_all_text = 이 기기를 포함해 모든 기기를 지우고 모든 세션을 끝내요. 그러면 각 브라우저에서 이메일로 받은 코드를 다시 요청해요. 터미널은 계속 실행돼요.
+devices.forget_all_text = 이 기기를 포함해 모든 기기를 지우고 모든 세션을 끝내며, AI 연결도 모두 해제해요. 그러면 각 브라우저에서 이메일로 받은 코드를 다시 요청해요. 터미널은 계속 실행돼요.
 # The button that asks first.
 devices.forget_all_ask = 모든 기기 지우기…
 
@@ -2067,4 +2069,185 @@ moved.how_mac_many = <b>{servers}</b> 서버는 이 Mac을 경유해서만 열�
 moved.keys_one = 이제 <b>{keys}</b> 키가 암호화되어 보관함에 있어요. 보관함 비밀번호로 열리고, 이 Mac에서는 Touch ID로 열려요. 어느 기기에서든 설정 > SSH 키에서 볼 수 있어요.
 moved.keys_many = 이제 <b>{keys}</b> 키가 암호화되어 보관함에 있어요. 보관함 비밀번호로 열리고, 이 Mac에서는 Touch ID로 열려요. 어느 기기에서든 설정 > SSH 키에서 볼 수 있어요.
 moved.no_keys = 옮긴 키가 없어요. 키는 이 Mac에 그대로 있어요.
+
+# ------------------------------------------------ ai: AI through MCP (Ai.tsx, AiChoice.tsx, aiText.ts)
+# An AI app (Claude, ChatGPT, Claude Code, Cursor, any with MCP) the person
+# lets see their terminals and the machines' logs. {ai} is its name, as
+# tTerm calls it: Claude. Claude, ChatGPT, Claude Code and Cursor are
+# product names, not translated. The item in Settings, under Connections.
+ai.item = AI
+ai.title = 연결된 AI
+ai.about = 내 터미널을 볼 수 있게 허용한 Claude, ChatGPT, Cursor 또는 다른 AI예요. AI는 허용한 것만 읽고, 명령은 항상 내가 실행해요.
+ai.connect = AI 연결…
+ai.none = 아직 연결된 AI가 없어요
+ai.none_text = Claude, ChatGPT, Claude Code 또는 Cursor를 연결하세요. AI가 명령의 출력을 직접 보니까 더 이상 채팅에 복사하지 않아도 돼요.
+ai.sees_nothing = 지금은 AI에게 보이는 머신이 없어요. ‘변경’에서 머신을 체크하세요.
+ai.change = 변경
+ai.forget = 지우기
+ai.forgotten = {ai} 연결을 해제했어요. 이제 tTerm의 어떤 것도 {ai}에게 보이지 않아요.
+ai.all_forgotten = other: AI 연결 {n}개를 해제했어요.
+ai.forget_all = 모든 AI 연결 해제
+ai.forget_all_text = 모든 AI 연결을 한꺼번에 지워요. 더 이상 어떤 AI에게도 tTerm의 내용이 보이지 않아요. 터미널은 계속 실행돼요.
+ai.forget_all_ask = 모든 AI 연결 해제…
+ai.saved = 이제 선택한 항목이 {ai}에게 보여요.
+# What the AI may do, as chips in the lists.
+ai.chip_see = 보기
+ai.chip_propose = 명령 제안
+ai.chip_notes = 노트 작성
+# How long it may stay: after "Looks ·", or as a line of its own.
+ai.until_forever = 취소할 때까지
+# {day} is a day: 5 Dec.
+ai.until_day = {day}까지
+# {term} is one of the two above, with a capital: "Until 5 Dec · last asked 2 hours ago".
+ai.times = {term} · 마지막 요청: {ago}
+ai.times_never = {term} · 아직 요청 없음
+# Its machines, a project at a time: "Personal: web-01, droplet; only the
+# log of db-internal". {machines} is a list.
+ai.project_machines = {project}: {machines}
+ai.only_log = {machines}의 로그만
+ai.only_terminals = {machines}의 터미널만
+# Where it takes you back, after its name.
+ai.title_web = {name} · {place}
+ai.title_here = 이 컴퓨터의 {name}
+ai.title_app = {name}, 이 컴퓨터의 앱
+# The machines under the keys: {machines} is a list, {where} is one of the
+# three below: where the keys are open or closed.
+ai.keys_seen = {machines} 머신은 {where} 키가 열려 있는 동안 AI에게 보여요.
+ai.keys_not_seen = 지금은 AI에게 {machines} 머신이 보이지 않아요. {where} 키가 닫혀 있어요.
+ai.keys_where_here = 이 기기에서
+# {device} as Settings › Devices names it: Chrome on macOS.
+ai.keys_where_device = {device}에서
+ai.keys_where_browser = AI를 허용한 브라우저에서
+# The window that says how to connect an AI.
+ai.how_title = AI 연결
+ai.how_lead = AI는 내가 선택한 터미널을 보게 돼요. 명령은 내가 실행해요.
+ai.how_copy = tTerm 주소 복사
+ai.copy = 복사
+ai.copied = 복사됨
+ai.how_add = AI에 추가
+ai.how_where = 연결할 곳
+ai.how_other = 다른 AI
+ai.how_claude = Claude에서 커넥터를 열고 이 주소로 커스텀 커넥터를 추가하세요. Claude가 요청하면 로그인하세요. Claude 무료 요금제에서는 커스텀 커넥터를 하나 추가할 수 있어요.
+ai.how_chatgpt = 웹 버전 ChatGPT의 플러그인에서 이 주소로 커스텀 MCP 서버를 추가한 다음 로그인하세요. 채팅에서 @를 입력하고 tTerm을 고르세요. ChatGPT Pro, Business, Enterprise, Edu에서 쓸 수 있어요.
+ai.how_code_run = 터미널에서 다음 명령을 실행하세요:
+# <c>…</c> is a command, in code type.
+ai.how_code_then = 그다음 Claude Code에서 <c>/mcp</c>를 입력하고, tterm을 골라 로그인하세요.
+ai.how_cursor = Cursor에서 MCP 설정을 열고 이 주소로 서버를 추가하세요. Cursor가 요청하면 로그인하세요.
+ai.how_any = 원격 MCP 서버를 연결할 수 있는 AI라면 무엇이든 돼요. 입력할 내용:
+ai.how_address = 주소
+ai.how_transport = 전송 방식
+ai.how_transport_value = HTTP (Streamable HTTP)
+ai.how_signin = 로그인
+ai.how_signin_value = OAuth: AI가 tTerm 페이지를 열고, 거기서 AI가 할 수 있는 일을 허용해요
+ai.how_allow = tTerm에서 허용
+ai.how_allow_text = tTerm 페이지가 열려요. 로그인한 다음 머신을 체크하고, AI가 할 수 있는 일과 기간을 정해 ‘허용’을 누르세요. 그러면 AI가 여기에 나타나요.
+ai.how_keys = 키로 보호되는 머신(내 키로 여는 서버, 내 Mac을 거치는 서버, Mac 자체)은 AI를 허용한 기기에서 키가 열려 있는 동안에만 AI에게 보여요.
+# Change: the same choice as when it was allowed.
+ai.change_title = {ai} 권한 변경
+ai.change_keys_here = 이제부터 키로 보호되는 머신은 이 기기에서 키가 열려 있는 동안 AI에게 보여요.
+ai.save = 저장
+# The project's page.
+ai.project_title = AI
+ai.project_about = 이 프로젝트의 머신을 볼 수 있는 AI예요. 모든 프로젝트의 AI 연결은 설정 > AI에서 볼 수 있어요.
+ai.project_connect = AI 연결
+ai.project_none = 이 프로젝트의 머신을 보는 AI가 없어요.
+ai.allowed_by_you = (내가 허용함)
+ai.leave = 프로젝트에서 연결 해제
+ai.leave_title = {ai}에게 {project} 프로젝트의 머신이 더 이상 보이지 않게 돼요. 다른 프로젝트의 연결은 그대로 유지돼요
+ai.left_project = 이제 {ai}에게 {project} 프로젝트의 머신이 보이지 않아요.
+ai.project_table = {project} 프로젝트에서 {ai}에게 보이는 것
+ai.machine = 머신
+ai.terminals = 터미널
+ai.log = 로그
+ai.keys_follow = AI를 허용한 기기에서 키가 열려 있는 동안에만 AI에게 보여요
+ai.while_open = 키가 열려 있는 동안
+ai.yes = 예
+ai.no = 아니요
+ai.project_new_machines = 프로젝트에 새로 추가된 머신은 ‘변경’에서 체크해야 AI에게 보여요.
+# The terminal: the chip in the bar, and its window.
+ai.chip_one = {ai}에서 보는 중
+ai.chip_more = other: {ai} 외 {n}개에서 보는 중
+ai.chip_title = {ai}에게 이 터미널 보기가 허용되어 있어요
+ai.pop_text = AI에게 무언가를 요청하면 이 터미널의 명령과 출력을 봐요. 여기에는 아무것도 입력하지 않아요.
+ai.pop_closed = 지금은 AI에게 이 머신이 보이지 않아요. AI를 허용한 기기에서 키가 닫혀 있어요.
+ai.pop_forget = {ai} 지우기
+ai.pop_settings = 설정 > AI
+# The eye at a block the AI read, and at a terminal in the sidebar.
+ai.read_title = {ai}에서 이 출력을 읽었어요
+# For screen readers, after the terminal's name.
+ai.eye_hidden = , {ai}에서 보는 중
+# The choice: on the allow page and in Change.
+ai.project = 프로젝트
+ai.machines = 머신
+ai.machines_of = {project} 프로젝트의 머신
+ai.no_machines = 이 프로젝트에는 머신이 없어요.
+ai.under_keys = 키로 보호됨
+# How a machine opens, under its name.
+ai.how_line = tTerm 연결
+ai.how_key = 내 키
+ai.how_mac = 내 Mac 경유
+ai.how_computer = 내 컴퓨터
+# For screen readers: the tick of a machine's terminals, of its log.
+ai.terminals_of = {machine} 머신의 터미널
+ai.log_of = {machine} 머신의 로그
+ai.machines_note = 터미널: 그 머신에 있는 내 터미널의 명령과 출력. 로그: 그 머신에서 누가 언제 무엇을 실행했는지.
+ai.can_title = {ai}에게 허용할 일
+ai.can_see = 보기
+ai.can_see_text = 위에서 체크한 머신의 명령, 출력, 로그.
+ai.cannot = {ai}에게는 직접 명령을 입력하거나 실행하고, 터미널을 열고, 키를 가져갈 권한이 없어요.
+ai.term = 기간
+ai.term_forever = 취소할 때까지 (기한 없음)
+# {day}: 5 Dec.
+ai.term_days = other: {n}일, {day}까지
+# In Change: as it is now. {until} is "until you take it back" or "until 5 Dec".
+ai.term_keep = 지금처럼: {until}
+ai.term_forever_note = 설정 > AI에서 ‘지우기’를 누를 때까지 {ai} 연결이 유지돼요.
+ai.term_days_note = 기간이 끝나면 {ai}에서 다시 허용을 요청해요.
+# {projects} is a list of projects: Personal and Client X; {until}: "until you take it back", "until 5 Dec".
+ai.summary = other: {ai}에게 {projects} 프로젝트의 머신 {n}대가 {until} 보이게 돼요.
+ai.summary_none = 아직 선택한 항목이 없어요.
+# Machines under the keys, ticked. {machines} is a list.
+ai.keys_locked = 키로 보호됨: {machines}
+ai.keys_text = {ai}에게 이 머신들을 보여 주려면 키를 여세요. 이 기기에서 키가 열려 있는 동안에만 보여요.
+ai.keys_password = 보관함 비밀번호
+ai.keys_open = 키 열기
+ai.keys_opening = 여는 중…
+ai.keys_no_password = 보관함에 비밀번호가 없어요. 이 기기의 다른 탭에 있는 tTerm에서 키를 연 다음 다시 확인하세요.
+ai.keys_check = 다시 확인
+ai.keys_open_here = 이 브라우저에서 키가 열려 있어요. {machines}: 여기서 키가 열려 있는 동안, 즉 ‘잠그기’를 누르거나 로그아웃하거나 8시간 동안 아무 활동이 없을 때까지 {ai}에게 보여요.
+ai.keys_password_ok = 비밀번호가 맞아요. {machines}: 이 기기의 tTerm에서 키가 열려 있는 동안, 즉 ‘잠그기’를 누르거나 로그아웃하거나 8시간 동안 아무 활동이 없을 때까지 {ai}에게 보여요.
+
+# ---------------------------------- connect_ai: the page an AI app opens to connect (ConnectAi.tsx)
+connect_ai.title_tab = AI 연결
+connect_ai.title = {ai}에 tTerm을 연결할까요?
+# <b>…</b> is bold. {place}: claude.ai, or "an app on this computer".
+connect_ai.asks_web = <b>{ai}</b>에서 내 계정 <b>{email}</b>에 대한 접근 권한을 요청해요. ‘허용’을 누르면 <b>{place}</b> 사이트로 돌아가요.
+connect_ai.asks_here = <b>{ai}</b>에서 내 계정 <b>{email}</b>에 대한 접근 권한을 요청해요. ‘허용’을 누르면 {place}으로 돌아가요.
+connect_ai.place_here = 이 컴퓨터의 앱
+# {scheme} is the app's own scheme: cursor.
+connect_ai.place_app = 이 컴퓨터의 {scheme} 앱
+connect_ai.not_you = 본인이 아닌가요?
+# An app that calls itself Claude and takes you elsewhere. {claims}: Claude; {host}: where it goes back; {real}: claude.ai.
+connect_ai.warning = 이 앱은 이름이 {claims}인데, {real} 대신 {host} 주소로 돌아가요. 아는 앱일 때만 허용하세요.
+connect_ai.said = 앱이 밝힌 이름: ‘{said}’
+connect_ai.goes_to = {ai}에서 읽은 내용은 채팅에 직접 복사해 넣은 것처럼 {place}에 전달돼요.
+connect_ai.goes_to_here = {ai}에서 읽은 내용은 이 컴퓨터의 앱으로 전달되고, 그다음에는 앱이 보내는 곳으로 가요.
+connect_ai.forget_any_time = 언제든 연결을 해제할 수 있어요. 설정 > AI에서 ‘지우기’를 누르세요.
+connect_ai.why_none = 머신을 하나 이상 체크하세요.
+connect_ai.why_keys = 먼저 키를 열거나, 키로 보호되는 머신의 체크를 해제하세요.
+connect_ai.keys_first = 이 기기에서 키가 닫혀 있어요. 키를 열거나, 키로 보호되는 머신의 체크를 해제하세요.
+connect_ai.back = {ai} 화면으로 돌아가는 중…
+connect_ai.back_note = 설정 > AI에서 변경하거나 연결을 해제할 수 있어요.
+connect_ai.back_app = {ai} 앱이 열리지 않았다면 직접 앱으로 돌아가세요. 연결은 앱에서 마무리돼요.
+connect_ai.over_title = 이 요청은 더 이상 유효하지 않아요
+connect_ai.over = 이미 응답한 요청이거나, 10분 넘게 기다린 요청이에요. AI 앱에서 tTerm을 다시 연결하세요.
+connect_ai.problem_client = tTerm이 모르는 앱이에요. 그 앱에서 tTerm을 다시 연결하세요. 그러면 앱이 먼저 스스로 등록해요.
+connect_ai.problem_redirect = 앱이 등록하지 않은 곳으로 돌아가려고 해요. 그 앱에서 tTerm을 다시 연결하세요.
+connect_ai.problem_request = 요청이 완전하지 않아요. AI 앱에서 tTerm을 다시 연결하세요.
+connect_ai.account_changed = 지금 이 브라우저는 다른 계정으로 로그인되어 있어요. 어떤 계정인지 확인한 다음 허용하세요.
+# Before signing in the page does not know the AI's name yet: {app} is "the AI".
+connect_ai.the_ai = AI
+connect_ai.confirm = {app}를 허용하려면 본인 확인을 해 주세요.
+connect_ai.signin_other = 다른 계정으로 로그인한 다음 {app}를 허용하세요.
+connect_ai.signin_then = 로그인한 다음 {app}를 허용하세요.
 `;export{e as default};

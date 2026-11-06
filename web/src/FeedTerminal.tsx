@@ -201,6 +201,7 @@ function fromStored(b: StoredBlock, cols: number, folded = false): FeedBlock {
     notes: b.notes ?? [],
     redacted: b.redacted ?? null,
     canNote: !!b.canNote,
+    aiRead: b.aiRead ?? [],
   };
 }
 
@@ -299,6 +300,17 @@ export function FeedTerminal(props: Props) {
     restoreN.current += 1;
     setRestore({ text, n: restoreN.current });
   }, []);
+
+  // What an AI read of this terminal (0.1.29): its eye on those blocks.
+  useEffect(() => socket.onAi((msg) => {
+    if (msg.op !== "ai.read" || msg.terminalId !== terminalId) return;
+    const seqs = new Set(Array.isArray(msg.seqs) ? msg.seqs as number[] : []);
+    const who = msg.ai as { id: string; name: string } | undefined;
+    if (!who || !seqs.size) return;
+    setBlocks((bs) => bs.map((b) => seqs.has(b.seqStart) &&
+      !(b.aiRead ?? []).some((r) => r.id === who.id)
+      ? { ...b, aiRead: [...(b.aiRead ?? []), who] } : b));
+  }), [terminalId]);
 
   // ------------------------------------------------------- the terminal
   useEffect(() => {

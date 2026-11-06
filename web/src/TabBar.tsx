@@ -87,6 +87,8 @@ interface Props {
   onStopRename: (id: string) => void;
   /** Before Search: Restart to update, in the app (0.1.15). */
   update?: ReactNode;
+  /** Before it: «Claude is looking», for the terminal in front (0.1.29). */
+  ai?: ReactNode;
 }
 
 function Lead({ tab }: { tab: TabView }) {
@@ -197,6 +199,7 @@ export function TabBar(props: Props) {
             {props.saving.text}
           </span>
         )}
+        {props.ai}
         {props.update}
         <button type="button" className="jump" onClick={props.onJump}
           title={t("tabs.search_title")}>

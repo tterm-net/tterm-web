@@ -215,6 +215,7 @@ settings.tint_block = Весь проект
 settings.general = Общие
 settings.group_preferences = Предпочтения
 settings.group_security = Безопасность
+settings.group_connections = Подключения
 # For screen readers: the list of the sections.
 settings.sections = Разделы настроек
 # The search over Settings, and what it says when no section has the words typed.
@@ -238,6 +239,7 @@ settings.payment_note = Появятся здесь вместе с платны
 # Words the search finds a section by, besides its name; never shown. In English, then in the language.
 settings.keys_words = ssh keys vault password passphrase servers ключи хранилище пароль парольная фраза серверы
 settings.devices_words = devices browsers sessions signed in forget sign out устройства браузеры сеансы вход забыть выйти
+settings.ai_words = AI MCP Claude ChatGPT Cursor connector assistant model ИИ коннектор ассистент модель нейросеть
 settings.computer_words = this computer mac connection этот компьютер мак подключение
 settings.updates_words = updates version new restart check обновления версия новая перезапуск проверить
 
@@ -769,7 +771,7 @@ devices.browser_times = Запомнен {created}, последний вход 
 devices.forget = Забыть
 # The heading, and the red button that does it.
 devices.forget_all = Забыть все устройства
-devices.forget_all_text = Все устройства будут забыты, а все сеансы завершатся, включая этот. Потом каждый браузер попросит код из письма. Терминалы продолжат работать.
+devices.forget_all_text = Все устройства будут забыты, все сеансы завершатся, включая этот, а весь подключённый ИИ отключится. Потом каждый браузер попросит код из письма. Терминалы продолжат работать.
 # The button that asks first.
 devices.forget_all_ask = Забыть все устройства…
 
@@ -2067,3 +2069,184 @@ moved.how_mac_many = <b>{servers}</b> открываются только чер
 moved.keys_one = <b>{keys}</b> теперь в хранилище, зашифрован: открывается паролем хранилища, а на этом Mac с Touch ID. Его видно на любом устройстве в Настройках, в разделе «Ключи».
 moved.keys_many = <b>{keys}</b> теперь в хранилище, зашифрованы: открываются паролем хранилища, а на этом Mac с Touch ID. Их видно на любом устройстве в Настройках, в разделе «Ключи».
 moved.no_keys = Ни один ключ не перенесён: твои ключи остаются на этом Mac.
+
+# ------------------------------------------------ ai: AI through MCP (Ai.tsx, AiChoice.tsx, aiText.ts)
+# An AI app (Claude, ChatGPT, Claude Code, Cursor, any with MCP) the person
+# lets see their terminals and the machines' logs. {ai} is its name, as
+# tTerm calls it: Claude. Claude, ChatGPT, Claude Code and Cursor are
+# product names, not translated. The item in Settings, under Connections.
+ai.item = ИИ
+ai.title = Подключённый ИИ
+ai.about = Claude, ChatGPT, Cursor и другой ИИ, которому ты разрешил смотреть терминалы. Он читает то, что ты разрешил; команды выполняешь всегда ты.
+ai.connect = Подключить ИИ…
+ai.none = ИИ пока не подключён
+ai.none_text = Подключи Claude, ChatGPT, Claude Code или Cursor: он сам увидит вывод команд, и копировать его в чат не придётся.
+ai.sees_nothing = Сейчас не видит ни одной машины: отметь их в «Изменить».
+ai.change = Изменить
+ai.forget = Забыть
+ai.forgotten = {ai} отключён: больше ничего не видит в tTerm.
+ai.all_forgotten = one: Отключено {n} подключение ИИ. | few: Отключено {n} подключения ИИ. | many: Отключено {n} подключений ИИ.
+ai.forget_all = Отключить весь ИИ
+ai.forget_all_text = Все подключения ИИ будут забыты сразу: ни один больше ничего не увидит в tTerm. Терминалы продолжат работать.
+ai.forget_all_ask = Отключить весь ИИ…
+ai.saved = {ai} теперь видит то, что ты выбрал.
+# What the AI may do, as chips in the lists.
+ai.chip_see = Смотрит
+ai.chip_propose = Предлагает команды
+ai.chip_notes = Пишет заметки
+# How long it may stay: after "Looks ·", or as a line of its own.
+ai.until_forever = пока ты не отменишь
+# {day} is a day: 5 Dec.
+ai.until_day = до {day}
+# {term} is one of the two above, with a capital: "Until 5 Dec · last asked 2 hours ago".
+ai.times = {term} · последнее обращение {ago}
+ai.times_never = {term} · ещё не обращался
+# Its machines, a project at a time: "Personal: web-01, droplet; only the
+# log of db-internal". {machines} is a list.
+ai.project_machines = {project}: {machines}
+ai.only_log = у {machines} только лог
+ai.only_terminals = у {machines} только терминалы
+# Where it takes you back, after its name.
+ai.title_web = {name} · {place}
+ai.title_here = {name} на этом компьютере
+ai.title_app = {name}, приложение на этом компьютере
+# The machines under the keys: {machines} is a list, {where} is one of the
+# three below: where the keys are open or closed.
+ai.keys_seen = {machines} видит, пока открыты ключи {where}.
+ai.keys_not_seen = {machines} сейчас не видит: ключи закрыты {where}.
+ai.keys_where_here = на этом устройстве
+# {device} as Settings › Devices names it: Chrome on macOS.
+ai.keys_where_device = на устройстве «{device}»
+ai.keys_where_browser = в браузере, откуда его пустили
+# The window that says how to connect an AI.
+ai.how_title = Подключить ИИ
+ai.how_lead = ИИ будет смотреть терминалы, которые ты выберешь. Команды выполняешь ты.
+ai.how_copy = Скопируй адрес tTerm
+ai.copy = Копировать
+ai.copied = Скопировано
+ai.how_add = Добавь его в ИИ
+ai.how_where = Куда подключаешь
+ai.how_other = Другой ИИ
+ai.how_claude = В Claude открой коннекторы и добавь свой коннектор с этим адресом. Когда Claude попросит, войди. На бесплатном плане Claude можно добавить один свой коннектор.
+ai.how_chatgpt = В ChatGPT в вебе добавь в плагинах свой сервер MCP с этим адресом и войди. В разговоре набери @ и выбери tTerm. Есть в ChatGPT Pro, Business, Enterprise и Edu.
+ai.how_code_run = В терминале выполни:
+# <c>…</c> is a command, in code type.
+ai.how_code_then = Потом в Claude Code набери <c>/mcp</c>, выбери tterm и войди.
+ai.how_cursor = В Cursor открой настройки MCP и добавь сервер с этим адресом. Когда Cursor попросит, войди.
+ai.how_any = Подойдёт любой ИИ, который подключает удалённые серверы MCP. Что вписать:
+ai.how_address = Адрес
+ai.how_transport = Связь
+ai.how_transport_value = по HTTP (Streamable HTTP)
+ai.how_signin = Вход
+ai.how_signin_value = OAuth: ИИ сам откроет страницу tTerm, где ты разрешишь, что ему можно
+ai.how_allow = Разреши в tTerm
+ai.how_allow_text = Откроется страница tTerm: войди, отметь машины, что ИИ может и как долго, и нажми «Разрешить». ИИ появится здесь.
+ai.how_keys = Машины под замком (с твоим ключом, через Mac и сам Mac) ИИ получает, только пока открыты ключи на устройстве, с которого его пустили.
+# Change: the same choice as when it was allowed.
+ai.change_title = Изменить доступ {ai}
+ai.change_keys_here = Машины под замком теперь будут видны ему, пока открыты ключи на этом устройстве.
+ai.save = Сохранить
+# The project's page.
+ai.project_title = ИИ
+ai.project_about = Кому из ИИ разрешено смотреть машины этого проекта. Все подключения, во всех проектах: Настройки › ИИ
+ai.project_connect = Подключить ИИ
+ai.project_none = Ни один ИИ не видит машины этого проекта.
+ai.allowed_by_you = (разрешено тобой)
+ai.leave = Отключить от проекта
+ai.leave_title = {ai} больше не увидит машины {project}; в других проектах он останется
+ai.left_project = {ai} больше не видит машины {project}.
+ai.project_table = Что {ai} видит в проекте {project}
+ai.machine = Машина
+ai.terminals = Терминалы
+ai.log = Лог
+ai.keys_follow = Видит, только пока твои ключи открыты на устройстве, с которого его пустили
+ai.while_open = пока открыты ключи
+ai.yes = да
+ai.no = нет
+ai.project_new_machines = Новые машины проекта ИИ не видит, пока ты не отметишь их в «Изменить».
+# The terminal: the chip in the bar, and its window.
+ai.chip_one = {ai} смотрит
+ai.chip_more = one: {ai} и ещё {n} смотрят | few: {ai} и ещё {n} смотрят | many: {ai} и ещё {n} смотрят
+ai.chip_title = {ai} может смотреть этот терминал
+ai.pop_text = Видит команды и вывод этого терминала, когда ты его о чём-то просишь. Сам сюда ничего не вводит.
+ai.pop_closed = Сейчас эту машину не видит: ключи закрыты на устройстве, с которого его пустили.
+ai.pop_forget = Забыть {ai}
+ai.pop_settings = Настройки › ИИ
+# The eye at a block the AI read, and at a terminal in the sidebar.
+ai.read_title = {ai} читал этот вывод
+# For screen readers, after the terminal's name.
+ai.eye_hidden = , {ai} смотрит
+# The choice: on the allow page and in Change.
+ai.project = Проект
+ai.machines = Машины
+ai.machines_of = Машины проекта {project}
+ai.no_machines = В этом проекте нет машин.
+ai.under_keys = под замком
+# How a machine opens, under its name.
+ai.how_line = линия tTerm
+ai.how_key = твой ключ
+ai.how_mac = через Mac
+ai.how_computer = твой компьютер
+# For screen readers: the tick of a machine's terminals, of its log.
+ai.terminals_of = Терминалы {machine}
+ai.log_of = Лог {machine}
+ai.machines_note = Терминалы: команды и вывод в твоих терминалах машины. Лог: что выполнялось на машине, кем и когда.
+ai.can_title = Что {ai} может
+ai.can_see = Смотреть
+ai.can_see_text = Команды, их вывод и лог тех машин, что отмечены выше.
+ai.cannot = Сам вводить и запускать команды, открывать терминалы и брать ключи {ai} не может.
+ai.term = Как долго
+ai.term_forever = Пока не отменю (без срока)
+# {day}: 5 Dec.
+ai.term_days = one: {n} день, до {day} | few: {n} дня, до {day} | many: {n} дней, до {day}
+# In Change: as it is now. {until} is "until you take it back" or "until 5 Dec".
+ai.term_keep = Как сейчас: {until}
+ai.term_forever_note = {ai} останется подключённым, пока ты не нажмёшь «Забыть» в Настройках › ИИ.
+ai.term_days_note = Когда срок кончится, {ai} попросит разрешение заново.
+# {projects} is a list of projects: Personal and Client X; {until}: "until you take it back", "until 5 Dec".
+ai.summary = one: {ai} сможет смотреть {n} машину в {projects}, {until}. | few: {ai} сможет смотреть {n} машины в {projects}, {until}. | many: {ai} сможет смотреть {n} машин в {projects}, {until}.
+ai.summary_none = Пока ничего не выбрано.
+# Machines under the keys, ticked. {machines} is a list.
+ai.keys_locked = Под замком: {machines}
+ai.keys_text = Чтобы пустить к ним {ai}, открой ключи. Эти машины он сможет смотреть, только пока ключи открыты на этом устройстве.
+ai.keys_password = Пароль хранилища
+ai.keys_open = Открыть ключи
+ai.keys_opening = Открываем…
+ai.keys_no_password = У хранилища нет пароля: открой ключи в tTerm на этом устройстве, в другой вкладке, и проверь ещё раз.
+ai.keys_check = Проверить ещё раз
+ai.keys_open_here = Ключи открыты в этом браузере. {machines}: {ai} сможет смотреть их, пока ключи здесь открыты, то есть до «Заблокировать», выхода или 8 часов без дела.
+ai.keys_password_ok = Пароль подошёл. {machines}: {ai} сможет смотреть их, пока в tTerm на этом устройстве открыты ключи, то есть до «Заблокировать», выхода или 8 часов без дела.
+
+# ---------------------------------- connect_ai: the page an AI app opens to connect (ConnectAi.tsx)
+connect_ai.title_tab = Подключить ИИ
+connect_ai.title = Подключить {ai} к tTerm?
+# <b>…</b> is bold. {place}: claude.ai, or "an app on this computer".
+connect_ai.asks_web = <b>{ai}</b> просит доступ к аккаунту <b>{email}</b> и после «Разрешить» вернёт тебя на <b>{place}</b>.
+connect_ai.asks_here = <b>{ai}</b> просит доступ к аккаунту <b>{email}</b> и после «Разрешить» вернёт тебя в {place}.
+connect_ai.place_here = приложение на этом компьютере
+# {scheme} is the app's own scheme: cursor.
+connect_ai.place_app = приложение {scheme} на этом компьютере
+connect_ai.not_you = Не ты?
+# An app that calls itself Claude and takes you elsewhere. {claims}: Claude; {host}: where it goes back; {real}: claude.ai.
+connect_ai.warning = Называет себя {claims}, но вернёт тебя на {host}, а не на {real}. Разрешай, только если знаешь это приложение.
+connect_ai.said = Называет себя «{said}».
+connect_ai.goes_to = То, что {ai} прочитает, уходит на {place}, как если бы ты скопировал это в чат.
+connect_ai.goes_to_here = То, что {ai} прочитает, уходит в приложение на этом компьютере, а оттуда – туда, куда его отправит приложение.
+connect_ai.forget_any_time = Отключить его можно в любой момент: Настройки › ИИ, «Забыть».
+connect_ai.why_none = Отметь хотя бы одну машину.
+connect_ai.why_keys = Сначала открой ключи или сними галочки у машин под замком.
+connect_ai.keys_first = Ключи на этом устройстве закрыты: открой их или сними галочки у машин под замком.
+connect_ai.back = Возвращаемся в {ai}…
+connect_ai.back_note = Изменить или отключить: Настройки › ИИ.
+connect_ai.back_app = Если {ai} не открылся, вернись в него сам: подключение закончится там.
+connect_ai.over_title = Этот запрос уже не действует
+connect_ai.over = На него уже ответили, или он ждал дольше десяти минут. Подключи tTerm в ИИ заново.
+connect_ai.problem_client = tTerm не знает это приложение. Подключи tTerm в нём заново: сначала оно само зарегистрируется.
+connect_ai.problem_redirect = Приложение просит вернуть тебя туда, куда не регистрировалось. Подключи tTerm в нём заново.
+connect_ai.problem_request = Запрос неполный. Подключи tTerm в ИИ заново.
+connect_ai.account_changed = В этом браузере теперь вход в другой аккаунт. Проверь, в какой, затем разреши.
+# Before signing in the page does not know the AI's name yet: {app} is "the AI".
+connect_ai.the_ai = ИИ
+connect_ai.confirm = Чтобы разрешить {app}, подтверди, что это ты.
+connect_ai.signin_other = Войди в другой аккаунт, затем разреши {app}.
+connect_ai.signin_then = Войди, затем разреши {app}.

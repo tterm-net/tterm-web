@@ -40,6 +40,7 @@
 // closed.
 
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { AiEye } from "./Ai";
 import type { Machine, Me, Project, TerminalInfo } from "./api";
 import { colorClass, terminalName } from "./colors";
 import { LANGUAGES, useT, type Lang } from "./i18n";
@@ -86,6 +87,9 @@ interface Props {
   /** A machine closed on this device (0.1.28, keysHere.ts), and its log. */
   closed: (machine: Machine) => boolean;
   logClosed: (machine: Machine) => boolean;
+  /** The AI that may see a machine's terminals (0.1.29), by name: an eye at
+   * each of them. */
+  aiNames?: (machineId: string) => string[];
   onOpenProject: (projectId: string) => void;
   onAddMachine: (projectId: string) => void;
   onNewTerminal: (machine: Machine) => void;
@@ -310,6 +314,7 @@ export function Sidebar(props: Props) {
                 }}>
                 <Avatar who={null} me={me} size="xs" />
                 <span className="sb-text">{terminalName(term.name, t)}</span>
+                <AiEye names={props.aiNames?.(m.id) ?? []} />
                 {dot !== "open" && <span className={`dot ${dot}`} aria-hidden="true" />}
               </button>
               <button type="button" className="tree-action"

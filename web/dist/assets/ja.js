@@ -215,6 +215,7 @@ settings.tint_block = プロジェクト全体
 settings.general = 一般
 settings.group_preferences = 環境設定
 settings.group_security = セキュリティ
+settings.group_connections = 接続
 # For screen readers: the list of the sections.
 settings.sections = 設定のセクション
 # The search over Settings, and what it says when no section has the words typed.
@@ -238,6 +239,7 @@ settings.payment_note = 有料プランの開始とともに、ここに表示�
 # Words the search finds a section by, besides its name; never shown. In English, then in the language.
 settings.keys_words = ssh keys vault password passphrase servers 鍵 キー 保管庫 パスワード パスフレーズ サーバー
 settings.devices_words = devices browsers sessions signed in forget sign out デバイス ブラウザー セッション サインイン 登録解除 サインアウト
+settings.ai_words = AI MCP Claude ChatGPT Cursor connector assistant model 人工知能 生成AI コネクタ コネクター アシスタント モデル
 settings.computer_words = this computer mac connection このコンピューター 接続
 settings.updates_words = updates version new restart check アップデート バージョン 新しい 再起動 確認
 
@@ -769,7 +771,7 @@ devices.browser_times = 登録：{created}、最終サインイン：{used}
 devices.forget = 登録解除
 # The heading, and the red button that does it.
 devices.forget_all = すべてのデバイスの登録を解除
-devices.forget_all_text = すべてのデバイスの登録が解除され、このデバイスを含むすべてのセッションが終了します。その後は、どのブラウザーでもメールのコードが求められます。ターミナルは動き続けます。
+devices.forget_all_text = すべてのデバイスの登録が解除され、このデバイスを含むすべてのセッションが終了し、すべての AI の接続も解除されます。その後は、どのブラウザーでもメールのコードが求められます。ターミナルは動き続けます。
 # The button that asks first.
 devices.forget_all_ask = すべてのデバイスの登録を解除…
 
@@ -2067,4 +2069,185 @@ moved.how_mac_many = <b>{servers}</b> は、この Mac 経由でのみ開けま�
 moved.keys_one = <b>{keys}</b> は暗号化されて保管庫に入りました。保管庫のパスワードで開けるほか、この Mac では Touch ID でも開けます。どのデバイスでも、「設定」の「SSH 鍵」に表示されます。
 moved.keys_many = <b>{keys}</b> は暗号化されて保管庫に入りました。保管庫のパスワードで開けるほか、この Mac では Touch ID でも開けます。どのデバイスでも、「設定」の「SSH 鍵」に表示されます。
 moved.no_keys = 移行した鍵はありません。鍵はこの Mac に残ります。
+
+# ------------------------------------------------ ai: AI through MCP (Ai.tsx, AiChoice.tsx, aiText.ts)
+# An AI app (Claude, ChatGPT, Claude Code, Cursor, any with MCP) the person
+# lets see their terminals and the machines' logs. {ai} is its name, as
+# tTerm calls it: Claude. Claude, ChatGPT, Claude Code and Cursor are
+# product names, not translated. The item in Settings, under Connections.
+ai.item = AI
+ai.title = 接続済みの AI
+ai.about = ターミナルの閲覧を許可した Claude、ChatGPT、Cursor などの AI です。AI が読み取るのは許可した内容だけで、コマンドを実行するのは常にあなたです。
+ai.connect = AI を接続…
+ai.none = AI はまだ接続されていません
+ai.none_text = Claude、ChatGPT、Claude Code、Cursor のいずれかを接続すると、AI が自分でコマンドの出力を読み取るので、チャットにコピーする必要がなくなります。
+ai.sees_nothing = 現在、閲覧できるマシンはありません。「変更」でマシンにチェックを入れてください。
+ai.change = 変更
+ai.forget = 登録解除
+ai.forgotten = {ai} の接続を解除しました。tTerm の内容は、もう何も閲覧できません。
+ai.all_forgotten = other: AI の接続 {n} 件を解除しました。
+ai.forget_all = すべての AI の接続を解除
+ai.forget_all_text = すべての AI の接続が一度に解除され、どの AI も tTerm の内容を閲覧できなくなります。ターミナルは動き続けます。
+ai.forget_all_ask = すべての AI の接続を解除…
+ai.saved = {ai} は、選択した内容を閲覧できるようになりました。
+# What the AI may do, as chips in the lists.
+ai.chip_see = 閲覧
+ai.chip_propose = コマンド提案
+ai.chip_notes = ノート作成
+# How long it may stay: after "Looks ·", or as a line of its own.
+ai.until_forever = 取り消すまで
+# {day} is a day: 5 Dec.
+ai.until_day = {day}まで
+# {term} is one of the two above, with a capital: "Until 5 Dec · last asked 2 hours ago".
+ai.times = {term} · 最終アクセス：{ago}
+ai.times_never = {term} · まだアクセスはありません
+# Its machines, a project at a time: "Personal: web-01, droplet; only the
+# log of db-internal". {machines} is a list.
+ai.project_machines = {project}：{machines}
+ai.only_log = {machines} のログのみ
+ai.only_terminals = {machines} のターミナルのみ
+# Where it takes you back, after its name.
+ai.title_web = {name} · {place}
+ai.title_here = {name}（このコンピューター）
+ai.title_app = {name}（このコンピューター上のアプリ）
+# The machines under the keys: {machines} is a list, {where} is one of the
+# three below: where the keys are open or closed.
+ai.keys_seen = {where}鍵が開いているあいだ、{machines} を閲覧できます。
+ai.keys_not_seen = {where}は鍵が開いていないため、現在 {machines} は閲覧できません。
+ai.keys_where_here = このデバイスで
+# {device} as Settings › Devices names it: Chrome on macOS.
+ai.keys_where_device = {device} で
+ai.keys_where_browser = AI を許可したブラウザーで
+# The window that says how to connect an AI.
+ai.how_title = AI を接続
+ai.how_lead = AI は、あなたが選んだターミナルを閲覧します。コマンドを実行するのはあなたです。
+ai.how_copy = tTerm のアドレスをコピー
+ai.copy = コピー
+ai.copied = コピーしました
+ai.how_add = AI に追加
+ai.how_where = 接続先
+ai.how_other = その他の AI
+ai.how_claude = Claude で「コネクタ」を開き、このアドレスでカスタムコネクタを追加します。Claude に求められたら、サインインします。Claude の無料プランでは、カスタムコネクタを 1 つ追加できます。
+ai.how_chatgpt = Web 版 ChatGPT の「プラグイン」で、このアドレスでカスタム MCP サーバーを追加してサインインします。チャットでは @ を入力して tTerm を選びます。ChatGPT Pro、Business、Enterprise、Edu で利用できます。
+ai.how_code_run = ターミナルで次のコマンドを実行します：
+# <c>…</c> is a command, in code type.
+ai.how_code_then = 次に Claude Code で <c>/mcp</c> と入力し、tterm を選んでサインインします。
+ai.how_cursor = Cursor で MCP の設定を開き、このアドレスでサーバーを追加します。Cursor に求められたら、サインインします。
+ai.how_any = リモート MCP サーバーに接続できる AI なら、どれでも使えます。入力する内容：
+ai.how_address = アドレス
+ai.how_transport = トランスポート
+ai.how_transport_value = HTTP (Streamable HTTP)
+ai.how_signin = サインイン
+ai.how_signin_value = OAuth：AI が tTerm のページを開き、そこで AI にできることを許可します
+ai.how_allow = tTerm で許可
+ai.how_allow_text = tTerm のページが開きます。サインインして、マシンにチェックを入れ、AI にできることと期間を選んで、「許可」を押します。その後、AI がここに表示されます。
+ai.how_keys = 鍵で保護されたマシン（あなたの鍵で開くもの、Mac 経由のもの、Mac 自体）を AI が閲覧できるのは、AI を許可したデバイスで鍵が開いているあいだだけです。
+# Change: the same choice as when it was allowed.
+ai.change_title = {ai} にできることを変更
+ai.change_keys_here = 今後、鍵で保護されたマシンは、このデバイスで鍵が開いているあいだ閲覧できます。
+ai.save = 保存
+# The project's page.
+ai.project_title = AI
+ai.project_about = このプロジェクトのマシンを閲覧できる AI です。全プロジェクトの AI は「設定」の「AI」で確認できます。
+ai.project_connect = AI を接続
+ai.project_none = このプロジェクトのマシンを閲覧できる AI はありません。
+ai.allowed_by_you = （あなたが許可）
+ai.leave = プロジェクトから接続を解除
+ai.leave_title = {ai} は {project} のマシンを閲覧できなくなります。ほかのプロジェクトではそのままです
+ai.left_project = {ai} は {project} のマシンを閲覧できなくなりました。
+ai.project_table = {project} で {ai} が閲覧できるもの
+ai.machine = マシン
+ai.terminals = ターミナル
+ai.log = ログ
+ai.keys_follow = AI を許可したデバイスで鍵が開いているあいだだけ閲覧できます
+ai.while_open = 鍵が開いているあいだ
+ai.yes = はい
+ai.no = いいえ
+ai.project_new_machines = プロジェクトの新しいマシンは、「変更」でチェックを入れるまで AI は閲覧できません。
+# The terminal: the chip in the bar, and its window.
+ai.chip_one = {ai} が閲覧中
+ai.chip_more = other: {ai} ほか {n} 件が閲覧中
+ai.chip_title = {ai} はこのターミナルを閲覧できます
+ai.pop_text = あなたが何かを頼んだときに、このターミナルのコマンドと出力を閲覧します。ここで何かを入力することはありません。
+ai.pop_closed = AI を許可したデバイスでは鍵が開いていないため、現在このマシンは閲覧できません。
+ai.pop_forget = {ai} の登録を解除
+ai.pop_settings = 設定 › AI
+# The eye at a block the AI read, and at a terminal in the sidebar.
+ai.read_title = {ai} がこの出力を読み取りました
+# For screen readers, after the terminal's name.
+ai.eye_hidden = 、{ai} が閲覧中
+# The choice: on the allow page and in Change.
+ai.project = プロジェクト
+ai.machines = マシン
+ai.machines_of = {project} のマシン
+ai.no_machines = このプロジェクトにマシンはありません。
+ai.under_keys = 鍵で保護
+# How a machine opens, under its name.
+ai.how_line = tTerm のアクセス権
+ai.how_key = あなたの鍵
+ai.how_mac = Mac 経由
+ai.how_computer = あなたのコンピューター
+# For screen readers: the tick of a machine's terminals, of its log.
+ai.terminals_of = {machine} のターミナル
+ai.log_of = {machine} のログ
+ai.machines_note = ターミナル：そのマシン上のあなたのターミナルのコマンドと出力。ログ：そのマシンで、誰が、いつ、何を実行したか。
+ai.can_title = {ai} にできること
+ai.can_see = 閲覧
+ai.can_see_text = 上でチェックしたマシンのコマンド、その出力、ログ。
+ai.cannot = {ai} は、自分でコマンドを入力・実行することも、ターミナルを開くことも、鍵を持ち出すこともできません。
+ai.term = 期間
+ai.term_forever = 自分で取り消すまで（期限なし）
+# {day}: 5 Dec.
+ai.term_days = other: {n} 日間（{day}まで）
+# In Change: as it is now. {until} is "until you take it back" or "until 5 Dec".
+ai.term_keep = 現在のまま：{until}
+ai.term_forever_note = 「設定」の「AI」で「登録解除」を押すまで、{ai} は接続されたままです。
+ai.term_days_note = 期限が来ると、{ai} はもう一度許可を求めます。
+# {projects} is a list of projects: Personal and Client X; {until}: "until you take it back", "until 5 Dec".
+ai.summary = other: {ai} は {projects} のマシン {n} 台を閲覧できます（{until}）。
+ai.summary_none = まだ何も選択されていません。
+# Machines under the keys, ticked. {machines} is a list.
+ai.keys_locked = 鍵で保護されたマシン：{machines}
+ai.keys_text = {ai} がこれらのマシンを閲覧できるようにするには、鍵を開いてください。閲覧できるのは、このデバイスで鍵が開いているあいだだけです。
+ai.keys_password = 保管庫のパスワード
+ai.keys_open = 鍵を開く
+ai.keys_opening = 開いています…
+ai.keys_no_password = 保管庫にはパスワードがありません。このデバイスの別のタブで tTerm を開いて鍵を開き、もう一度確認してください。
+ai.keys_check = もう一度確認
+ai.keys_open_here = このブラウザーで鍵が開いています。{machines}：ここで鍵が開いているあいだ、{ai} が閲覧できます。鍵は「ロック」を押す、サインアウトする、または 8 時間何も操作しないと閉じます。
+ai.keys_password_ok = パスワードを確認しました。{machines}：このデバイスの tTerm で鍵が開いているあいだ、{ai} が閲覧できます。鍵は「ロック」を押す、サインアウトする、または 8 時間何も操作しないと閉じます。
+
+# ---------------------------------- connect_ai: the page an AI app opens to connect (ConnectAi.tsx)
+connect_ai.title_tab = AI を接続
+connect_ai.title = {ai} を tTerm に接続しますか？
+# <b>…</b> is bold. {place}: claude.ai, or "an app on this computer".
+connect_ai.asks_web = <b>{ai}</b> が、あなたのアカウント <b>{email}</b> へのアクセスを求めています。「許可」を押すと、<b>{place}</b> に戻ります。
+connect_ai.asks_here = <b>{ai}</b> が、あなたのアカウント <b>{email}</b> へのアクセスを求めています。「許可」を押すと、{place}に戻ります。
+connect_ai.place_here = このコンピューター上のアプリ
+# {scheme} is the app's own scheme: cursor.
+connect_ai.place_app = このコンピューター上の {scheme} アプリ
+connect_ai.not_you = ご本人ではありませんか？
+# An app that calls itself Claude and takes you elsewhere. {claims}: Claude; {host}: where it goes back; {real}: claude.ai.
+connect_ai.warning = このアプリは {claims} を名乗っていますが、戻り先は {real} ではなく {host} です。このアプリに心当たりがある場合のみ、許可してください。
+connect_ai.said = 「{said}」と名乗っています。
+connect_ai.goes_to = {ai} が読み取った内容は、チャットにコピーしたときと同じように {place} に送られます。
+connect_ai.goes_to_here = {ai} が読み取った内容は、このコンピューター上のアプリに送られ、そこからアプリが送る先に届きます。
+connect_ai.forget_any_time = 「設定」の「AI」の「登録解除」から、いつでも接続を解除できます。
+connect_ai.why_none = マシンを 1 台以上チェックしてください。
+connect_ai.why_keys = 先に鍵を開くか、鍵で保護されたマシンのチェックを外してください。
+connect_ai.keys_first = このデバイスでは鍵が開いていません。鍵を開くか、鍵で保護されたマシンのチェックを外してください。
+connect_ai.back = {ai} に戻っています…
+connect_ai.back_note = 変更や接続の解除は、「設定」の「AI」で行えます。
+connect_ai.back_app = {ai} が開かない場合は、手動で {ai} に戻ってください。接続はそちらで完了します。
+connect_ai.over_title = このリクエストは終了しています
+connect_ai.over = すでに応答済みか、10 分以上が経過しています。AI アプリで、もう一度 tTerm を接続してください。
+connect_ai.problem_client = tTerm はこのアプリを認識していません。アプリで、もう一度 tTerm を接続してください。その際、アプリが最初に自分自身を登録します。
+connect_ai.problem_redirect = このアプリは、登録していない場所にあなたを戻そうとしています。アプリで、もう一度 tTerm を接続してください。
+connect_ai.problem_request = リクエストが不完全です。AI アプリで、もう一度 tTerm を接続してください。
+connect_ai.account_changed = このブラウザーでは、現在別のアカウントでサインインしています。どのアカウントか確認してから、許可してください。
+# Before signing in the page does not know the AI's name yet: {app} is "the AI".
+connect_ai.the_ai = AI
+connect_ai.confirm = {app} を許可するには、本人確認をしてください。
+connect_ai.signin_other = もう一方のアカウントでサインインしてから、{app} を許可してください。
+connect_ai.signin_then = サインインしてから、{app} を許可してください。
 `;export{e as default};

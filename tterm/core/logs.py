@@ -574,6 +574,38 @@ async def day(pool: asyncpg.Pool, user_id: uuid.UUID, machine_id: uuid.UUID,
             "entries": entries, "cut": cut}
 
 
+#: What an AI reads of a log at once (0.1.29): lines at most, and from
+#: when to when at most.
+LINES_MAX = 500
+LINES_SPAN_MAX = dt.timedelta(days=31)
+
+
+async def lines(pool: asyncpg.Pool, user_id: uuid.UUID, machine_id: uuid.UUID,
+                since: dt.datetime, until: dt.datetime, *, limit: int = 200,
+                newest: bool = False) -> dict:
+    """The machine's log from `since` to `until`, for an AI the person
+    connected (0.1.29): its lines as a day has them, each command with its
+    notes, over up to a month; at most `limit` of them, the oldest first or
+    the newest, and whether there were more."""
+    if not since < until <= since + LINES_SPAN_MAX:
+        raise Invalid("Ask for at most a month of the log, the start before "
+                      "the end.")
+    limit = max(1, min(LINES_MAX, int(limit)))
+    order = "DESC" if newest else "ASC"
+    async with pool.acquire() as conn:
+        machine = await machine_of(conn, machine_id, user_id)
+        rows = await conn.fetch(
+            _LINES + f"""
+            WHERE j.machine_id = $1 AND j.at >= $3 AND j.at < $4
+              AND j.kind = ANY($5::text[]) AND j.expires_at > now() AND {_ONCE}
+            ORDER BY j.at {order}, j.id {order}
+            LIMIT $6
+            """, machine_id, user_id, since, until, list(KINDS), limit + 1)
+        more = len(rows) > limit
+        entries = await _entries(conn, rows[:limit], user_id, machine["role"])
+    return {**_about(machine), "entries": entries, "more": more}
+
+
 def _like(word: str) -> str:
     """The pattern that finds a word anywhere, its own % and _ as
     themselves (as search.py looks for words)."""

@@ -9,8 +9,9 @@
 // Preferences: General (the theme, project colors, the language, which the
 // account's menu has too), Account and Plan (from 0.1.27 here, not a page of
 // their own; payment will come under the plan). Security: Keys (0.1.17) and
-// Devices. In tTerm for Mac also its own: This computer (0.1.14, signed in)
-// and Updates (0.1.15). Before signing in, in the app, there is no account:
+// Devices. Connections: AI (0.1.29, Ai.tsx), for the accounts it is on for.
+// In tTerm for Mac also its own: This computer (0.1.14, signed in) and
+// Updates (0.1.15). Before signing in, in the app, there is no account:
 // General and Updates, the choices kept on this computer.
 //
 // On a phone the window is the screen: the sections first, then the one
@@ -27,11 +28,12 @@ import {
   loadAccount, type AccountInfo, type Me, type Project, type ProjectTint, type Theme,
 } from "./api";
 import { AccountPane, planLine, PlanPane, SUPPORT } from "./Account";
+import { AiSection } from "./Ai";
 import { DevicesSection } from "./Devices";
 import { LANGUAGES, useT, type Lang } from "./i18n";
 import {
   Card, ChevronDown, ChevronLeft, ChevronRight, Close, Computer, Devices, Download, Gear,
-  Key, Monitor, Moon, Person, Search, Sun,
+  Key, Monitor, Moon, Person, Search, Spark, Sun,
 } from "./icons";
 import { KeysSection } from "./Keys";
 import { InApp } from "./local";
@@ -84,6 +86,11 @@ interface Props {
   projects: Project[];
   /** Write to support: deleting the account goes through it. */
   onSupport: () => void;
+  /** AI through MCP (0.1.29), for every account: Connections › AI. tTerm
+   * for the computer before signing in has none. */
+  aiEnabled: boolean;
+  /** An AI changed or was forgotten: the page hears who may see what. */
+  onAiChanged: () => void;
 }
 
 const THEMES: { value: Theme; label: string; icon: ReactNode }[] = [
@@ -206,6 +213,16 @@ export function Settings(props: Props) {
             t("devices.forget_all"), t("settings.devices_words")]),
         ],
       });
+      // Connections (0.1.29): AI, where more will come.
+      if (props.aiEnabled) {
+        out.push({
+          title: t("settings.group_connections"), items: [
+            item("ai", <Spark size={18} />, t("ai.item"), [
+              t("ai.title"), t("ai.about"), t("ai.connect"), t("ai.forget_all"),
+              t("settings.ai_words")]),
+          ],
+        });
+      }
     }
     // In the app its own: This computer, signed in, and Updates, once the
     // app has said how it updates (Updates.tsx).
@@ -217,7 +234,7 @@ export function Settings(props: Props) {
     ] : [];
     if (app.length) out.push({ title: t("app_link.mac"), items: app });
     return out;
-  }, [t, local, inApp, props.here, updating, support, info]);
+  }, [t, local, inApp, props.here, updating, support, info, props.aiEnabled]);
   const all = groups.flatMap((g) => g.items);
   const searching = query.trim() !== "";
   const found = searching ? sectionsFound(all, query, t.lang) : all.map((s) => s.key);
@@ -332,6 +349,11 @@ export function Settings(props: Props) {
                 : <div className="waiting"><span className="spinner" />{t("common.loading")}</div>}
             </div>
           </section>
+        );
+      case "ai":
+        return (
+          <AiSection projects={props.projects} notify={props.notify}
+            onChanged={props.onAiChanged} />
         );
       case "computer":
         return props.here ? <ThisComputerSection here={props.here} /> : null;

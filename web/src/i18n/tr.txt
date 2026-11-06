@@ -215,6 +215,7 @@ settings.tint_block = Tüm proje
 settings.general = Genel
 settings.group_preferences = Tercihler
 settings.group_security = Güvenlik
+settings.group_connections = Bağlantılar
 # For screen readers: the list of the sections.
 settings.sections = Ayarların bölümleri
 # The search over Settings, and what it says when no section has the words typed.
@@ -238,6 +239,7 @@ settings.payment_note = Ücretli planlarla birlikte burada görünecek.
 # Words the search finds a section by, besides its name; never shown. In English, then in the language.
 settings.keys_words = ssh keys vault password passphrase servers anahtarlar kasa parola sunucular
 settings.devices_words = devices browsers sessions signed in forget sign out cihazlar tarayıcılar oturumlar giriş unut çıkış
+settings.ai_words = AI MCP Claude ChatGPT Cursor connector assistant model YZ yapay zekâ bağlayıcı asistan model
 settings.computer_words = this computer mac connection bu bilgisayar bağlantı
 settings.updates_words = updates version new restart check güncellemeler sürüm yeni yeniden başlat denetle
 
@@ -769,7 +771,7 @@ devices.browser_times = Eklendi: {created}, son giriş: {used}
 devices.forget = Unut
 # The heading, and the red button that does it.
 devices.forget_all = Tüm cihazları unut
-devices.forget_all_text = Tüm cihazlar unutulur ve bu dahil tüm oturumlar sona erer. Ardından her tarayıcı e-postayla gelen bir kod ister. Terminallerin çalışmaya devam eder.
+devices.forget_all_text = Tüm cihazlar unutulur, bu dahil tüm oturumlar sona erer ve tüm YZ bağlantıları kesilir. Ardından her tarayıcı e-postayla gelen bir kod ister. Terminallerin çalışmaya devam eder.
 # The button that asks first.
 devices.forget_all_ask = Tüm cihazları unut…
 
@@ -2067,3 +2069,184 @@ moved.how_mac_many = <b>{servers}</b> yalnızca bu Mac üzerinden açılır: Mac
 moved.keys_one = <b>{keys}</b> artık kasanda ve şifreli: kasa parolanla, bu Mac'te ise Touch ID ile açılır. Her cihazda Ayarlar › Anahtarlar bölümünde görünür.
 moved.keys_many = <b>{keys}</b> artık kasanda ve şifreli: kasa parolanla, bu Mac'te ise Touch ID ile açılır. Her cihazda Ayarlar › Anahtarlar bölümünde görünür.
 moved.no_keys = Hiçbir anahtar taşınmadı: anahtarların bu Mac'te kalıyor.
+
+# ------------------------------------------------ ai: AI through MCP (Ai.tsx, AiChoice.tsx, aiText.ts)
+# An AI app (Claude, ChatGPT, Claude Code, Cursor, any with MCP) the person
+# lets see their terminals and the machines' logs. {ai} is its name, as
+# tTerm calls it: Claude. Claude, ChatGPT, Claude Code and Cursor are
+# product names, not translated. The item in Settings, under Connections.
+ai.item = YZ
+ai.title = Bağlı YZ
+ai.about = Terminallerini görmesine izin verdiğin Claude, ChatGPT, Cursor ya da başka bir YZ. İzin verdiklerini okur; komutları her zaman sen çalıştırırsın.
+ai.connect = YZ bağla…
+ai.none = Henüz bağlı bir YZ yok
+ai.none_text = Claude, ChatGPT, Claude Code ya da Cursor'ı bağla: komutlarının çıktısını kendisi görür, artık onu sohbete kopyalaman gerekmez.
+ai.sees_nothing = Şu anda hiçbir makineyi görmüyor: Değiştir penceresinde birkaç makine işaretle.
+ai.change = Değiştir
+ai.forget = Unut
+ai.forgotten = {ai} ile bağlantı kesildi: artık tTerm'de hiçbir şey görmüyor.
+ai.all_forgotten = one: YZ bağlantısı kesildi. | other: {n} YZ bağlantısı kesildi.
+ai.forget_all = Tüm YZ bağlantılarını kes
+ai.forget_all_text = Tüm YZ bağlantıları aynı anda unutulur: hiçbiri artık tTerm'de hiçbir şey göremez. Terminallerin çalışmaya devam eder.
+ai.forget_all_ask = Tüm YZ bağlantılarını kes…
+ai.saved = {ai} artık seçtiklerini görüyor.
+# What the AI may do, as chips in the lists.
+ai.chip_see = Görür
+ai.chip_propose = Komut önerir
+ai.chip_notes = Not yazar
+# How long it may stay: after "Looks ·", or as a line of its own.
+ai.until_forever = sen geri alana kadar
+# {day} is a day: 5 Dec.
+ai.until_day = {day} tarihine kadar
+# {term} is one of the two above, with a capital: "Until 5 Dec · last asked 2 hours ago".
+ai.times = {term} · en son {ago} erişti
+ai.times_never = {term} · henüz erişmedi
+# Its machines, a project at a time: "Personal: web-01, droplet; only the
+# log of db-internal". {machines} is a list.
+ai.project_machines = {project}: {machines}
+ai.only_log = {machines} için yalnızca log
+ai.only_terminals = {machines} için yalnızca terminaller
+# Where it takes you back, after its name.
+ai.title_web = {name} · {place}
+ai.title_here = {name}, bu bilgisayarda
+ai.title_app = {name}, bu bilgisayardaki bir uygulama
+# The machines under the keys: {machines} is a list, {where} is one of the
+# three below: where the keys are open or closed.
+ai.keys_seen = Anahtarlar {where} açıkken görür: {machines}.
+ai.keys_not_seen = Anahtarlar {where} kapalı, bu yüzden şu anda görmüyor: {machines}.
+ai.keys_where_here = bu cihazda
+# {device} as Settings › Devices names it: Chrome on macOS.
+ai.keys_where_device = {device} üzerinde
+ai.keys_where_browser = izin verildiği tarayıcıda
+# The window that says how to connect an AI.
+ai.how_title = YZ bağla
+ai.how_lead = YZ, seçtiğin terminalleri görecek. Komutları sen çalıştırırsın.
+ai.how_copy = tTerm'in adresini kopyala
+ai.copy = Kopyala
+ai.copied = Kopyalandı
+ai.how_add = Adresi YZ'ye ekle
+ai.how_where = Nereye bağlıyorsun
+ai.how_other = Başka bir YZ
+ai.how_claude = Claude'da Bağlayıcılar (Connectors) bölümünü aç ve bu adresle özel bir bağlayıcı (custom connector) ekle. Claude istediğinde giriş yap. Claude'un ücretsiz planında tek bir özel bağlayıcı ekleyebilirsin.
+ai.how_chatgpt = ChatGPT'nin web sürümünde Eklentiler bölümünde bu adresle özel bir MCP sunucusu ekle ve giriş yap. Bir sohbette @ yaz ve tTerm'i seç. ChatGPT Pro, Business, Enterprise ve Edu'da var.
+ai.how_code_run = Bir terminalde şunu çalıştır:
+# <c>…</c> is a command, in code type.
+ai.how_code_then = Ardından Claude Code'da <c>/mcp</c> yaz, tterm sunucusunu seç ve giriş yap.
+ai.how_cursor = Cursor'da MCP ayarlarını aç ve bu adresle bir sunucu ekle. Cursor istediğinde giriş yap.
+ai.how_any = Uzak MCP sunucularına bağlanabilen her YZ uygundur. Doldurman gerekenler:
+ai.how_address = Adres
+ai.how_transport = Aktarım
+ai.how_transport_value = HTTP (Streamable HTTP)
+ai.how_signin = Giriş
+ai.how_signin_value = OAuth: YZ bir tTerm sayfası açar, neler yapabileceğine orada sen izin verirsin
+ai.how_allow = tTerm'de izin ver
+ai.how_allow_text = Bir tTerm sayfası açılır: giriş yap, makineleri işaretle, YZ'nin neler yapabileceğini ve bunun ne kadar süreceğini seç, ardından İzin ver düğmesine bas. Sonra YZ burada görünür.
+ai.how_keys = YZ, anahtar korumalı makineleri (kendi anahtarınla ya da Mac'in üzerinden açılan sunucuları ve Mac'in kendisini) yalnızca ona izin verdiğin cihazda anahtarlar açıkken görür.
+# Change: the same choice as when it was allowed.
+ai.change_title = {ai} için izinleri değiştir
+ai.change_keys_here = Anahtar korumalı makineler bundan sonra bu cihazdaki anahtarlara bağlı.
+ai.save = Kaydet
+# The project's page.
+ai.project_title = YZ
+ai.project_about = Bu projenin makinelerini görebilen YZ'ler. Hepsi, tüm projelerde: Ayarlar › YZ
+ai.project_connect = YZ bağla
+ai.project_none = Bu projenin makinelerini hiçbir YZ görmüyor.
+ai.allowed_by_you = (senin izninle)
+ai.leave = Projeden çıkar
+ai.leave_title = {ai} artık {project} projesinin makinelerini görmez; diğer projelerde kalır
+ai.left_project = {ai} artık {project} projesinin hiçbir makinesini görmüyor.
+ai.project_table = {ai}, {project} projesinde neleri görüyor
+ai.machine = Makine
+ai.terminals = Terminaller
+ai.log = Log
+ai.keys_follow = Yalnızca izin verildiği cihazda anahtarların açıkken görür
+ai.while_open = anahtarlar açıkken
+ai.yes = evet
+ai.no = hayır
+ai.project_new_machines = YZ, projenin yeni makinelerini sen Değiştir penceresinde işaretleyene kadar görmez.
+# The terminal: the chip in the bar, and its window.
+ai.chip_one = {ai} izliyor
+ai.chip_more = one: {ai} ve bir YZ daha izliyor | other: {ai} ve {n} YZ daha izliyor
+ai.chip_title = {ai} bu terminali görebilir
+ai.pop_text = Ona bir şey sorduğunda bu terminalin komutlarını ve çıktısını görür. Buraya kendisi hiçbir şey yazmaz.
+ai.pop_closed = Bu makineyi şu anda görmüyor: izin verildiği cihazda anahtarlar kapalı.
+ai.pop_forget = {ai} bağlantısını unut
+ai.pop_settings = Ayarlar › YZ
+# The eye at a block the AI read, and at a terminal in the sidebar.
+ai.read_title = {ai} bu çıktıyı okudu
+# For screen readers, after the terminal's name.
+ai.eye_hidden = , {ai} izliyor
+# The choice: on the allow page and in Change.
+ai.project = Proje
+ai.machines = Makineler
+ai.machines_of = {project} projesinin makineleri
+ai.no_machines = Bu projede makine yok.
+ai.under_keys = anahtar korumalı
+# How a machine opens, under its name.
+ai.how_line = tTerm'in satırı
+ai.how_key = anahtarın
+ai.how_mac = Mac'in üzerinden
+ai.how_computer = bilgisayarın
+# For screen readers: the tick of a machine's terminals, of its log.
+ai.terminals_of = {machine} makinesinin terminalleri
+ai.log_of = {machine} makinesinin logu
+ai.machines_note = Terminaller: makinedeki terminallerinin komutları ve çıktısı. Log: makinede neyin, kim tarafından ve ne zaman çalıştırıldığı.
+ai.can_title = {ai} neler yapabilir
+ai.can_see = Görüntüleme
+ai.can_see_text = Yukarıda işaretlenen makinelerin komutları, çıktıları ve logları.
+ai.cannot = {ai} kendi başına komut yazamaz ya da çalıştıramaz, terminal açamaz ve anahtarları alamaz.
+ai.term = Ne kadar süre
+ai.term_forever = Geri alana kadar (süresiz)
+# {day}: 5 Dec.
+ai.term_days = one: {n} gün, {day} tarihine kadar | other: {n} gün, {day} tarihine kadar
+# In Change: as it is now. {until} is "until you take it back" or "until 5 Dec".
+ai.term_keep = Şu anki gibi: {until}
+ai.term_forever_note = {ai}, sen Ayarlar › YZ bölümünde Unut düğmesine basana kadar bağlı kalır.
+ai.term_days_note = Süre dolunca {ai} senden yeniden izin ister.
+# {projects} is a list of projects: Personal and Client X; {until}: "until you take it back", "until 5 Dec".
+ai.summary = one: {ai}, {until} {projects} içindeki {n} makineyi görebilecek. | other: {ai}, {until} {projects} içindeki {n} makineyi görebilecek.
+ai.summary_none = Henüz hiçbir şey seçilmedi.
+# Machines under the keys, ticked. {machines} is a list.
+ai.keys_locked = Anahtar korumalı: {machines}
+ai.keys_text = {ai} bunları görebilsin diye anahtarları aç. Bu makineleri yalnızca anahtarlar bu cihazda açıkken görecek.
+ai.keys_password = Kasa parolası
+ai.keys_open = Anahtarları aç
+ai.keys_opening = Açılıyor…
+ai.keys_no_password = Kasanın parolası yok: anahtarları bu cihazdaki tTerm'de, başka bir sekmede aç; sonra yeniden kontrol et.
+ai.keys_check = Yeniden kontrol et
+ai.keys_open_here = Anahtarlar bu tarayıcıda açık. {machines}: {ai}, anahtarlar burada açık olduğu sürece görecek, yani Kilitle düğmesine basılana, çıkış yapılana ya da 8 saat boyunca hiçbir işlem yapılmayana kadar.
+ai.keys_password_ok = Parola doğru. {machines}: {ai}, bu cihazdaki tTerm'de anahtarlar açık olduğu sürece görecek, yani Kilitle düğmesine basılana, çıkış yapılana ya da 8 saat boyunca hiçbir işlem yapılmayana kadar.
+
+# ---------------------------------- connect_ai: the page an AI app opens to connect (ConnectAi.tsx)
+connect_ai.title_tab = YZ bağla
+connect_ai.title = {ai} tTerm'e bağlansın mı?
+# <b>…</b> is bold. {place}: claude.ai, or "an app on this computer".
+connect_ai.asks_web = <b>{ai}</b>, <b>{email}</b> hesabına erişim istiyor. İzin verdiğinde seni şuraya geri götürür: <b>{place}</b>.
+connect_ai.asks_here = <b>{ai}</b>, <b>{email}</b> hesabına erişim istiyor. İzin verdiğinde seni şuraya geri götürür: {place}.
+connect_ai.place_here = bu bilgisayardaki bir uygulama
+# {scheme} is the app's own scheme: cursor.
+connect_ai.place_app = bu bilgisayardaki {scheme} uygulaması
+connect_ai.not_you = Sen değil misin?
+# An app that calls itself Claude and takes you elsewhere. {claims}: Claude; {host}: where it goes back; {real}: claude.ai.
+connect_ai.warning = Kendini {claims} olarak tanıtıyor, ama seni {real} adresine değil, {host} adresine geri götürüyor. Yalnızca bu uygulamayı tanıyorsan izin ver.
+connect_ai.said = Kendini “{said}” olarak tanıtıyor.
+connect_ai.goes_to = {ai} ne okursa, sohbete kendin kopyalamışsın gibi {place} adresine gider.
+connect_ai.goes_to_here = {ai} ne okursa bu bilgisayardaki uygulamaya, oradan da uygulama nereye gönderirse oraya gider.
+connect_ai.forget_any_time = Bağlantıyı istediğin zaman kesebilirsin: Ayarlar › YZ, Unut.
+connect_ai.why_none = En az bir makine işaretle.
+connect_ai.why_keys = Önce anahtarları aç ya da anahtar korumalı makinelerin işaretini kaldır.
+connect_ai.keys_first = Anahtarlar bu cihazda kapalı: onları aç ya da anahtar korumalı makinelerin işaretini kaldır.
+connect_ai.back = {ai} uygulamasına dönülüyor…
+connect_ai.back_note = Değiştirmek ya da bağlantıyı kesmek için: Ayarlar › YZ.
+connect_ai.back_app = {ai} açılmadıysa ona kendin dön: bağlantı orada tamamlanır.
+connect_ai.over_title = Bu istek artık geçerli değil
+connect_ai.over = Ya zaten yanıtlandı ya da on dakikadan uzun süre bekledi. tTerm'i YZ uygulamasında yeniden bağla.
+connect_ai.problem_client = tTerm bu uygulamayı tanımıyor. tTerm'i uygulamada yeniden bağla: uygulama önce kaydolur.
+connect_ai.problem_redirect = Uygulama seni, kaydetmediği bir yere geri götürmek istiyor. tTerm'i uygulamada yeniden bağla.
+connect_ai.problem_request = İstek eksik. tTerm'i YZ uygulamasında yeniden bağla.
+connect_ai.account_changed = Bu tarayıcıda artık başka bir hesapla giriş yapılmış. Hangisi olduğunu kontrol et, sonra izin ver.
+# Before signing in the page does not know the AI's name yet: {app} is "the AI".
+connect_ai.the_ai = YZ
+connect_ai.confirm = {app}'ye izin vermek için sen olduğunu doğrula.
+connect_ai.signin_other = Diğer hesapla giriş yap, ardından {app}'ye izin ver.
+connect_ai.signin_then = Giriş yap, ardından {app}'ye izin ver.

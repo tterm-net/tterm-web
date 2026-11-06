@@ -15,6 +15,7 @@
 // sends that device nothing of what they do).
 
 import { useEffect, useState } from "react";
+import { AiProjectSection } from "./Ai";
 import type {
   Folder, Machine, MachineKind, Me, NoteSummary, Project, TerminalInfo, Who,
 } from "./api";
@@ -78,6 +79,9 @@ interface Props {
   onRename: (terminalId: string, name: string) => void;
   onStopRename: (terminalId: string) => void;
   notYet: (what: string) => void;
+  /** AI through MCP, for an account it is on for (0.1.29): the AI that
+   * sees this project's machines, with all the projects for Change. */
+  ai?: { projects: Project[]; onChanged: () => void } | null;
 }
 
 /** Naming a terminal on the page (0.1.2), as in its tab. */
@@ -450,6 +454,11 @@ export function ProjectPage(props: Props) {
           </p>
         )}
       </section>
+
+      {props.ai && !props.local && (
+        <AiProjectSection project={project} projects={props.ai.projects}
+          notify={props.notYet} onChanged={props.ai.onChanged} />
+      )}
 
       {project.personal && (
         <div className="pp-wide">

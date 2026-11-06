@@ -1077,7 +1077,7 @@ async def sign_out_everywhere(pool: asyncpg.Pool, user_id: uuid.UUID) -> None:
     """Every session ends and every device is forgotten: from anywhere,
     only a code from email signs in now. On the account page this is
     "Forget all devices" (0.0.10; in Settings from 0.1.4), so that it reads
-    like Forget for one."""
+    like Forget for one. From 0.1.29 every AI connected ends too."""
     async with pool.acquire() as conn, conn.transaction():
         # As exchange_app takes it (0.1.6): an app's sign-in that comes
         # meanwhile waits, and finds this done.
@@ -1087,8 +1087,18 @@ async def sign_out_everywhere(pool: asyncpg.Pool, user_id: uuid.UUID) -> None:
                            "WHERE user_id = $1 AND forgotten_at IS NULL", user_id)
         await conn.execute("UPDATE sessions SET ended_at = now() "
                            "WHERE user_id = $1 AND ended_at IS NULL", user_id)
+        # And every AI connected (0.1.29): whoever got in could have
+        # connected one of their own; the person connects theirs again.
+        ended = await conn.fetch(
+            "UPDATE ai_connections SET ended_at = now(), "
+            "end_reason = 'all devices forgotten' WHERE user_id = $1 "
+            "AND ended_at IS NULL RETURNING id", user_id)
+        await conn.execute(
+            "DELETE FROM ai_tokens WHERE connection_id = ANY($1::uuid[])",
+            [r["id"] for r in ended])
         await accounts.journal(conn, "user.signed_out_everywhere",
-                               user_id=user_id)
+                               user_id=user_id,
+                               details={"ai": len(ended)} if ended else None)
 
 
 async def sweep(pool: asyncpg.Pool) -> None:

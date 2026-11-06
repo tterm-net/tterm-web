@@ -9336,3 +9336,866 @@ mark.log-hit {
   align-self: stretch;
   text-align: left;
 }
+
+/* ------------------------------------------- AI through MCP (0.1.29) */
+/* As on the canvas, version 121: McpAllow, McpHow, McpSettings, McpProject,
+   McpTerminal. */
+
+/* /connect-ai: the sign-in card, wider, its form left-aligned. The card is
+   paper, which in the dark theme is the colour of surface: the summary and
+   the table's head take raised there, as the sign-in note does. */
+.signin-card.ai-card {
+  --ai-box: var(--raised);
+  max-width: 620px;
+  text-align: left;
+}
+
+.tt-light .signin-card.ai-card {
+  --ai-box: var(--surface);
+}
+
+.ai-card .ai-summary,
+.ai-card .ai-machines-head {
+  background: var(--ai-box);
+}
+
+.ai-connect .connect-icon,
+.ai-connect h1,
+.ai-connect > .connect-lead {
+  align-self: center;
+  text-align: center;
+}
+
+.connect-icon.ok {
+  background: var(--green-tint);
+  color: var(--green-ink);
+}
+
+.ai-connect-problem,
+.ai-card [role="status"] {
+  text-align: center;
+}
+
+.ai-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--amber-ink);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ai-link:hover {
+  text-decoration: underline;
+}
+
+.ai-warning {
+  margin: 18px 0 0;
+  padding: 12px 14px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  border: 1px solid var(--red-line);
+  border-radius: 12px;
+  background: var(--red-tint);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.ai-warning svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--red-ink);
+}
+
+.ai-said {
+  margin: 10px 0 0;
+  text-align: center;
+}
+
+.ai-small {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--faint);
+}
+
+.ai-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  margin-top: 26px;
+}
+
+.ai-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ai-field > label,
+.ai-field-name,
+.ai-can legend {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.ai-select,
+.ai-select select {
+  width: 100%;
+}
+
+.ai-select select {
+  height: 42px;
+  border-radius: 10px;
+  background: var(--ground);
+}
+
+.ai-machines {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.ai-machines-head,
+.ai-machine {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 92px 64px;
+  align-items: center;
+  gap: 0 8px;
+  padding: 0 12px;
+}
+
+.ai-machines-head {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  background: var(--surface);
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--faint);
+}
+
+.ai-machines-head span + span {
+  text-align: center;
+}
+
+.ai-machine {
+  min-height: 54px;
+  border-top: 1px solid var(--line);
+}
+
+.ai-machine-name {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--dim);
+}
+
+.ai-machine-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.ai-machine-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.ai-machine-how {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.ai-lock {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--amber-ink);
+}
+
+.ai-tick {
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.ai-tick input,
+.ai-can input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--amber);
+}
+
+.ai-machines-none {
+  margin: 0;
+  padding: 14px 12px;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+  color: var(--dim);
+}
+
+.ai-can {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ai-can legend {
+  padding: 0;
+  margin-bottom: 8px;
+}
+
+.ai-can-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.ai-can-item.on {
+  border-color: var(--amber-ring);
+  background: var(--amber-tint);
+}
+
+.ai-can-item > svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--amber-ink);
+}
+
+.ai-can-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--dim);
+}
+
+.ai-can-text strong {
+  font-size: 14px;
+  color: var(--ink);
+}
+
+.ai-cannot {
+  margin: 2px 0 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--faint);
+}
+
+.ai-cannot svg {
+  flex: none;
+  margin-top: 4px;
+  color: var(--red-ink);
+}
+
+/* The machines under the keys: open them here, or not. */
+.ai-keys {
+  margin-top: -10px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid var(--amber-ring);
+  border-radius: 12px;
+  background: var(--amber-tint);
+}
+
+.ai-keys-title {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.ai-keys-title svg {
+  flex: none;
+  color: var(--amber-ink);
+}
+
+.ai-keys-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--dim);
+}
+
+.ai-keys-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ai-keys-form label {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.ai-keys-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ai-keys-row .text-input {
+  flex: 1 1 200px;
+  min-width: 0;
+  height: 40px;
+}
+
+.ai-keys-row .button-accent {
+  height: 40px;
+}
+
+.ai-keys-open {
+  margin: -10px 0 0;
+  padding: 12px 14px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  border-radius: 12px;
+  background: var(--green-tint);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink);
+}
+
+.ai-keys-open svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--green-ink);
+}
+
+.ai-summary {
+  margin-top: 26px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.ai-summary-main {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--ink);
+}
+
+.ai-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.ai-why {
+  flex: 1 1 220px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--amber-ink);
+}
+
+/* The windows: Connect an AI, Change. */
+.dialog.ai-how {
+  max-width: 580px;
+  gap: 18px;
+}
+
+.dialog.ai-change {
+  max-width: 640px;
+  gap: 16px;
+}
+
+.ai-change .ai-choice {
+  margin-top: 0;
+}
+
+.ai-change .ai-actions {
+  margin-top: 0;
+}
+
+.ai-dialog-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ai-dialog-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ai-dialog-head h2 {
+  margin: 0;
+  font: 800 20px var(--font-ui);
+}
+
+.ai-dialog-head p,
+.ai-step-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--dim);
+}
+
+.ai-steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.ai-steps li {
+  display: flex;
+  gap: 12px;
+}
+
+.ai-step-n {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--raised);
+  color: var(--ink);
+  font: 700 12px var(--font-ui);
+}
+
+.ai-step {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ai-step strong {
+  font-size: 14px;
+}
+
+.ai-step-text code,
+.ai-facts code {
+  font: 500 12.5px var(--font-mono);
+  color: var(--ink);
+}
+
+.ai-copy-row {
+  display: flex;
+  gap: 8px;
+}
+
+.ai-mono {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  min-height: 38px;
+  box-sizing: border-box;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--ground);
+  font: 500 12.5px/1.5 var(--font-mono);
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.ai-copy-row .button-plain.small {
+  height: 38px;
+}
+
+.ai-tabs {
+  align-self: flex-start;
+  flex-wrap: wrap;
+}
+
+.ai-facts {
+  margin: 0;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px 14px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.ai-facts dt {
+  color: var(--dim);
+}
+
+.ai-facts dd {
+  margin: 0;
+}
+
+.ai-dialog-foot {
+  margin: 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--faint);
+}
+
+/* Settings › AI. */
+.account-section-head.ai-section-head {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px 20px;
+}
+
+.ai-section-title {
+  flex: 1 1 360px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ai-none {
+  border-top: 0;
+}
+
+.ai-row .device-icon {
+  background: var(--blue-tint);
+  color: var(--blue-ink);
+}
+
+.ai-row .device-text .chip {
+  background: var(--raised);
+  color: var(--dim);
+}
+
+.ai-row-buttons {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.ai-keys-line {
+  margin: 2px 0 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-weight: 600;
+  color: var(--dim);
+}
+
+.ai-keys-line.closed {
+  color: var(--amber-ink);
+}
+
+.ai-keys-line svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+/* The project's page. */
+.ai-project-card {
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.ai-project-top {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  padding: 12px 16px;
+}
+
+.ai-badge {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: var(--blue-tint);
+  color: var(--blue-ink);
+}
+
+.ai-project-name {
+  flex: 1 1 260px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ai-project-line {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+
+.ai-project-line .ai-small {
+  color: var(--dim);
+}
+
+.ai-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ai-chips .chip {
+  height: 22px;
+  padding: 0 8px;
+  background: var(--raised);
+  color: var(--dim);
+  font: 700 11px var(--font-ui);
+}
+
+.ai-project-table {
+  border-top: 1px solid var(--raised);
+}
+
+.ai-project-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 92px 64px;
+  align-items: center;
+  gap: 0 8px;
+  min-height: 38px;
+  padding: 0 16px 0 64px;
+  border-top: 1px solid var(--raised);
+}
+
+.ai-project-row:first-child {
+  border-top: 0;
+}
+
+.ai-project-row.head {
+  min-height: 0;
+  padding-top: 8px;
+  padding-bottom: 6px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--faint);
+}
+
+.ai-project-row.head span + span,
+.ai-yes {
+  display: flex;
+  justify-content: center;
+}
+
+.ai-yes {
+  color: var(--faint);
+}
+
+.ai-yes svg {
+  color: var(--green-ink);
+}
+
+.ai-project-machine {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.ai-project-machine > svg {
+  flex: none;
+  color: var(--dim);
+}
+
+.ai-project-mname {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-project-foot {
+  margin: 0;
+  padding: 10px 16px 12px 64px;
+  border-top: 1px solid var(--raised);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--dim);
+}
+
+@media (max-width: 560px) {
+  .ai-project-row,
+  .ai-project-foot {
+    padding-left: 16px;
+  }
+
+  .ai-machines-head,
+  .ai-machine,
+  .ai-project-row {
+    grid-template-columns: minmax(0, 1fr) 76px 48px;
+  }
+
+  .signin-card.ai-card {
+    padding: 32px 20px 28px;
+  }
+}
+
+/* The terminal: «Claude is looking», its window; the eyes. */
+.ai-chip-wrap {
+  position: relative;
+  display: flex;
+}
+
+.ai-chip {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--blue-tint);
+  color: var(--blue-ink);
+  font: 700 12px var(--font-ui);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.ai-pop {
+  position: absolute;
+  top: 40px;
+  right: 0;
+  z-index: 30;
+  width: 360px;
+  max-width: calc(100vw - 32px);
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--paper);
+  box-shadow: var(--shadow);
+  text-align: left;
+  font-family: var(--font-ui);
+}
+
+.ai-pop-one {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ai-pop-one + .ai-pop-one {
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.ai-pop-one > p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--dim);
+}
+
+.ai-pop-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ai-pop-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.ai-pop-name strong {
+  font-size: 14px;
+  color: var(--ink);
+}
+
+.ai-pop-buttons {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.button-plain.small.danger {
+  border-color: var(--red-line);
+  color: var(--red-ink);
+}
+
+.block-ai {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-ui);
+  font-weight: 600;
+  color: var(--blue-ink);
+}
+
+.sb-ai {
+  display: flex;
+  flex: none;
+  color: var(--blue-ink);
+}
+
+.ai-machine-name > svg {
+  flex: none;
+}
+
+.ai-tabs button {
+  white-space: nowrap;
+}
+
+.ai-chip {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

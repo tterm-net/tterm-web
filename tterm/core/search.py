@@ -92,13 +92,19 @@ def _line(raw: str) -> str:
     return "".join(cells)
 
 
-def plain(output: bytes) -> str:
-    """What a terminal printed, as text to search: the escape sequences
-    out, each line as the screen leaves it, no control characters; of a
-    long output its start and its end, whole lines."""
+def screen_text(output: bytes) -> str:
+    """What a terminal printed, as text: the escape sequences out, each
+    line as the screen leaves it, no control characters, all of it (0.1.29:
+    what an AI reads, cut of secrets after)."""
     text = _ESCAPES.sub("", output.decode("utf-8", "replace")).replace("\r\n", "\n")
     lines = [_CONTROL.sub("", _line(line)).rstrip() for line in text.split("\n")]
-    text = "\n".join(lines).strip("\n")
+    return "\n".join(lines).strip("\n")
+
+
+def plain(output: bytes) -> str:
+    """What a terminal printed, as text to search: as screen_text has it;
+    of a long output its start and its end, whole lines."""
+    text = screen_text(output)
     if len(text) > TEXT_HEAD + TEXT_TAIL:
         head, tail = text[:TEXT_HEAD], text[-TEXT_TAIL:]
         if "\n" in head:

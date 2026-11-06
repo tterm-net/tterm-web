@@ -7,6 +7,7 @@
 import {
   useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject,
 } from "react";
+import { AiRead } from "./Ai";
 import type { LogNote, Me, Redaction } from "./api";
 import { useBriefly } from "./briefly";
 import { useT } from "./i18n";
@@ -53,6 +54,8 @@ export interface FeedBlock {
   notes: LogNote[];
   redacted: Redaction | null;
   canNote: boolean;
+  /** The AI that read it (0.1.29): its eye in the block's line. */
+  aiRead?: { id: string; name: string }[];
 }
 
 /** What a block's copy buttons copy. */
@@ -227,6 +230,7 @@ export function BlockView(props: Props) {
             <span className="block-branch"><Branch size={12} />{block.branch}</span>
           )}
           {!running && <span>{clock(block.startedAt)}</span>}
+          <AiRead read={block.aiRead} />
         </span>
         {running ? (
           <button type="button" className="block-stop" onClick={props.onStop}

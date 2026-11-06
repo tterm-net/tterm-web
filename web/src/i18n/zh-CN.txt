@@ -215,6 +215,7 @@ settings.tint_block = 整个项目
 settings.general = 通用
 settings.group_preferences = 偏好
 settings.group_security = 安全
+settings.group_connections = 连接
 # For screen readers: the list of the sections.
 settings.sections = 设置分区
 # The search over Settings, and what it says when no section has the words typed.
@@ -238,6 +239,7 @@ settings.payment_note = 推出付费方案后会显示在这里。
 # Words the search finds a section by, besides its name; never shown. In English, then in the language.
 settings.keys_words = ssh keys vault password passphrase servers 密钥 保险库 密码 密码短语 服务器
 settings.devices_words = devices browsers sessions signed in forget sign out 设备 浏览器 会话 登录 移除 退出
+settings.ai_words = AI MCP Claude ChatGPT Cursor connector assistant model 人工智能 连接器 助手 模型 大模型
 settings.computer_words = this computer mac connection 这台电脑 连接
 settings.updates_words = updates version new restart check 更新 版本 新 重启 检查
 
@@ -769,7 +771,7 @@ devices.browser_times = 信任时间：{created}，上次登录：{used}
 devices.forget = 移除
 # The heading, and the red button that does it.
 devices.forget_all = 移除所有设备
-devices.forget_all_text = 所有设备都会被移除，所有会话都会结束，包括当前这个。之后每个浏览器都会要求输入邮件验证码。你的终端仍会继续运行。
+devices.forget_all_text = 所有设备都会被移除，所有会话都会结束，包括当前这个，所有已连接的 AI 也会断开连接。之后每个浏览器都会要求输入邮件验证码。你的终端仍会继续运行。
 # The button that asks first.
 devices.forget_all_ask = 移除所有设备…
 
@@ -2067,3 +2069,184 @@ moved.how_mac_many = <b>{servers}</b> 只能通过这台 Mac 打开：在它开�
 moved.keys_one = <b>{keys}</b> 现已加密存入你的保险库：可以用保险库密码打开，在这台 Mac 上也可以用触控 ID 打开。在任何设备上，“设置”›“密钥”中都会显示它。
 moved.keys_many = <b>{keys}</b> 现已加密存入你的保险库：可以用保险库密码打开，在这台 Mac 上也可以用触控 ID 打开。在任何设备上，“设置”›“密钥”中都会显示它们。
 moved.no_keys = 没有迁移任何密钥：你的密钥仍留在这台 Mac 上。
+
+# ------------------------------------------------ ai: AI through MCP (Ai.tsx, AiChoice.tsx, aiText.ts)
+# An AI app (Claude, ChatGPT, Claude Code, Cursor, any with MCP) the person
+# lets see their terminals and the machines' logs. {ai} is its name, as
+# tTerm calls it: Claude. Claude, ChatGPT, Claude Code and Cursor are
+# product names, not translated. The item in Settings, under Connections.
+ai.item = AI
+ai.title = 已连接的 AI
+ai.about = Claude、ChatGPT、Cursor 或其他你允许查看终端的 AI。它读取你允许的内容；命令始终由你来运行。
+ai.connect = 连接 AI…
+ai.none = 还没有连接任何 AI
+ai.none_text = 连接 Claude、ChatGPT、Claude Code 或 Cursor：它能直接看到命令的输出，你不用再把输出复制到聊天中。
+ai.sees_nothing = 目前看不到任何机器：请在“更改”中勾选。
+ai.change = 更改
+ai.forget = 移除
+ai.forgotten = {ai} 已断开连接：它再也看不到 tTerm 中的任何内容。
+ai.all_forgotten = other: 已断开 {n} 个 AI 连接。
+ai.forget_all = 断开所有 AI
+ai.forget_all_text = 所有 AI 连接都会立即被移除：它们都将无法再看到 tTerm 中的任何内容。你的终端仍会继续运行。
+ai.forget_all_ask = 断开所有 AI…
+ai.saved = {ai} 现在能看到你选择的内容。
+# What the AI may do, as chips in the lists.
+ai.chip_see = 查看
+ai.chip_propose = 建议命令
+ai.chip_notes = 写笔记
+# How long it may stay: after "Looks ·", or as a line of its own.
+ai.until_forever = 直到你撤销
+# {day} is a day: 5 Dec.
+ai.until_day = 直到 {day}
+# {term} is one of the two above, with a capital: "Until 5 Dec · last asked 2 hours ago".
+ai.times = {term} · 上次访问：{ago}
+ai.times_never = {term} · 尚未访问
+# Its machines, a project at a time: "Personal: web-01, droplet; only the
+# log of db-internal". {machines} is a list.
+ai.project_machines = {project}：{machines}
+ai.only_log = 仅 {machines} 的日志
+ai.only_terminals = 仅 {machines} 的终端
+# Where it takes you back, after its name.
+ai.title_web = {name} · {place}
+ai.title_here = 这台电脑上的 {name}
+ai.title_app = {name}，这台电脑上的应用
+# The machines under the keys: {machines} is a list, {where} is one of the
+# three below: where the keys are open or closed.
+ai.keys_seen = 只要密钥{where}处于打开状态，它就能看到 {machines}。
+ai.keys_not_seen = 它现在看不到 {machines}：密钥{where}已关闭。
+ai.keys_where_here = 在这台设备上
+# {device} as Settings › Devices names it: Chrome on macOS.
+ai.keys_where_device = 在设备“{device}”上
+ai.keys_where_browser = 在当初允许它的那个浏览器中
+# The window that says how to connect an AI.
+ai.how_title = 连接 AI
+ai.how_lead = AI 会看到你选择的终端。命令由你来运行。
+ai.how_copy = 复制 tTerm 的地址
+ai.copy = 复制
+ai.copied = 已复制
+ai.how_add = 把它添加到 AI 中
+ai.how_where = 在哪里连接
+ai.how_other = 其他 AI
+ai.how_claude = 在 Claude 中打开“连接器”（Connectors），用这个地址添加自定义连接器。Claude 提示时，请登录。在 Claude 的免费方案中，可以添加一个自定义连接器。
+ai.how_chatgpt = 在网页版 ChatGPT 的“插件”中，用这个地址添加自定义 MCP 服务器，然后登录。在对话中输入 @ 并选择 tTerm。ChatGPT Pro、Business、Enterprise 和 Edu 提供此功能。
+ai.how_code_run = 在终端中运行：
+# <c>…</c> is a command, in code type.
+ai.how_code_then = 然后在 Claude Code 中输入 <c>/mcp</c>，选择 tterm 并登录。
+ai.how_cursor = 在 Cursor 中打开 MCP 设置，用这个地址添加一个服务器。Cursor 提示时，请登录。
+ai.how_any = 任何能连接远程 MCP 服务器的 AI 都可以。需要填写的内容：
+ai.how_address = 地址
+ai.how_transport = 传输方式
+ai.how_transport_value = HTTP (Streamable HTTP)
+ai.how_signin = 登录
+ai.how_signin_value = OAuth：AI 会打开一个 tTerm 页面，你在那里选择允许它做什么
+ai.how_allow = 在 tTerm 中允许它
+ai.how_allow_text = 随后会打开一个 tTerm 页面：登录，勾选机器，选择 AI 可以做什么、可以持续多久，然后点击“允许”。之后 AI 就会出现在这里。
+ai.how_keys = 受你密钥保护的机器（用你自己的密钥打开的、通过你的 Mac 打开的，以及 Mac 本身），只有在你当初允许 AI 的那台设备上密钥处于打开状态时，AI 才能看到。
+# Change: the same choice as when it was allowed.
+ai.change_title = 更改 {ai} 的权限
+ai.change_keys_here = 从现在起，只要这台设备上的密钥处于打开状态，它就能看到受你密钥保护的机器。
+ai.save = 保存
+# The project's page.
+ai.project_title = AI
+ai.project_about = 哪些 AI 可以查看这个项目的机器。所有项目中的全部 AI：“设置”›“AI”
+ai.project_connect = 连接 AI
+ai.project_none = 没有 AI 能看到这个项目的机器。
+ai.allowed_by_you = （由你允许）
+ai.leave = 断开与项目的连接
+ai.leave_title = {ai} 将不再能看到 {project} 中的机器；在其他项目中保持不变
+ai.left_project = {ai} 已无法再看到 {project} 中的任何机器。
+ai.project_table = {ai} 在 {project} 中能看到的内容
+ai.machine = 机器
+ai.terminals = 终端
+ai.log = 日志
+ai.keys_follow = 只有在当初允许它的那台设备上的密钥打开时，它才能看到这台机器
+ai.while_open = 密钥打开时
+ai.yes = 是
+ai.no = 否
+ai.project_new_machines = 项目中新加入的机器，AI 要等你在“更改”中勾选后才能看到。
+# The terminal: the chip in the bar, and its window.
+ai.chip_one = {ai} 正在查看
+ai.chip_more = other: {ai} 和另外 {n} 个 AI 正在查看
+ai.chip_title = {ai} 可以查看这个终端
+ai.pop_text = 当你向它提问时，它能看到这个终端的命令和输出。它不会在这里输入任何内容。
+ai.pop_closed = 它现在看不到这台机器：当初允许它的那台设备上的密钥已关闭。
+ai.pop_forget = 移除 {ai}
+ai.pop_settings = 设置 › AI
+# The eye at a block the AI read, and at a terminal in the sidebar.
+ai.read_title = {ai} 读取过这段输出
+# For screen readers, after the terminal's name.
+ai.eye_hidden = ，{ai} 正在查看
+# The choice: on the allow page and in Change.
+ai.project = 项目
+ai.machines = 机器
+ai.machines_of = {project} 的机器
+ai.no_machines = 这个项目中没有机器。
+ai.under_keys = 受密钥保护
+# How a machine opens, under its name.
+ai.how_line = tTerm 的授权
+ai.how_key = 你的密钥
+ai.how_mac = 通过你的 Mac
+ai.how_computer = 你的电脑
+# For screen readers: the tick of a machine's terminals, of its log.
+ai.terminals_of = {machine} 的终端
+ai.log_of = {machine} 的日志
+ai.machines_note = 终端：你在这台机器的终端中运行的命令及其输出。日志：机器上运行过什么，是谁、在什么时候运行的。
+ai.can_title = {ai} 可以做什么
+ai.can_see = 查看
+ai.can_see_text = 上面勾选的机器的命令、命令输出和日志。
+ai.cannot = {ai} 不能自行输入或运行命令、打开终端或获取密钥。
+ai.term = 有效期
+ai.term_forever = 直到我撤销（无期限）
+# {day}: 5 Dec.
+ai.term_days = other: {n} 天，直到 {day}
+# In Change: as it is now. {until} is "until you take it back" or "until 5 Dec".
+ai.term_keep = 保持现状：{until}
+ai.term_forever_note = {ai} 会一直保持连接，直到你在“设置”›“AI”中点击“移除”。
+ai.term_days_note = 到期后，{ai} 会再次请求你的允许。
+# {projects} is a list of projects: Personal and Client X; {until}: "until you take it back", "until 5 Dec".
+ai.summary = other: {ai} 将能查看 {projects} 中的 {n} 台机器，{until}。
+ai.summary_none = 还没有选择任何内容。
+# Machines under the keys, ticked. {machines} is a list.
+ai.keys_locked = 受你的密钥保护：{machines}
+ai.keys_text = 要让 {ai} 看到它们，请打开密钥。只有在这台设备上的密钥打开期间，它才能看到这些机器。
+ai.keys_password = 保险库密码
+ai.keys_open = 打开密钥
+ai.keys_opening = 正在打开…
+ai.keys_no_password = 你的保险库还没有密码：请在这台设备上另开一个标签页，在 tTerm 中打开密钥，然后重新检查。
+ai.keys_check = 重新检查
+ai.keys_open_here = 密钥已在这个浏览器中打开。{machines}：只要密钥在这里保持打开，{ai} 就能看到它们，也就是直到你点击“锁定”、退出登录或 8 小时没有任何操作为止。
+ai.keys_password_ok = 密码正确。{machines}：只要这台设备上 tTerm 中的密钥保持打开，{ai} 就能看到它们，也就是直到你点击“锁定”、退出登录或 8 小时没有任何操作为止。
+
+# ---------------------------------- connect_ai: the page an AI app opens to connect (ConnectAi.tsx)
+connect_ai.title_tab = 连接 AI
+connect_ai.title = 将 {ai} 连接到 tTerm？
+# <b>…</b> is bold. {place}: claude.ai, or "an app on this computer".
+connect_ai.asks_web = <b>{ai}</b> 请求访问你的账号 <b>{email}</b>，点击“允许”后会带你返回 <b>{place}</b>。
+connect_ai.asks_here = <b>{ai}</b> 请求访问你的账号 <b>{email}</b>，点击“允许”后会带你返回{place}。
+connect_ai.place_here = 这台电脑上的应用
+# {scheme} is the app's own scheme: cursor.
+connect_ai.place_app = 这台电脑上的 {scheme} 应用
+connect_ai.not_you = 不是你？
+# An app that calls itself Claude and takes you elsewhere. {claims}: Claude; {host}: where it goes back; {real}: claude.ai.
+connect_ai.warning = 它自称 {claims}，但会带你返回 {host}，而不是 {real}。只有在你认识这个应用时，才允许它。
+connect_ai.said = 它自称“{said}”。
+connect_ai.goes_to = {ai} 读取的内容会发送到 {place}，就像你把它复制到聊天中一样。
+connect_ai.goes_to_here = {ai} 读取的内容会发送到这台电脑上的应用，之后去向由该应用决定。
+connect_ai.forget_any_time = 你随时可以断开它：在“设置”›“AI”中点击“移除”。
+connect_ai.why_none = 请至少勾选一台机器。
+connect_ai.why_keys = 请先打开密钥，或取消勾选受密钥保护的机器。
+connect_ai.keys_first = 密钥在这台设备上已关闭：请打开密钥，或取消勾选受密钥保护的机器。
+connect_ai.back = 正在返回 {ai}…
+connect_ai.back_note = 如需更改或断开它：“设置”›“AI”。
+connect_ai.back_app = 如果 {ai} 没有打开，请自行切换回去：连接会在那里完成。
+connect_ai.over_title = 这个请求已失效
+connect_ai.over = 它已被处理过，或者已等待超过十分钟。请在 AI 应用中重新连接 tTerm。
+connect_ai.problem_client = tTerm 不认识这个应用。请在该应用中重新连接 tTerm：它会先自行注册。
+connect_ai.problem_redirect = 该应用要求把你带回一个它没有注册过的地址。请在该应用中重新连接 tTerm。
+connect_ai.problem_request = 请求不完整。请在 AI 应用中重新连接 tTerm。
+connect_ai.account_changed = 这个浏览器现在登录的是另一个账号。请确认是哪个账号，然后再允许。
+# Before signing in the page does not know the AI's name yet: {app} is "the AI".
+connect_ai.the_ai = AI
+connect_ai.confirm = 要允许 {app}，请先确认是你本人。
+connect_ai.signin_other = 请用另一个账号登录，然后允许 {app}。
+connect_ai.signin_then = 请登录，然后允许 {app}。

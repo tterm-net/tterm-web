@@ -12,6 +12,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import { Connect } from "./Connect";
+import { ConnectAi } from "./ConnectAi";
 import { browserLanguage, rememberedLanguage, showLanguage } from "./i18n";
 
 const root = document.getElementById("root");
@@ -19,12 +20,15 @@ if (root) {
   // /connect: tTerm for the computer signs in with this browser (0.1.6), a
   // page of its own, without the terminals.
   const connect = /^\/connect\/?$/.test(location.pathname);
+  // /connect-ai: an AI app asks to connect to tTerm (0.1.29), a page of its
+  // own too.
+  const connectAi = /^\/connect-ai\/?$/.test(location.pathname);
   // The first paint in the language shown here last, else in the
   // browser's (0.1.16); the account's comes with the state (App.tsx).
   void showLanguage(rememberedLanguage() ?? browserLanguage() ?? "en").finally(() => {
     createRoot(root).render(
       <StrictMode>
-        {connect ? <Connect /> : <App />}
+        {connect ? <Connect /> : connectAi ? <ConnectAi /> : <App />}
       </StrictMode>,
     );
   });

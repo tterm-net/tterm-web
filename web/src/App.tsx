@@ -3,7 +3,7 @@ import { AddMachine } from "./AddMachine";
 import { AppLinkWindow, AppWelcome } from "./AppSignIn";
 import {
   CoreError, createFolder, createNote, createProject, deleteFolder, deleteNote,
-  deleteProject, editProject, endTerminal, loadLogToday, loadNote, loadState, moveMachine,
+  deleteProject, editProject, endTerminal, forgetAi, loadLogToday, loadNote, loadState, moveMachine,
   moveNote, NoteGone, onSignedOut, openTerminal, removeMachine, renameFolder,
   renameTerminal, saveLanguage, saveProjectTint, saveTheme, SignedOut, signInApp, signOut,
   welcomeSeen, type Folder, type FoundBlock, type FoundNote,
@@ -47,6 +47,7 @@ import { Search, type LocalEntry } from "./Search";
 import { alone, deletesNote, manages, writes } from "./rights";
 import { Settings } from "./Settings";
 import { settingsAt, type SettingsSection } from "./settingsSearch";
+import { AiChip } from "./Ai";
 import { Sidebar, type AccountPage } from "./Sidebar";
 import { SignIn } from "./SignIn";
 import { socket } from "./socket";
@@ -1802,6 +1803,20 @@ export function App() {
     <div className={`${pinned ? "app pinned" : "app"}${tint === "block" ? " tint-block" : ""}`}>
       <TabBar sidebarButton={sidebarButton} tabs={tabViews} inert={settingsOpen}
         update={<UpdatePill />}
+        ai={state.ai ? (
+          <AiChip watching={state.ai.watching} machineId={frontTerminal?.machineId ?? null}
+            guarded={(() => {
+              const m = frontTerminal ? byId.get(frontTerminal.machineId) : undefined;
+              return !!m && (m.kind === "computer" || m.method === "key" || m.method === "mac");
+            })()}
+            onForget={(w) => {
+              forgetAi(w.id).then(() => {
+                notYet(t("ai.forgotten", { ai: w.name }));
+                void refresh();
+              }).catch((error: Error) => notYet(error.message));
+            }}
+            onSettings={() => openSettings("ai")} />
+        ) : null}
         current={current} onSelect={(tab) => navigate(tabPath(tab))}
         onClose={closeTab}
         picking={picking}
@@ -1907,6 +1922,7 @@ export function App() {
           <div className="page-scroll">
             {pageProject ? (
               <ProjectPage project={pageProject} me={state.me}
+                ai={state.ai ? { projects, onChanged: () => void refresh() } : null}
                 terminals={liveTerminals} dotFor={dotFor} closed={isClosed}
                 local={local}
                 onAddMachine={startAdding} onOpenTerminal={startTerminal}
@@ -1986,6 +2002,8 @@ export function App() {
       {sidebarShown && (
         <Sidebar
           me={state.me}
+          aiNames={(machineId) => (state.ai?.watching ?? [])
+            .filter((w) => w.machines.includes(machineId)).map((w) => w.name)}
           projects={projects}
           logToday={logToday}
           updateCard={<UpdateCard />}
@@ -2105,7 +2123,8 @@ export function App() {
             forgetSupportDraft();
             endSession(note);
           }}
-          notify={notYet} projects={projects} onSupport={() => setSupporting(true)} />
+          notify={notYet} projects={projects} onSupport={() => setSupporting(true)}
+          aiEnabled={!!state.ai} onAiChanged={() => void refresh()} />
       )}
 
       {supporting && (

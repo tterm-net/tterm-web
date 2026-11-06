@@ -2200,7 +2200,8 @@ async def test_the_password_migration_keeps_a_vault_of_before(h):
             "recovery_wrap) VALUES ($1, $2, $3, $4, $5) RETURNING id",
             uuid.uuid4(), uid, b"p" * 32, b"s" * 16, b"r" * 60)
         applied = await db.migrate(pool)
-        assert applied == ["020_vault_password", "021_keys_here"], applied
+        assert applied == ["020_vault_password", "021_keys_here",
+                           "022_ai"], applied
         row = await pool.fetchrow("SELECT * FROM vaults WHERE id = $1", vid)
         assert bytes(row["recovery_wrap"]) == b"r" * 60 and row["recovery_at"]
         assert row["password_salt"] is None and row["password_wrong"] == 0

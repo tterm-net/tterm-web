@@ -215,6 +215,7 @@ settings.tint_block = Whole project
 settings.general = General
 settings.group_preferences = Preferences
 settings.group_security = Security
+settings.group_connections = Connections
 # For screen readers: the list of the sections.
 settings.sections = Sections of Settings
 # The search over Settings, and what it says when no section has the words typed.
@@ -238,6 +239,7 @@ settings.payment_note = They will appear here with the paid plans.
 # Words the search finds a section by, besides its name; never shown. In English, then in the language.
 settings.keys_words = ssh keys vault password passphrase servers
 settings.devices_words = devices browsers sessions signed in forget sign out
+settings.ai_words = AI MCP Claude ChatGPT Cursor connector assistant model
 settings.computer_words = this computer mac connection
 settings.updates_words = updates version new restart check
 
@@ -769,7 +771,7 @@ devices.browser_times = Trusted {created}, last sign-in {used}
 devices.forget = Forget
 # The heading, and the red button that does it.
 devices.forget_all = Forget all devices
-devices.forget_all_text = Every device is forgotten and every session ends, this one too. Each browser then asks for a code from email. Your terminals keep running.
+devices.forget_all_text = Every device is forgotten and every session ends, this one too, and every AI connected is disconnected. Each browser then asks for a code from email. Your terminals keep running.
 # The button that asks first.
 devices.forget_all_ask = Forget all devices…
 
@@ -2067,3 +2069,184 @@ moved.how_mac_many = <b>{servers}</b> open only through this Mac: while it is on
 moved.keys_one = <b>{keys}</b> is in your vault now, encrypted: it opens with your vault password, and on this Mac with Touch ID. Settings › Keys shows it on every device.
 moved.keys_many = <b>{keys}</b> are in your vault now, encrypted: they open with your vault password, and on this Mac with Touch ID. Settings › Keys shows them on every device.
 moved.no_keys = No key moved: your keys stay on this Mac.
+
+# ------------------------------------------------ ai: AI through MCP (Ai.tsx, AiChoice.tsx, aiText.ts)
+# An AI app (Claude, ChatGPT, Claude Code, Cursor, any with MCP) the person
+# lets see their terminals and the machines' logs. {ai} is its name, as
+# tTerm calls it: Claude. Claude, ChatGPT, Claude Code and Cursor are
+# product names, not translated. The item in Settings, under Connections.
+ai.item = AI
+ai.title = Connected AI
+ai.about = Claude, ChatGPT, Cursor or another AI you let see your terminals. It reads what you allowed it; the commands are always run by you.
+ai.connect = Connect an AI…
+ai.none = No AI is connected yet
+ai.none_text = Connect Claude, ChatGPT, Claude Code or Cursor: it sees the output of your commands itself, and you no longer copy it into the chat.
+ai.sees_nothing = Sees no machine now: tick some in Change.
+ai.change = Change
+ai.forget = Forget
+ai.forgotten = {ai} is disconnected: it sees nothing of tTerm any more.
+ai.all_forgotten = one: The AI is disconnected. | other: {n} AI connections are disconnected.
+ai.forget_all = Disconnect all AI
+ai.forget_all_text = Every AI connection is forgotten at once: none of them sees anything of tTerm any more. Your terminals keep running.
+ai.forget_all_ask = Disconnect all AI…
+ai.saved = {ai} sees what you chose now.
+# What the AI may do, as chips in the lists.
+ai.chip_see = Looks
+ai.chip_propose = Proposes commands
+ai.chip_notes = Writes notes
+# How long it may stay: after "Looks ·", or as a line of its own.
+ai.until_forever = until you take it back
+# {day} is a day: 5 Dec.
+ai.until_day = until {day}
+# {term} is one of the two above, with a capital: "Until 5 Dec · last asked 2 hours ago".
+ai.times = {term} · last asked {ago}
+ai.times_never = {term} · has not asked yet
+# Its machines, a project at a time: "Personal: web-01, droplet; only the
+# log of db-internal". {machines} is a list.
+ai.project_machines = {project}: {machines}
+ai.only_log = only the log of {machines}
+ai.only_terminals = only the terminals of {machines}
+# Where it takes you back, after its name.
+ai.title_web = {name} · {place}
+ai.title_here = {name} on this computer
+ai.title_app = {name}, an app on this computer
+# The machines under the keys: {machines} is a list, {where} is one of the
+# three below: where the keys are open or closed.
+ai.keys_seen = It sees {machines} while the keys are open {where}.
+ai.keys_not_seen = It does not see {machines} now: the keys are closed {where}.
+ai.keys_where_here = on this device
+# {device} as Settings › Devices names it: Chrome on macOS.
+ai.keys_where_device = on {device}
+ai.keys_where_browser = in the browser it was allowed from
+# The window that says how to connect an AI.
+ai.how_title = Connect an AI
+ai.how_lead = The AI will see the terminals you choose. You run the commands.
+ai.how_copy = Copy tTerm's address
+ai.copy = Copy
+ai.copied = Copied
+ai.how_add = Add it to the AI
+ai.how_where = Where you connect it
+ai.how_other = Another AI
+ai.how_claude = In Claude, open Connectors and add a custom connector with this address. When Claude asks, sign in. On Claude's free plan you can add one custom connector.
+ai.how_chatgpt = In ChatGPT on the web, add a custom MCP server with this address in Plugins, and sign in. In a chat, type @ and choose tTerm. It is there on ChatGPT Pro, Business, Enterprise and Edu.
+ai.how_code_run = In a terminal, run:
+# <c>…</c> is a command, in code type.
+ai.how_code_then = Then type <c>/mcp</c> in Claude Code, choose tterm and sign in.
+ai.how_cursor = In Cursor, open the MCP settings and add a server with this address. When Cursor asks, sign in.
+ai.how_any = Any AI that connects remote MCP servers will do. What to fill in:
+ai.how_address = Address
+ai.how_transport = Transport
+ai.how_transport_value = HTTP (Streamable HTTP)
+ai.how_signin = Sign-in
+ai.how_signin_value = OAuth: the AI opens a page of tTerm where you allow what it may do
+ai.how_allow = Allow it in tTerm
+ai.how_allow_text = A page of tTerm opens: sign in, tick the machines, what the AI may do and how long, and press Allow. The AI then shows up here.
+ai.how_keys = Machines under your keys (with your own key, through your Mac, the Mac itself) the AI sees only while the keys are open on the device you allowed it from.
+# Change: the same choice as when it was allowed.
+ai.change_title = Change what {ai} may do
+ai.change_keys_here = The machines under your keys follow this device from now on.
+ai.save = Save
+# The project's page.
+ai.project_title = AI
+ai.project_about = Which AI may see this project's machines. All of them, in every project: Settings › AI
+ai.project_connect = Connect an AI
+ai.project_none = No AI sees the machines of this project.
+ai.allowed_by_you = (allowed by you)
+ai.leave = Disconnect from the project
+ai.leave_title = {ai} no longer sees the machines of {project}; in other projects it stays
+ai.left_project = {ai} sees no machine of {project} any more.
+ai.project_table = What {ai} sees in {project}
+ai.machine = Machine
+ai.terminals = Terminals
+ai.log = Log
+ai.keys_follow = It sees it only while your keys are open on the device it was allowed from
+ai.while_open = while the keys are open
+ai.yes = yes
+ai.no = no
+ai.project_new_machines = New machines of the project the AI does not see until you tick them in Change.
+# The terminal: the chip in the bar, and its window.
+ai.chip_one = {ai} is looking
+ai.chip_more = one: {ai} and one more are looking | other: {ai} and {n} more are looking
+ai.chip_title = {ai} may see this terminal
+ai.pop_text = It sees the commands and the output of this terminal when you ask it something. It types nothing here.
+ai.pop_closed = It does not see this machine now: the keys are closed on the device it was allowed from.
+ai.pop_forget = Forget {ai}
+ai.pop_settings = Settings › AI
+# The eye at a block the AI read, and at a terminal in the sidebar.
+ai.read_title = {ai} read this output
+# For screen readers, after the terminal's name.
+ai.eye_hidden = , {ai} is looking
+# The choice: on the allow page and in Change.
+ai.project = Project
+ai.machines = Machines
+ai.machines_of = Machines of {project}
+ai.no_machines = No machines in this project.
+ai.under_keys = under your keys
+# How a machine opens, under its name.
+ai.how_line = tTerm's line
+ai.how_key = your key
+ai.how_mac = through your Mac
+ai.how_computer = your computer
+# For screen readers: the tick of a machine's terminals, of its log.
+ai.terminals_of = Terminals of {machine}
+ai.log_of = Log of {machine}
+ai.machines_note = Terminals: the commands and the output in your terminals of the machine. Log: what ran on the machine, by whom and when.
+ai.can_title = What {ai} may do
+ai.can_see = Look
+ai.can_see_text = The commands, their output and the log of the machines ticked above.
+ai.cannot = {ai} cannot type or run commands itself, open terminals or take keys.
+ai.term = How long
+ai.term_forever = Until I take it back (no end)
+# {day}: 5 Dec.
+ai.term_days = one: {n} day, until {day} | other: {n} days, until {day}
+# In Change: as it is now. {until} is "until you take it back" or "until 5 Dec".
+ai.term_keep = As now: {until}
+ai.term_forever_note = {ai} stays connected until you press Forget in Settings › AI.
+ai.term_days_note = When the time is up, {ai} asks you again.
+# {projects} is a list of projects: Personal and Client X; {until}: "until you take it back", "until 5 Dec".
+ai.summary = one: {ai} will see {n} machine of {projects}, {until}. | other: {ai} will see {n} machines of {projects}, {until}.
+ai.summary_none = Nothing is chosen yet.
+# Machines under the keys, ticked. {machines} is a list.
+ai.keys_locked = Under your keys: {machines}
+ai.keys_text = To let {ai} see them, open the keys. It will see these machines only while the keys are open on this device.
+ai.keys_password = Vault password
+ai.keys_open = Open the keys
+ai.keys_opening = Opening…
+ai.keys_no_password = Your vault has no password: open the keys in tTerm on this device, in another tab, then check again.
+ai.keys_check = Check again
+ai.keys_open_here = The keys are open in this browser. {machines}: {ai} will see them while they are open here, until Lock, signing out or 8 hours without anything done.
+ai.keys_password_ok = The password is right. {machines}: {ai} will see them while the keys are open in tTerm on this device, until Lock, signing out or 8 hours without anything done.
+
+# ---------------------------------- connect_ai: the page an AI app opens to connect (ConnectAi.tsx)
+connect_ai.title_tab = Connect an AI
+connect_ai.title = Connect {ai} to tTerm?
+# <b>…</b> is bold. {place}: claude.ai, or "an app on this computer".
+connect_ai.asks_web = <b>{ai}</b> asks for access to your account <b>{email}</b> and after Allow takes you back to <b>{place}</b>.
+connect_ai.asks_here = <b>{ai}</b> asks for access to your account <b>{email}</b> and after Allow takes you back to {place}.
+connect_ai.place_here = an app on this computer
+# {scheme} is the app's own scheme: cursor.
+connect_ai.place_app = the app {scheme} on this computer
+connect_ai.not_you = Not you?
+# An app that calls itself Claude and takes you elsewhere. {claims}: Claude; {host}: where it goes back; {real}: claude.ai.
+connect_ai.warning = It calls itself {claims}, but it takes you back to {host}, not to {real}. Allow it only if you know this app.
+connect_ai.said = It calls itself “{said}”.
+connect_ai.goes_to = What {ai} reads goes to {place}, as if you copied it into the chat.
+connect_ai.goes_to_here = What {ai} reads goes to the app on this computer, and from there wherever the app sends it.
+connect_ai.forget_any_time = You can disconnect it at any time: Settings › AI, Forget.
+connect_ai.why_none = Tick at least one machine.
+connect_ai.why_keys = Open the keys first, or untick the machines under them.
+connect_ai.keys_first = The keys are closed on this device: open them, or untick the machines under them.
+connect_ai.back = Back to {ai}…
+connect_ai.back_note = To change or disconnect it: Settings › AI.
+connect_ai.back_app = If {ai} did not open, go back to it: it finishes connecting there.
+connect_ai.over_title = This request is over
+connect_ai.over = It was answered already, or it waited more than ten minutes. Connect tTerm in the AI app again.
+connect_ai.problem_client = tTerm does not know this app. Connect tTerm in it again: it registers itself first.
+connect_ai.problem_redirect = The app asks to take you back to a place it did not register. Connect tTerm in it again.
+connect_ai.problem_request = The request is not complete. Connect tTerm in the AI app again.
+connect_ai.account_changed = This browser is signed in to another account now. Check which one, then allow.
+# Before signing in the page does not know the AI's name yet: {app} is "the AI".
+connect_ai.the_ai = the AI
+connect_ai.confirm = To allow {app}, confirm it is you.
+connect_ai.signin_other = Sign in with the other account, then allow {app}.
+connect_ai.signin_then = Sign in, then allow {app}.

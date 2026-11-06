@@ -173,7 +173,9 @@ function sources(dir) {
 // Words that are no text to translate: the product's names, keys, units.
 const NAMES = new Set(["tTerm", "tTerm Web", "Free", "Personal", "GitHub",
   "Telegram", "Mac", "macOS", "Windows", "Linux", "Esc", "Enter", "Tab",
-  "Shift", "Ctrl", "Alt", "Cmd", "Option", "Return", "Backspace", "OK"]);
+  "Shift", "Ctrl", "Alt", "Cmd", "Option", "Return", "Backspace", "OK",
+  // The AI apps of AI through MCP (0.1.29).
+  "Claude", "ChatGPT", "Claude Code", "Cursor"]);
 // Attributes whose values are code, not words.
 const CODE_ATTRS = new Set(["className", "type", "role", "id", "key", "name",
   "value", "href", "src", "rel", "target", "autoComplete", "inputMode",

@@ -4,7 +4,15 @@ tTerm in the browser: a real terminal with command blocks, for people who work
 with servers and for their teams. Projects, roles, a journal of who ran what,
 and watching a colleague's terminal, always with them knowing.
 
-**Status:** early development. Version 0.1.28 opens a server that signs
+**Status:** early development. Version 0.1.29 lets an AI see your
+terminals over MCP: Claude, ChatGPT, Claude Code, Cursor or any AI that
+connects remote MCP servers adds `https://app.tterm.net/mcp`, opens a page
+of tTerm where you tick the machines (their terminals, their log), and
+reads what ran there and what it printed, the machines' logs, and
+searches them; it types and runs nothing. Settings › Connections › AI
+lists each AI with what it sees, changes or forgets it; the project's
+page shows the AI that sees its machines; a terminal says "Claude is
+looking" and marks the blocks it read. Version 0.1.28 opens a server that signs
 in with your key, one through your Mac, and the Mac itself only on a device
 where you opened your keys yourself (the vault password, Touch ID where the
 browser keeps them, the Mac's approval): signing in with a code from your
@@ -489,10 +497,38 @@ in, three an hour from a network and thirty in all. They are kept a year
 (`support_messages`), the network of one written before signing in a day;
 a message whose email did not go is not kept.
 
+**AI through MCP (0.1.29).** tTerm is an MCP server at `/mcp` (Streamable
+HTTP, one JSON answer a request, no sessions; both the protocol of
+2026-07-28 and the earlier ones that begin with `initialize`). An AI app
+signs in with OAuth 2.1 as MCP has it: it reads where (RFC 9728 and 8414,
+under `/.well-known/`), registers itself (RFC 7591), and opens
+`/oauth/authorize`, which sends the person to `/connect-ai`. There, signed
+in (with a sign-in of the last quarter of an hour, as for tTerm for Mac),
+the person sees who asks and where it takes them back, ticks the machines,
+each with its terminals and its log, and how long (until taken back, or
+30, 7 or 1 days), and allows it: a code goes back to the app, once, for
+five minutes, with PKCE (S256). Its tokens: to ask for an hour, and to get
+the next ones, each once; one used again later ends the connection. Only
+hashes of codes and tokens are kept. The AI reads only what it was allowed,
+as the person reads it then: the machines ticked while they are in the
+project they were allowed in, the person's own terminals there, the whole
+log; a machine under the person's keys (a server with their key, one
+through their Mac, a computer) only while the keys are open on the device
+it was allowed from, and allowing it takes them open there or the vault's
+password. Its tools only read: machines and terminals, what happened in a
+terminal, a command's whole output, a machine's log, search. What it
+reads is cut of secrets first (private keys, tokens of the known kinds,
+passwords in addresses, values named as secrets), and the blocks it read
+are marked for the page. Forget, Disconnect all AI and Forget all devices
+end it at once. Every account may connect its AI, with nothing to set on
+the server: the AI is the person's own, on their plan with it.
+
 The page guards itself as well: it answers only when the browser asks for
 its own address (`TTERM_PAGE_URL`; on a laptop `localhost` or `127.0.0.1`
 with its port), which defeats DNS rebinding, and a request that changes
-something must come from the page itself, its socket included. The page
+something must come from the page itself, its socket included; AI apps'
+requests to `/mcp` and `/oauth/` carry their token and no cookie, and only
+a foreign Origin is refused there. The page
 loads nothing from other sites, fonts included, and its security policy
 allows no inline scripts or styles; the few style elements xterm.js writes
 carry a one-time number each copy of the page gets.
