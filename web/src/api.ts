@@ -288,6 +288,9 @@ export interface StoredBlock {
   canNote: boolean;
   /** The AI that read it (0.1.29): its eye goes on the block. */
   aiRead?: { id: string; name: string }[];
+  /** The AI whose proposal it was: the person ran it from its block
+   * (0.1.30). */
+  proposedBy?: string;
 }
 
 export interface Feed {
@@ -352,9 +355,10 @@ export interface State {
    * guarded machine reaches it (0.1.28, keys.ts). */
   proofs?: boolean;
   /** AI through MCP (0.1.29): the AI that may see the terminals of which
-   * machines. tTerm for the computer before signing in sends none, and has
-   * no AI then. */
-  ai?: { watching: AiWatching[] };
+   * machines, and from 0.1.30 the commands it proposed that wait in the
+   * terminals open here. tTerm for the computer before signing in sends
+   * none, and has no AI then. */
+  ai?: { watching: AiWatching[]; proposals?: AiProposal[] };
 }
 
 export interface Install {
@@ -1102,6 +1106,8 @@ export interface LogNote {
   ai: string | null;
   text: string | null;
   redacted: Redaction | null;
+  /** An AI's note through MCP (0.1.30): where the AI lives, claude.ai. */
+  from?: string;
 }
 
 export type LogKind = "terminal.opened" | "command.ran" | "terminal.closed" | "machine.moved";
@@ -1137,6 +1143,8 @@ export interface LogEntry {
   /** A move to another project (0.1.23): the projects by their names then. */
   from?: string;
   to?: string;
+  /** A command run as an AI proposed it (0.1.30): the AI. */
+  proposedBy?: string;
 }
 
 export interface LogDay {
@@ -1760,6 +1768,9 @@ export interface AiChoice {
   auth?: string;
   /** The account the page showed (Allow). */
   account?: string;
+  /** The page's language (0.1.30): the AI writes its notes in it while the
+   * person chose none. */
+  language?: string;
 }
 
 /** The request to connect is over: answered, or ten minutes old. */
@@ -1815,6 +1826,26 @@ export async function forgetAi(id: string): Promise<void> {
 export async function aiLeaveProject(id: string, projectId: string): Promise<void> {
   await check(await fetch(`/api/ai/connections/${encodeURIComponent(id)}/projects/${
     encodeURIComponent(projectId)}`, change("DELETE", {})));
+}
+
+/** A command an AI proposed in one of the person's terminals (0.1.30): it
+ * waits there until they run it, put it into the line or remove it. */
+export interface AiProposal {
+  id: string;
+  terminalId: string;
+  connection: string;
+  ai: string;
+  command: string;
+  /** Why, in the AI's words; may be empty. */
+  why: string;
+  at: number;
+}
+
+/** Put into the input line (the page puts it there) or removed; 410 when
+ * it is over. */
+export async function settleProposal(id: string, what: "insert" | "remove"): Promise<void> {
+  await check(await fetch(`/api/ai/proposals/${encodeURIComponent(id)}/${what}`,
+    change("POST", {})));
 }
 
 /** Disconnect all AI: how many were connected. */

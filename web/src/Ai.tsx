@@ -7,8 +7,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
-  aiLeaveProject, changeAi, CoreError, forgetAi, forgetAllAi, loadAi, type AiConnection,
-  type AiState, type AiWatching, type Project,
+  aiLeaveProject, changeAi, CoreError, forgetAi, forgetAllAi, loadAi, settleProposal,
+  type AiCan, type AiConnection, type AiProposal, type AiState, type AiWatching,
+  type Project,
 } from "./api";
 import {
   AiChoice, AiKeys, choiceSummary, lockedNames, tickedMachines, type ChoiceProject,
@@ -19,6 +20,7 @@ import { list, useT, type Translate } from "./i18n";
 import {
   Check, Close, Computer, Copy, Eye, Lock, Plus, Server, Spark, TerminalIcon,
 } from "./icons";
+import { hasOdd, oddParts, SETTLE_MS } from "./proposal";
 
 /** The tabs of Connect an AI: where it is added. */
 const CLIENTS = ["claude", "chatgpt", "code", "cursor", "other"] as const;
@@ -182,6 +184,7 @@ export function AiChangeDialog(props: {
     return out;
   });
   const [term, setTerm] = useState<ChoiceTerm>("keep");
+  const [can, setCan] = useState<AiCan>({ ...c.can, see: true });
   const [proof, setProof] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -208,7 +211,7 @@ export function AiChangeDialog(props: {
     setProblem(null);
     try {
       props.onSaved(await changeAi(c.id, {
-        machines: tickedMachines(ticks), can: c.can, term, zone: zone(),
+        machines: tickedMachines(ticks), can, term, zone: zone(), language: t.lang,
         ...(proof ? { auth: proof } : {}),
       }));
     } catch (error) {
@@ -235,6 +238,7 @@ export function AiChangeDialog(props: {
         </div>
         <AiChoice ai={c.name} projects={projects} project={project} onProject={setProject}
           ticks={ticks} onTicks={setTicks} term={term} onTerm={setTerm}
+          can={can} onCan={setCan}
           keep={{ until: c.until }} disabled={busy} idPrefix="ac" locks={props.keys.guarding}
           keys={props.keys.guarding && added.length ? (
             <AiKeys ai={c.name} locked={added} open={props.keys.open} proof={proof}
@@ -618,7 +622,9 @@ export function AiChip(props: {
                   <span>{[...canChips(w.can, t), untilWords(w.until, t)].join(" · ")}</span>
                 </span>
               </div>
-              <p>{t("ai.pop_text", { ai: w.name })}</p>
+              <p>{t(w.can.propose && w.can.notes ? "ai.pop_text_both"
+                : w.can.propose ? "ai.pop_text_propose"
+                  : w.can.notes ? "ai.pop_text_notes" : "ai.pop_text", { ai: w.name })}</p>
               {props.guarded && !w.keysOpen && (
                 <p className="ai-keys-line closed"><Lock size={12} />
                   <span>{t("ai.pop_closed", { ai: w.name })}</span></p>
@@ -668,5 +674,86 @@ export function AiEye(props: { names: string[] }) {
       <span className="sb-ai" title={t("ai.chip_title", { ai: who })}><Eye size={13} /></span>
       <span className="visually-hidden">{t("ai.eye_hidden", { ai: who })}</span>
     </>
+  );
+}
+
+/** A command an AI proposed in this terminal (0.1.30), as on the canvas
+ * (version 121, McpTerminal): it waits here until the person runs it, puts
+ * it into the line or removes it. The AI runs nothing. Run goes through the
+ * terminal like a command typed, its question for a destructive one too.
+ *
+ * From the security review: Run and Insert wait a moment after it shows,
+ * and after another takes its place (which it then says), so a click meant
+ * for what was there does not land on it; the command reads left to right
+ * as it will be typed, whatever its letters; characters beyond ASCII in a
+ * word with Latin letters are marked, a lookalike shows. */
+export function ProposalBlock(props: {
+  proposal: AiProposal;
+  /** At the prompt: a command can run, or go into the line. */
+  ready: boolean;
+  onRun: () => void;
+  onInsert: (command: string) => void;
+  onGone: (id: string) => void;
+  notify: (text: string) => void;
+}) {
+  const t = useT();
+  const p = props.proposal;
+  const [busy, setBusy] = useState(false);
+  const [settled, setSettled] = useState<string | null>(null);
+  const [replaced, setReplaced] = useState(false);
+  const shown = useRef<string | null>(null);
+  useEffect(() => {
+    if (shown.current !== null && shown.current !== p.id) setReplaced(true);
+    shown.current = p.id;
+    const timer = window.setTimeout(() => setSettled(p.id), SETTLE_MS);
+    return () => window.clearTimeout(timer);
+  }, [p.id]);
+  const settling = settled !== p.id;
+  const settle = async (what: "insert" | "remove") => {
+    setBusy(true);
+    try {
+      await settleProposal(p.id, what);
+      if (what === "insert") props.onInsert(p.command);
+      props.onGone(p.id);
+    } catch (error) {
+      if (error instanceof CoreError && (error.status === 409 || error.status === 410)) {
+        props.onGone(p.id);
+      }
+      props.notify(error instanceof CoreError && error.status === 425
+        ? t("feed.proposal_early") : (error as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const wait = props.ready ? undefined : t("feed.proposal_wait");
+  const parts = oddParts(p.command);
+  return (
+    <section className={replaced ? "ai-proposal replaced" : "ai-proposal"}
+      aria-label={t("feed.proposal_label", { ai: p.ai })}>
+      <div className="ai-proposal-head">
+        <Spark size={15} />
+        <span>{t("feed.proposes", { ai: p.ai })}</span>
+        <span className="ai-proposal-state" aria-live="polite">
+          {t(replaced ? "feed.proposal_new" : "feed.proposal_waiting")}
+        </span>
+      </div>
+      {p.why && <p className="ai-proposal-why">{p.why}</p>}
+      <div className="ai-proposal-row">
+        <code className="block-command ai-proposal-command">
+          {parts.map((part, i) => part.odd
+            ? <mark key={i} className="ai-proposal-odd">{part.text}</mark>
+            : part.text)}
+        </code>
+        <button type="button" className="button-accent"
+          disabled={busy || !props.ready || settling}
+          title={wait} onClick={props.onRun}>{t("feed.proposal_run")}</button>
+        <button type="button" className="button-plain small"
+          disabled={busy || !props.ready || settling}
+          title={wait} onClick={() => void settle("insert")}>{t("feed.proposal_insert")}</button>
+        <button type="button" className="button-ghost" disabled={busy}
+          onClick={() => void settle("remove")}>{t("feed.proposal_remove")}</button>
+      </div>
+      {hasOdd(parts) && <p className="ai-proposal-mixed">{t("feed.proposal_mixed")}</p>}
+    </section>
   );
 }

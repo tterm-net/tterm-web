@@ -328,6 +328,12 @@ export function Search(props: Props) {
   // The machines' logs (0.1.21): a command, the latest run of it on its
   // machine, or a note under a line. Both open the log at the line.
   const who = (p: LogPerson | null) => !p ? t("log.someone") : p.me ? t("log.you") : p.firstName;
+  // An AI's note (0.1.30): the AI, and who allowed it.
+  const aiWho = (ai: string | null, p: LogPerson | null) => {
+    const name = ai || t("log.ai_unnamed");
+    return !p || p.me ? t("log.ai_for_you", { ai: name })
+      : t("log.ai_for", { ai: name, who: p.firstName });
+  };
   const logRows = (): Row[] => (found.logs ?? [])
     .filter((x) => stale(x.kind === "line" ? x.command : x.text))
     .map((x: FoundLog): Row => {
@@ -350,9 +356,7 @@ export function Search(props: Props) {
           close();
           props.onPaste({ command: x.command, machineId: x.machineId, machine: x.machine });
         };
-        const said = x.note ? `${x.note.author === "ai"
-          ? (!x.note.by || x.note.by.me ? t("log.ai_for_you")
-            : t("log.ai_for", { who: x.note.by.firstName }))
+        const said = x.note ? `${x.note.author === "ai" ? aiWho(x.note.ai, x.note.by)
           : who(x.note.by)}: ${x.note.text ?? ""}` : "";
         return {
           key: `logs:line:${x.entry}`, kind: "logs", title: command, mono: true, sub,
@@ -374,9 +378,7 @@ export function Search(props: Props) {
           }),
         };
       }
-      const by = x.author === "ai"
-        ? (!x.by || x.by.me ? t("log.ai_for_you") : t("log.ai_for", { who: x.by.firstName }))
-        : who(x.by);
+      const by = x.author === "ai" ? aiWho(x.ai, x.by) : who(x.by);
       const under = x.command === null ? t("block.state_redacted") : plainly(x.command);
       return {
         key: `logs:note:${x.id}`, kind: "logs", title: firstLine(x.text), mono: false,

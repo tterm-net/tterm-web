@@ -6,6 +6,9 @@ it was allowed: what ran in the person's terminals there and what they
 printed, what the machines' logs say, and it searches them. It types
 nothing, runs nothing, opens no terminal, reaches no machine and gets no
 key (api/ai.py serves it; what it is told is cut of secrets, leaks.py).
+From 0.1.30, if the person allowed it, it proposes commands, which wait
+in their terminal until they run them (`propose`, `decide`), and writes
+notes in the logs (logs.add_note).
 
 How it connects, OAuth 2.1 as MCP has it:
 
@@ -41,6 +44,7 @@ import datetime as dt
 import hmac
 import re
 import secrets
+import unicodedata
 import uuid
 import zoneinfo
 from types import SimpleNamespace
@@ -49,7 +53,7 @@ from urllib.parse import urlencode, urlsplit
 
 import asyncpg
 
-from . import accounts, auth, vault
+from . import accounts, auth, leaks, logs, vault
 
 #: An access token works this long; the app gets the next with its refresh
 #: token, before or after.
@@ -65,9 +69,32 @@ REFRESH_GRACE = dt.timedelta(seconds=60)
 #: How long an AI may stay, as /connect-ai offers it: until the person takes
 #: it back, or days.
 TERMS = {"forever": None, "30": 30, "7": 7, "1": 1}
-#: What an AI may do in this release: see. Proposing commands and writing
-#: notes in the log come with 0.1.30, and only then can they be allowed.
-ABILITIES = ("see",)
+#: The page's languages (i18n.ts LANGUAGES): an AI writes in one of them.
+LANGUAGES = ("en", "de", "es", "fr", "it", "pl", "pt-BR", "tr", "ru", "ja",
+             "ko", "zh-CN")
+#: What an AI may do: see; from 0.1.30 propose commands and write notes in
+#: the log too.
+ABILITIES = ("see", "propose", "notes")
+#: A command an AI proposes, and why, at most (characters); why as kept,
+#: cut of secrets (the cut can make it longer).
+PROPOSAL_MAX = 2000
+WHY_MAX = 300
+WHY_KEPT_MAX = 1000
+#: A note an AI writes, at most; notes in one request; notes an hour of one
+#: connection (an AI gone wrong must not fill the log).
+AI_NOTE_MAX = 2000
+NOTES_AT_ONCE = 200
+NOTES_PER_HOUR = 500
+#: A proposal the person ran becomes the block of the command run so, if
+#: it starts within this long; one they put into the line, if they run it
+#: unchanged within this long.
+PROPOSAL_RUN_SECONDS = 120
+PROPOSAL_INSERT_SECONDS = 600
+#: A proposal runs or goes into the line only this long after it came
+#: (the security review of 0.1.30): a click meant for the one waiting
+#: before never lands on the one the AI put in its place. The page waits
+#: longer (ProposalBlock), this is for a page that does not.
+PROPOSAL_SETTLE_SECONDS = 1.0
 #: Registrations an hour from one network, and from everywhere.
 CLIENTS_PER_NET_HOUR = 60
 CLIENTS_PER_HOUR = 2000
@@ -501,6 +528,9 @@ class Choice:
     #: A key of TERMS; for a change also "keep".
     term: str
     zone: str
+    #: The page's language (0.1.30): the AI's notes are in it while the
+    #: person chose none.
+    language: str | None = None
 
 
 def parse_choice(body: object, *, change: bool = False) -> Choice:
@@ -539,7 +569,11 @@ def parse_choice(body: object, *, change: bool = False) -> Choice:
     term = body.get("term")
     if term not in TERMS and not (change and term == "keep"):
         raise Refused("Say how long the AI may stay.")
-    return Choice(machines, see, propose, notes, term, time_zone(body.get("zone")))
+    language = body.get("language")
+    if not (isinstance(language, str) and language in LANGUAGES):
+        language = None
+    return Choice(machines, see, propose, notes, term, time_zone(body.get("zone")),
+                  language)
 
 
 async def choosable(pool: asyncpg.Pool, user_id: uuid.UUID,
@@ -587,14 +621,15 @@ async def allow(pool: asyncpg.Pool, request_id: uuid.UUID,
             """
             INSERT INTO ai_connections (user_id, client_id, kind, name, said,
                 returns_to, can_see, can_propose, can_note, expires_at,
-                keys_device_id, keys_session_id, time_zone)
+                keys_device_id, keys_session_id, time_zone, language)
             VALUES ($1, $2, 'oauth', $3, $4, $5, $6, $7, $8,
                     CASE WHEN $9::interval IS NULL THEN NULL
-                         ELSE now() + $9::interval END, $10, $11, $12)
+                         ELSE now() + $9::interval END, $10, $11, $12, $13)
             RETURNING id
             """, person.id, row["client_id"], shown_name(row["said"], p),
             row["said"], place_text(p), choice.see, choice.propose,
-            choice.notes, until, session.device_id, session.id, choice.zone)
+            choice.notes, until, session.device_id, session.id, choice.zone,
+            choice.language)
         await _put_grants(conn, connection, choice, machines)
         await conn.execute(
             "INSERT INTO ai_codes (code_hash, connection_id, client_id, "
@@ -692,6 +727,11 @@ async def _end(conn: asyncpg.Connection, connections: list[uuid.UUID],
         connections, reason)]
     await conn.execute("DELETE FROM ai_tokens WHERE connection_id = ANY($1::uuid[])",
                        connections)
+    # What it proposed and the person did nothing with is over too (0.1.30).
+    await conn.execute(
+        "UPDATE ai_proposals SET state = 'over', decided_at = now() "
+        "WHERE connection_id = ANY($1::uuid[]) AND state = 'waiting'",
+        connections)
     return ended
 
 
@@ -887,13 +927,34 @@ async def connection_of(pool: asyncpg.Pool, token: object) -> Connection | None:
         SELECT c.id, c.user_id, c.name, c.said, c.returns_to, c.can_see,
                c.can_propose, c.can_note, c.expires_at, c.keys_device_id,
                c.keys_session_id, c.time_zone, u.name AS person, u.email,
-               u.language
+               coalesce(u.language, c.language) AS language
         FROM ai_tokens t
         JOIN ai_connections c ON c.id = t.connection_id
         JOIN users u ON u.id = c.user_id
         WHERE t.token_hash = $1 AND t.kind = 'access' AND t.expires_at > now()
           AND c.connected_at IS NOT NULL AND {_LIVE}
         """, auth.token_hash(token))
+    return _connection(row)
+
+
+async def connection_again(pool: asyncpg.Pool,
+                           connection_id: uuid.UUID) -> Connection | None:
+    """A connection as it is now, if it is still on: a long request asks
+    again what the AI may do (0.1.30, write_notes)."""
+    row = await pool.fetchrow(
+        f"""
+        SELECT c.id, c.user_id, c.name, c.said, c.returns_to, c.can_see,
+               c.can_propose, c.can_note, c.expires_at, c.keys_device_id,
+               c.keys_session_id, c.time_zone, u.name AS person, u.email,
+               coalesce(u.language, c.language) AS language
+        FROM ai_connections c
+        JOIN users u ON u.id = c.user_id
+        WHERE c.id = $1 AND c.connected_at IS NOT NULL AND {_LIVE}
+        """, connection_id)
+    return _connection(row)
+
+
+def _connection(row) -> Connection | None:
     if row is None:
         return None
     return Connection(row["id"], row["user_id"], row["person"], row["email"],
@@ -1101,8 +1162,17 @@ async def change(pool: asyncpg.Pool, user_id: uuid.UUID,
         await _put_grants(conn, connection_id, choice, machines)
         await conn.execute(
             "UPDATE ai_connections SET can_see = $2, can_propose = $3, "
-            "can_note = $4, time_zone = $5 WHERE id = $1",
-            connection_id, choice.see, choice.propose, choice.notes, choice.zone)
+            "can_note = $4, time_zone = $5, language = coalesce($6, language) "
+            "WHERE id = $1",
+            connection_id, choice.see, choice.propose, choice.notes, choice.zone,
+            choice.language)
+        if not choice.propose:
+            # It may not propose any more: what waits of it is over.
+            await conn.execute(
+                "UPDATE ai_proposals SET state = 'over', decided_at = now() "
+                "WHERE connection_id = $1 AND state = 'waiting'", connection_id)
+        # And what waits on machines it does not see the terminals of now.
+        await conn.execute(_UNGRANTED_OVER, [connection_id])
         if choice.term != "keep":
             await conn.execute(
                 "UPDATE ai_connections SET expires_at = CASE WHEN "
@@ -1165,6 +1235,7 @@ async def leave_project(pool: asyncpg.Pool, user_id: uuid.UUID,
             return False
         await conn.execute("DELETE FROM ai_grants WHERE connection_id = $1 "
                            "AND project_id = $2", connection_id, project_id)
+        await conn.execute(_UNGRANTED_OVER, [connection_id])
         await accounts.journal(conn, "ai.left_project", user_id=user_id,
                                project_id=project_id,
                                details={"connection": str(connection_id)})
@@ -1207,13 +1278,331 @@ async def vault_password(pool: asyncpg.Pool, user_id: uuid.UUID) -> bool:
         user_id))
 
 
+# ------------------------------------- what an AI writes, as it shows
+
+#: Characters that draw as nothing that are not format ones (Cf): Unicode's
+#: default ignorable code points of other kinds (the joiner of graphemes,
+#: the fillers of Hangul, Khmer's inherent vowels, Mongolian's variation
+#: selectors, the variation selectors, tags and the rest of their plane),
+#: and the blank of braille.
+_IGNORED = ((0x034F, 0x034F), (0x115F, 0x1160), (0x17B4, 0x17B5),
+            (0x180B, 0x180F), (0x2800, 0x2800), (0x3164, 0x3164),
+            (0xFE00, 0xFE0F), (0xFFA0, 0xFFA0), (0xE0000, 0xE0FFF))
+
+
+def unseen(ch: str) -> bool:
+    """Whether a character does not show as itself: it draws as nothing
+    (format marks, zero-width ones and those that turn text around among
+    them, and the others above), or as a space it is not (a space other
+    than the plain one, a separator of lines or paragraphs)."""
+    kind = unicodedata.category(ch)
+    if kind in ("Cf", "Zl", "Zp") or (kind == "Zs" and ch != " "):
+        return True
+    code = ord(ch)
+    return any(low <= code <= high for low, high in _IGNORED)
+
+
+def as_shown(text: str) -> str:
+    """An AI's words as they show (0.1.30, the security review): spaces of
+    other kinds become the plain one, separators of lines and paragraphs
+    line breaks, and what draws as nothing goes. A secret with an invisible
+    character in it is then whole, and its cut finds it."""
+    out = []
+    for ch in text:
+        if not unseen(ch):
+            out.append(ch)
+        elif unicodedata.category(ch) in ("Zl", "Zp"):
+            out.append("\n")
+        elif unicodedata.category(ch) == "Zs" or ch == "⠀":
+            out.append(" ")
+    return "".join(out)
+
+
+def clean_ai_note(text: object) -> str:
+    """A note an AI writes, as it will show and be kept: as shown, cleaned
+    as any note (logs.clean_note), its length checked, then cut of secrets.
+    The order matters: a secret split by a character that cleaning takes
+    out would pass a cut made before it."""
+    if not isinstance(text, str):
+        raise Refused("A note is text.")
+    try:
+        text = logs.clean_note(as_shown(text))
+    except logs.Refused as exc:
+        raise Refused(str(exc)) from None
+    if len(text) > AI_NOTE_MAX:
+        raise Refused(f"A note is at most {AI_NOTE_MAX} characters: split it.")
+    return leaks.cut(text)
+
+
+# -------------------------------------------------- proposals (0.1.30)
+
+def clean_command(command: object) -> str:
+    """A command as an AI proposes it, to show and to run as it reads: one
+    line, nothing that does not show as itself (controls, marks that turn
+    text around or hide it, spaces other than the plain one, which the
+    shell does not take for spaces). Refused otherwise, saying why."""
+    if not isinstance(command, str):
+        raise Refused("The command is text.")
+    command = command.strip()
+    if not command:
+        raise Refused("Say the command.")
+    if len(command) > PROPOSAL_MAX:
+        raise Refused(f"A command is at most {PROPOSAL_MAX} characters.")
+    for ch in command:
+        if ch in "\n\r  ":
+            raise Refused("One command line, with no line breaks: join several "
+                          "with &&, or propose them one by one.")
+        if ord(ch) < 32 or ord(ch) == 127 or 0x80 <= ord(ch) < 0xA0:
+            raise Refused("The command has a control character in it: write "
+                          "it plainly.")
+        if unseen(ch) or unicodedata.category(ch) in ("Cs", "Co", "Cn"):
+            raise Refused("The command has a character in it that does not "
+                          "show as itself (an invisible one, or a space other "
+                          "than the plain one): write it plainly.")
+    return command
+
+
+def clean_why(why: object) -> str:
+    """Why an AI proposes a command: a sentence or two, on one line, as it
+    shows; its length checked, then cut of secrets (kept at most
+    WHY_KEPT_MAX: the cut can make it longer)."""
+    if why is None:
+        return ""
+    if not isinstance(why, str):
+        raise Refused("Say why in words.")
+    why = "".join(" " if ch in "\n\r\t" else ch for ch in as_shown(why)
+                  if not (ord(ch) < 32 and ch not in "\n\r\t")
+                  and ord(ch) != 127 and not 0x80 <= ord(ch) < 0xA0
+                  and unicodedata.category(ch) not in ("Cs", "Co", "Cn"))
+    why = " ".join(why.split())
+    if len(why) > WHY_MAX:
+        raise Refused(f"Say why in at most {WHY_MAX} characters.")
+    why = leaks.cut(why)
+    return why if len(why) <= WHY_KEPT_MAX else why[:WHY_KEPT_MAX - 1] + "…"
+
+
+def _granted_here(connection: str, machine: str, person: str) -> str:
+    """SQL: whether the connection may see the terminals of the machine,
+    as its grants count now (as _GRANTED has them: the machine still in
+    the project it was allowed in, the person still in that project)."""
+    return f"""EXISTS (
+        SELECT 1 FROM ai_grants g
+        JOIN machines gm ON gm.id = g.machine_id AND gm.project_id = g.project_id
+             AND gm.removed_at IS NULL
+        JOIN projects gp ON gp.id = g.project_id AND gp.deleted_at IS NULL
+        JOIN project_members gpm ON gpm.project_id = gp.id
+             AND gpm.user_id = {person}
+             AND (gpm.until IS NULL OR gpm.until > now())
+        WHERE g.connection_id = {connection} AND g.machine_id = {machine}
+          AND g.terminals)"""
+
+
+#: SQL: what waits of these connections (`$1`; NULL, of every one) on
+#: machines whose terminals they may not see any more is over (0.1.30, the
+#: security review: the machine unticked in Change, the project left, the
+#: machine moved, removed or the person no longer in its project).
+_UNGRANTED_OVER = f"""
+    UPDATE ai_proposals p SET state = 'over', decided_at = now()
+    FROM terminals t
+    WHERE t.id = p.terminal_id AND p.state = 'waiting'
+      AND ($1::uuid[] IS NULL OR p.connection_id = ANY($1::uuid[]))
+      AND NOT {_granted_here('p.connection_id', 't.machine_id', 'p.user_id')}
+"""
+
+
+def _proposal(row) -> dict:
+    return {"id": str(row["id"]), "terminalId": str(row["terminal_id"]),
+            "connection": str(row["connection_id"]), "ai": row["ai"],
+            "command": row["command"], "why": row["why"],
+            "at": _ms(row["created_at"])}
+
+
+async def propose(pool: asyncpg.Pool, connection: Connection,
+                  terminal_id: uuid.UUID, command: object, why: object) -> dict:
+    """The AI proposes a command in one of the person's terminals (the
+    caller checked it sees it): it waits there in its place, the one
+    waiting before is replaced. Asked again as it goes in: the AI may still
+    propose, and see the terminals of its machine (the security review of
+    0.1.30: a Change at the same moment ends it, or comes after it and
+    finds it to end)."""
+    command, why = clean_command(command), clean_why(why)
+    for attempt in range(2):
+        try:
+            async with pool.acquire() as conn, conn.transaction():
+                may = await conn.fetchval(
+                    f"""
+                    SELECT true FROM ai_connections c
+                    WHERE c.id = $1 AND c.can_see AND c.can_propose
+                      AND c.connected_at IS NOT NULL AND {_LIVE}
+                      AND EXISTS (
+                          SELECT 1 FROM terminals t
+                          WHERE t.id = $2 AND t.owner_id = c.user_id
+                            AND t.closed_at IS NULL
+                            AND {_granted_here('c.id', 't.machine_id', 'c.user_id')})
+                    FOR SHARE OF c
+                    """, connection.id, terminal_id)
+                if not may:
+                    raise Refused("You may not propose commands in this terminal "
+                                  "any more: list_machines says what you may "
+                                  "do.", 403)
+                await conn.execute(
+                    "UPDATE ai_proposals SET state = 'replaced', decided_at = now() "
+                    "WHERE terminal_id = $1 AND state = 'waiting'", terminal_id)
+                row = await conn.fetchrow(
+                    """
+                    INSERT INTO ai_proposals (connection_id, terminal_id, user_id,
+                                              ai, command, why)
+                    VALUES ($1, $2, $3, $4, $5, $6)
+                    RETURNING id, terminal_id, connection_id, ai, command, why,
+                              created_at
+                    """, connection.id, terminal_id, connection.user_id,
+                    connection.name, command, why)
+            return _proposal(row)
+        except asyncpg.UniqueViolationError:
+            # Another proposal for this terminal came at the same moment.
+            if attempt:
+                raise Refused("Another proposal came for this terminal at the "
+                              "same moment: propose again.") from None
+    raise AssertionError("unreachable")
+
+
+async def waiting(pool: asyncpg.Pool, user_id: uuid.UUID) -> list[dict]:
+    """What waits in the person's terminals, of AI that may still propose
+    there: see the terminals of its machine."""
+    rows = await pool.fetch(
+        f"""
+        SELECT p.id, p.terminal_id, p.connection_id, p.ai, p.command, p.why,
+               p.created_at
+        FROM ai_proposals p
+        JOIN ai_connections c ON c.id = p.connection_id
+        JOIN terminals t ON t.id = p.terminal_id
+        WHERE p.user_id = $1 AND p.state = 'waiting' AND t.closed_at IS NULL
+          AND c.can_see AND c.can_propose AND {_LIVE}
+          AND {_granted_here('p.connection_id', 't.machine_id', 'p.user_id')}
+        ORDER BY p.created_at
+        """, user_id)
+    return [_proposal(r) for r in rows]
+
+
+async def waiting_in(pool: asyncpg.Pool, terminal_id: uuid.UUID) -> dict | None:
+    """The proposal waiting in one terminal, as the AI is told of it."""
+    row = await pool.fetchrow(
+        "SELECT id, terminal_id, connection_id, ai, command, why, created_at "
+        "FROM ai_proposals WHERE terminal_id = $1 AND state = 'waiting'",
+        terminal_id)
+    return _proposal(row) if row is not None else None
+
+
+async def decide(pool: asyncpg.Pool, user_id: uuid.UUID,
+                 proposal_id: uuid.UUID, what: str, *,
+                 terminal_id: uuid.UUID | None = None,
+                 command: str | None = None) -> dict:
+    """The person ran a proposal (`run`), put it into the input line
+    (`inserted`) or removed it (`removed`). Run or put in only while the AI
+    that proposed it may still propose there (it sees the terminals of the
+    machine, the terminal is open), not in the moment it came
+    (PROPOSAL_SETTLE_SECONDS, 425: it waits on); run only in its terminal,
+    as it was proposed (`terminal_id`, `command`). The proposal as it was."""
+    if what not in ("run", "inserted", "removed"):
+        raise Refused("Run it, put it in, or remove it.")
+    over = mismatch = early = False
+    async with pool.acquire() as conn, conn.transaction():
+        row = await conn.fetchrow(
+            f"""
+            SELECT p.id, p.terminal_id, p.connection_id, p.ai, p.command,
+                   p.why, p.created_at,
+                   (c.can_see AND c.can_propose AND {_LIVE}
+                    AND t.closed_at IS NULL
+                    AND {_granted_here('p.connection_id', 't.machine_id',
+                                       'p.user_id')}) AS may,
+                   now() - p.created_at < make_interval(secs => $3) AS fresh
+            FROM ai_proposals p
+            JOIN ai_connections c ON c.id = p.connection_id
+            JOIN terminals t ON t.id = p.terminal_id
+            WHERE p.id = $1 AND p.user_id = $2 AND p.state = 'waiting'
+            FOR UPDATE OF p
+            """, proposal_id, user_id, float(PROPOSAL_SETTLE_SECONDS))
+        if row is not None and what != "removed" and not row["may"]:
+            # The AI may not propose here any more: what it proposed is over.
+            await conn.execute(
+                "UPDATE ai_proposals SET state = 'over', decided_at = now() "
+                "WHERE id = $1", proposal_id)
+            over = True
+        elif row is not None:
+            mismatch = ((terminal_id is not None
+                         and row["terminal_id"] != terminal_id)
+                        or (command is not None
+                            and command.strip() != row["command"].strip()))
+            early = what != "removed" and row["fresh"]
+            if not mismatch and not early:
+                await conn.execute(
+                    "UPDATE ai_proposals SET state = $2, decided_at = now() "
+                    "WHERE id = $1", proposal_id, what)
+    if row is None or over:
+        raise Refused("This proposal is over.", 410)
+    if mismatch:
+        raise Refused("This is not the command proposed here.", 409)
+    if early:
+        raise Refused("This proposal just came: read it, then run it.", 425)
+    return _proposal(row)
+
+
+async def proposal_terminal(pool: asyncpg.Pool, user_id: uuid.UUID,
+                            proposal_id: uuid.UUID) -> uuid.UUID | None:
+    """The terminal a proposal of the person's waits in."""
+    return await pool.fetchval(
+        "SELECT terminal_id FROM ai_proposals WHERE id = $1 AND user_id = $2 "
+        "AND state = 'waiting'", proposal_id, user_id)
+
+
+async def undecide(pool: asyncpg.Pool, proposal_id: uuid.UUID) -> bool:
+    """A run the terminal refused after all (a command came first): the
+    proposal waits again; if another took its place meanwhile, it was
+    replaced. Whether it is over (replaced, or not the run it was)."""
+    try:
+        async with pool.acquire() as conn, conn.transaction():
+            row = await conn.fetchrow(
+                "SELECT terminal_id FROM ai_proposals WHERE id = $1 "
+                "AND state = 'run' AND seq IS NULL FOR UPDATE", proposal_id)
+            if row is None:
+                return True
+            other = await conn.fetchval(
+                "SELECT true FROM ai_proposals WHERE terminal_id = $1 "
+                "AND state = 'waiting'", row["terminal_id"])
+            await conn.execute(
+                "UPDATE ai_proposals SET state = $2, decided_at = CASE WHEN "
+                "$2 = 'waiting' THEN NULL ELSE now() END WHERE id = $1",
+                proposal_id, "replaced" if other else "waiting")
+            return bool(other)
+    except asyncpg.UniqueViolationError:
+        # Another came for the terminal at the same moment: in its place.
+        await pool.execute(
+            "UPDATE ai_proposals SET state = 'replaced', decided_at = now() "
+            "WHERE id = $1 AND state = 'run' AND seq IS NULL", proposal_id)
+        return True
+
+
+async def proposals_of(pool: asyncpg.Pool, terminal_id: uuid.UUID,
+                       connection_id: uuid.UUID, limit: int = 5) -> list[dict]:
+    """What became of the AI's latest proposals in a terminal, for it."""
+    rows = await pool.fetch(
+        "SELECT id, command, state, created_at, decided_at, seq "
+        "FROM ai_proposals WHERE terminal_id = $1 AND connection_id = $2 "
+        "ORDER BY created_at DESC LIMIT $3", terminal_id, connection_id, limit)
+    return [{"id": str(r["id"]), "command": r["command"], "state": r["state"],
+             "at": r["created_at"], "decidedAt": r["decided_at"],
+             "seq": r["seq"]} for r in rows]
+
+
 # ------------------------------------------------------------- sweeping
 
 async def sweep(pool: asyncpg.Pool) -> None:
     """Requests and codes after a day; spent and old tokens; connections
     whose time is up end, those never connected go after a day; apps that
     registered and never connected after a day; what an AI read, with the
-    blocks (they are kept 30 days); grants of machines moved or removed."""
+    blocks (they are kept 30 days); grants of machines moved or removed;
+    proposals (0.1.30): over with their terminal, or where their AI does
+    not see the terminals any more, gone after a month."""
     async with pool.acquire() as conn, conn.transaction():
         await conn.execute("DELETE FROM ai_requests "
                            "WHERE created_at < now() - interval '1 day'")
@@ -1236,6 +1625,15 @@ async def sweep(pool: asyncpg.Pool) -> None:
             "WHERE c.client_id = cl.id)")
         await conn.execute("DELETE FROM ai_reads "
                            "WHERE at < now() - interval '31 days'")
+        # Proposals (0.1.30): over with their terminal; kept a month.
+        await conn.execute(
+            "UPDATE ai_proposals p SET state = 'over', decided_at = now() "
+            "FROM terminals t WHERE t.id = p.terminal_id "
+            "AND t.closed_at IS NOT NULL AND p.state = 'waiting'")
+        await conn.execute("DELETE FROM ai_proposals "
+                           "WHERE created_at < now() - interval '31 days'")
         await conn.execute(
             "DELETE FROM ai_grants g USING machines m WHERE m.id = g.machine_id "
             "AND (m.removed_at IS NOT NULL OR m.project_id <> g.project_id)")
+        # What waits where its AI does not see the terminals any more.
+        await conn.execute(_UNGRANTED_OVER, None)

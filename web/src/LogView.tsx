@@ -54,7 +54,7 @@ import {
   authorsOf, byDay, failedLine, filtering, hasWords, NO_FILTER, shows, terminalsOf,
   type LogFilter,
 } from "./logfilter";
-import { RedactedMark, redactedLine, stampOf, Thread, whoOf } from "./LogNotes";
+import { aiNoteWho, RedactedMark, redactedLine, stampOf, Thread, whoOf } from "./LogNotes";
 import { marked } from "./marks";
 import { MenuButton } from "./Menus";
 import { Avatar } from "./ProjectPage";
@@ -77,6 +77,9 @@ const FOLD_LINES = 12;
 const CLOSE_AFTER_MS = 250;
 /** The order of the lines, as this browser last had it. */
 const ORDER_KEY = "tterm.log.newest";
+/** Notes under lines (0.1.30): every note shown under its line, without
+ * opening it, for going through a log; as this browser last had it. */
+const NOTES_KEY = "tterm.log.notesUnder";
 
 interface Props {
   machineId: string;
@@ -146,6 +149,22 @@ function saveNewest(newest: boolean): void {
     localStorage.setItem(ORDER_KEY, newest ? "1" : "0");
   } catch {
     // Not kept: the order is then as at first next time.
+  }
+}
+
+function savedNotesUnder(): boolean {
+  try {
+    return localStorage.getItem(NOTES_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function saveNotesUnder(on: boolean): void {
+  try {
+    localStorage.setItem(NOTES_KEY, on ? "1" : "0");
+  } catch {
+    // Not kept: off next time, as at first.
   }
 }
 
@@ -293,6 +312,7 @@ export function LogView(props: Props) {
   // day and among what was found alike.
   const [filter, setFilter] = useState<LogFilter>(NO_FILTER);
   const [newest, setNewest] = useState(savedNewest);
+  const [notesUnder, setNotesUnder] = useState(savedNotesUnder);
   const [query, setQuery] = useState("");
   const [found, setFound] = useState<LogFound | null>(null);
   const [finding, setFinding] = useState(false);
@@ -617,8 +637,7 @@ export function LogView(props: Props) {
     return out.join("\n") + "\n";
   };
 
-  const noteWho = (n: LogNote) => n.author === "ai"
-    ? (!n.by || n.by.id === me.id ? t("log.ai_for_you") : t("log.ai_for", { who: n.by.firstName }))
+  const noteWho = (n: LogNote) => n.author === "ai" ? aiNoteWho(n, me, t)
     : whoOf(n.by, me, t);
 
   /** A line of a terminal or of the machine, in words. A sentence starts
@@ -765,7 +784,7 @@ export function LogView(props: Props) {
                   : words.length ? marked(command, words, "log-hit") : command}
               </code>
             )}
-            {!open && notes.length > 0 && (
+            {!open && !notesUnder && notes.length > 0 && (
               <span className={noteHit ? "log-count hit" : "log-count"}
                 title={t("count.notes", { n: notes.length })}>
                 <Bubble size={12} />
@@ -775,6 +794,12 @@ export function LogView(props: Props) {
             )}
           </span>
           <span className="log-side">
+            {e.proposedBy && (
+              <span className="block-proposed"
+                title={t("log.proposed_title", { ai: e.proposedBy })}>
+                {t("block.proposed")}
+              </span>
+            )}
             {bad && <span className="red">{t("block.exit", { code: String(e.exit) })}</span>}
             {e.ms !== null && e.ms !== undefined && <span>{duration(e.ms)}</span>}
             {e.cwd && <span>{shortPath(e.cwd, e.home)}</span>}
@@ -849,13 +874,13 @@ export function LogView(props: Props) {
           </span>
         </div>
         {open && printed && <OutputBox entry={e} notify={props.notify} />}
-        {open && (
+        {(open || (notesUnder && notes.length > 0)) && (
           <Thread notes={notes} me={me} canWrite={!!e.canNote} writing={here}
             onWrite={() => startNote(e.id)} onCancel={() => setWriting(null)}
             onSave={(text) => saveNote(e, text)}
             menuOf={e.canRedact ? (n) => noteMenu(e, n) : undefined}
             words={words}
-            className="log-note" />
+            className={open ? "log-note" : "log-note under"} />
         )}
       </Fragment>
     );
@@ -938,6 +963,14 @@ export function LogView(props: Props) {
         aria-pressed={filter.notes}
         onClick={() => setFilter((f) => ({ ...f, notes: !f.notes }))}>
         {t("log.with_notes")}
+      </button>
+      <button type="button" className={notesUnder ? "log-chip on" : "log-chip"}
+        aria-pressed={notesUnder} title={t("log.notes_under_title")}
+        onClick={() => setNotesUnder((on) => {
+          saveNotesUnder(!on);
+          return !on;
+        })}>
+        <Bubble size={13} />{t("log.notes_under")}
       </button>
       {(terms.length > 1 || filter.terminal !== null) && (
         <>

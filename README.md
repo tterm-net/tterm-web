@@ -523,6 +523,23 @@ are marked for the page. Forget, Disconnect all AI and Forget all devices
 end it at once. Every account may connect its AI, with nothing to set on
 the server: the AI is the person's own, on their plan with it.
 
+From 0.1.30 the person may also let it propose commands and write notes
+in the log. A command it proposes waits in one of the person's open
+terminals, in a block of its own, until they run it, put it into the line
+or remove it: it goes in as any command typed, the question about a
+destructive one too, and its block and line of the log say which AI
+proposed it; one line, nothing in it that does not show as itself (no
+invisible character, no space but the plain one), one waiting in a
+terminal at a time. Run and Insert wait a moment after one comes or takes
+another's place, and the core runs none in the second it came; a word that
+mixes Latin letters with others shows those marked; a shell that is not
+told what is pasted gets nothing beyond ASCII from Run. What waits ends
+when the AI may no longer see that machine's terminals. Its notes go under
+the lines it sees, signed as the AI on the person's behalf, in the language
+of the person's tTerm, as they show and then cut of secrets: up to 200 at
+once and 500 an hour (requests at once and a restart included), never
+changed, like any note.
+
 The page guards itself as well: it answers only when the browser asks for
 its own address (`TTERM_PAGE_URL`; on a laptop `localhost` or `127.0.0.1`
 with its port), which defeats DNS rebinding, and a request that changes

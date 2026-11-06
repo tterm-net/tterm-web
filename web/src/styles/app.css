@@ -2737,6 +2737,97 @@ code {
 }
 
 /* A command held back for a yes, over the line, as wide as the feed. */
+/* A command an AI proposed (0.1.30), above the line, as on the canvas
+   (McpTerminal): it waits until the person runs it, puts it in or removes
+   it. */
+.ai-proposal {
+  flex: none;
+  width: calc(100% - 48px);
+  max-width: 1120px;
+  margin: 0 auto 10px;
+  box-sizing: border-box;
+  padding: 12px 14px;
+  border: 1px solid var(--blue-line);
+  border-radius: 10px;
+  background: var(--blue-wash);
+}
+
+.ai-proposal-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font: 600 13px/1.4 var(--font-ui);
+  color: var(--blue-ink);
+}
+
+.ai-proposal-state {
+  font-weight: 500;
+  color: var(--faint);
+}
+
+.ai-proposal-state::before {
+  content: "· ";
+}
+
+.ai-proposal-why {
+  margin: 8px 0 0;
+  font: 500 13px/1.5 var(--font-ui);
+  color: var(--dim);
+}
+
+.ai-proposal-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.ai-proposal-row .block-command {
+  flex: 1 1 260px;
+}
+
+.ai-proposal-row .button-ghost {
+  height: 34px;
+  padding: 0 10px;
+}
+
+/* The command reads left to right, as it will be typed, whatever its
+   letters: text of right-to-left letters cannot turn it around on screen
+   (the security review of 0.1.30). */
+.ai-proposal-command {
+  direction: ltr;
+  unicode-bidi: bidi-override;
+}
+
+/* A character beyond ASCII in a word with Latin letters: a lookalike. */
+.ai-proposal-odd {
+  padding: 0 1px;
+  border-radius: 3px;
+  background: var(--amber-tint);
+  box-shadow: inset 0 -2px 0 var(--amber);
+  color: inherit;
+}
+
+.ai-proposal-mixed {
+  margin: 8px 0 0;
+  font: 500 12px/1.5 var(--font-ui);
+  color: var(--amber-ink);
+}
+
+/* Another came in place of the one waiting: it says so. */
+.ai-proposal.replaced .ai-proposal-state {
+  color: var(--amber-ink);
+}
+
+/* Run as an AI proposed it (0.1.30): in the block's line and the log's. */
+.block-proposed {
+  font-family: var(--font-ui);
+  font-weight: 600;
+  color: var(--blue-ink);
+}
+
 .confirm-bar {
   flex: none;
   display: flex;
@@ -7943,6 +8034,11 @@ mark.found-mark {
   color: var(--ink);
 }
 
+/* Notes under lines (0.1.30): under a line that is not open. */
+.log-note.under {
+  margin-top: 0;
+}
+
 .lmsg {
   padding: 9px 0 7px;
 }
@@ -9584,6 +9680,16 @@ mark.log-hit {
   flex: none;
   margin-top: 2px;
   color: var(--amber-ink);
+}
+
+/* Propose commands, write notes (0.1.30): ticked or not. */
+.ai-can-pick {
+  cursor: pointer;
+}
+
+.ai-can-pick input {
+  flex: none;
+  margin-top: 1px;
 }
 
 .ai-can-text {

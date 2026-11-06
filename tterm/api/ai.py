@@ -30,6 +30,7 @@ from __future__ import annotations
 import base64
 import binascii
 import uuid
+from types import SimpleNamespace
 from typing import Awaitable, Callable
 from urllib.parse import parse_qsl, unquote_plus
 
@@ -433,5 +434,57 @@ def add_ai(app: FastAPI, *, pool: asyncpg.Pool, terminals: Terminals | None,
     @app.post("/api/ai/forget-all")
     async def ai_forget_all(session: auth.Session = Depends(signed_in)) -> Response:
         return _json({"forgotten": await ai.forget_all(pool, session.person.id)})
+
+    async def closed_here(session: auth.Session, machine) -> bool:
+        """As the page's closed_to: a machine under the keys, the keys not
+        open on this device (0.1.28)."""
+        if (keys_open(session) or not vault.guarded(machine)
+                or vault.exempt(session.computer_id, machine)):
+            return False
+        return await guarding(session)
+
+    @app.post("/api/ai/proposals/{proposal_id}/{what}")
+    async def ai_proposal(proposal_id: uuid.UUID, what: str,
+                          session: auth.Session = Depends(signed_in)) -> Response:
+        """A command an AI proposed (0.1.30): the person put it into the
+        input line (`insert`, the page puts it there) or removed it
+        (`remove`). Running it goes through the terminal's socket, as any
+        command typed."""
+        if what not in ("insert", "remove"):
+            return _json({"error": "Put it into the line, or remove it."}, 404)
+        me = session.person
+        # Not from a device its machine is closed to (0.1.28), either way:
+        # the answer would say whether it waits there.
+        terminal_id = await ai.proposal_terminal(pool, me.id, proposal_id)
+        t = (terminals.get(terminal_id, me.id)
+             if terminals is not None and terminal_id is not None else None)
+        machine = t.machine if t is not None else None
+        if machine is None and terminal_id is not None:
+            row = await pool.fetchrow(
+                "SELECT m.id, m.name, m.kind, m.login_method, m.via_machine_id "
+                "FROM terminals t JOIN machines m ON m.id = t.machine_id "
+                "WHERE t.id = $1", terminal_id)
+            machine = SimpleNamespace(**dict(row)) if row is not None else None
+        if (terminal_id is None or (what == "insert" and t is None)
+                or machine is None or await closed_here(session, machine)):
+            return _json({"error": "This proposal is over."}, 410)
+        try:
+            taken = await ai.decide(pool, me.id, proposal_id,
+                                    "inserted" if what == "insert" else "removed")
+        except ai.Refused as exc:
+            return refused(exc)
+        t = (terminals.get(uuid.UUID(taken["terminalId"]), me.id)
+             if terminals is not None else None)
+        if t is not None:
+            if what == "insert":
+                t.expect_proposal(proposal_id, taken["ai"], taken["command"],
+                                  ai.PROPOSAL_INSERT_SECONDS)
+            # The person's other pages put it away too.
+            await notify(me.id, {"op": "ai.proposal",
+                                 "terminalId": taken["terminalId"],
+                                 "proposal": None, "was": taken["id"]}, t.machine)
+        # Removed: nothing of it goes back (a page that does not see the
+        # terminal never had it anyway).
+        return _json({"proposal": taken} if what == "insert" else {"removed": True})
 
     return mcp

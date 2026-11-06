@@ -1349,6 +1349,8 @@ block.found = Found
 block.not_started_title = The shell is waiting for the rest of it (an open quote or heredoc), or did not take it. Type into the block, or Stop.
 block.not_started = not started
 block.running = running
+block.proposed = proposed by AI
+block.proposed_title = You ran it as {ai} proposed
 # A command that failed: exit 1.
 block.exit = exit {code}
 block.stop_title = Stop the command (Ctrl+C)
@@ -1414,6 +1416,17 @@ danger.user_lost = Their files and access go with them.
 # Under it, for rm -rf aimed at / or ~.
 feed.everything = <strong>This points at the whole machine.</strong> Nothing on it would survive.
 feed.run_it = Run it
+feed.proposal_label = A command {ai} proposes
+feed.proposes = {ai} proposes
+feed.proposal_waiting = not run yet
+feed.proposal_wait = A command is running: wait until it ends.
+feed.proposal_run = Run
+feed.proposal_insert = Insert
+feed.proposal_remove = Remove
+feed.proposal_new = new, in place of the one before
+feed.proposal_early = This proposal just came: read it, then run it.
+feed.proposal_typed = This shell gets commands as typed keys, and characters other than Latin could reach it changed, so Run does not run this one. To run it, use Insert, then press Enter.
+feed.proposal_mixed = The marked characters are not Latin, though they stand in words with Latin letters: check them before you run the command.
 
 # ------------------------------------------------------------ log: the log of a machine, in the Logs folder of a project's notes (LogView.tsx, LogNotes.tsx)
 # The folder in the sidebar, before a project's folders of notes, and the
@@ -1478,8 +1491,12 @@ log.redacted_by_someone = Redacted · {at} · {reason}
 # Who wrote a note: You, or a person's first name; an AI on someone's behalf: AI for You, AI for Anna. "AI" may be the language's own short word for it.
 log.you = You
 log.someone = Someone
-log.ai_for_you = AI for You
-log.ai_for = AI for {who}
+log.ai_for_you = {ai} (allowed by you)
+log.ai_for = {ai} (allowed by {who})
+log.ai_unnamed = AI
+log.proposed_title = Run as {ai} proposed
+log.notes_under = Notes under lines
+log.notes_under_title = Every note under its line, without opening the line
 log.reply = Reply
 # Writing a note. <k>…</k> are keys on the keyboard.
 log.note_label = A note after the command
@@ -2169,6 +2186,9 @@ ai.chip_one = {ai} is looking
 ai.chip_more = one: {ai} and one more are looking | other: {ai} and {n} more are looking
 ai.chip_title = {ai} may see this terminal
 ai.pop_text = It sees the commands and the output of this terminal when you ask it something. It types nothing here.
+ai.pop_text_notes = It sees the commands and the output of this terminal when you ask it something, and writes notes under them. It types nothing here.
+ai.pop_text_propose = It sees the commands and the output of this terminal when you ask it something. It types nothing here itself: its commands come in a block “{ai} proposes”, and you run them.
+ai.pop_text_both = It sees the commands and the output of this terminal when you ask it something, and writes notes under them. It types nothing here itself: its commands come in a block “{ai} proposes”, and you run them.
 ai.pop_closed = It does not see this machine now: the keys are closed on the device it was allowed from.
 ai.pop_forget = Forget {ai}
 ai.pop_settings = Settings › AI
@@ -2194,6 +2214,10 @@ ai.machines_note = Terminals: the commands and the output in your terminals of t
 ai.can_title = What {ai} may do
 ai.can_see = Look
 ai.can_see_text = The commands, their output and the log of the machines ticked above.
+ai.can_propose = Propose commands
+ai.can_propose_text = A command comes into the terminal of a machine ticked above, in a block “{ai} proposes”. You run it yourself, with Run.
+ai.can_notes = Write notes in the log
+ai.can_notes_text = Notes under the commands of the machines it sees: what a command did, why it failed. It writes in the language of your tTerm, now in English. Signed “{ai} (allowed by you)”; a note is never changed or taken back, only answered.
 ai.cannot = {ai} cannot type or run commands itself, open terminals or take keys.
 ai.term = How long
 ai.term_forever = Until I take it back (no end)
@@ -2214,8 +2238,8 @@ ai.keys_open = Open the keys
 ai.keys_opening = Opening…
 ai.keys_no_password = Your vault has no password: open the keys in tTerm on this device, in another tab, then check again.
 ai.keys_check = Check again
-ai.keys_open_here = The keys are open in this browser. {machines}: {ai} will see them while they are open here, until Lock, signing out or 8 hours without anything done.
-ai.keys_password_ok = The password is right. {machines}: {ai} will see them while the keys are open in tTerm on this device, until Lock, signing out or 8 hours without anything done.
+ai.keys_open_here = The keys are open in this browser. {machines}: {ai} will see them while tTerm is open here with your keys open. When the keys close (Lock, signing out, 8 hours without anything done), {ai} stops seeing them.
+ai.keys_password_ok = The password is right. {machines}: {ai} will see them while tTerm is open in this browser with your keys open, so keep a tab of tTerm here. When the keys close (Lock, signing out, 8 hours without anything done), {ai} stops seeing them.
 
 # ---------------------------------- connect_ai: the page an AI app opens to connect (ConnectAi.tsx)
 connect_ai.title_tab = Connect an AI

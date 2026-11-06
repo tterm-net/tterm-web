@@ -26,9 +26,10 @@ import {
   Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode,
 } from "react";
 import {
-  addLogNote, blockOutput, loadFeed, loadHistory, type LogNote, type Me, type Redaction,
-  type StoredBlock, type TerminalInfo,
+  addLogNote, blockOutput, loadFeed, loadHistory, type AiProposal,
+  type LogNote, type Me, type Redaction, type StoredBlock, type TerminalInfo,
 } from "./api";
+import { ProposalBlock } from "./Ai";
 import { BlockView, shortPath, type FeedBlock } from "./BlockView";
 import { DANGER_KEYS } from "./danger";
 import { PRESSED_MS, toClipboard } from "./briefly";
@@ -172,6 +173,11 @@ interface Props {
   after?: (block: FeedBlock, blocks: FeedBlock[]) => ReactNode;
   /** Who is looking: the notes under blocks say You (0.1.20). */
   me: Me;
+  /** A command an AI proposed here, waiting to be run, put into the line
+   * or removed (0.1.30). */
+  proposal?: AiProposal | null;
+  /** The core said that proposal is over: the page lets it go. */
+  onProposalGone?: (id: string) => void;
 }
 
 /** How many pages of earlier blocks a block found by search is looked for
@@ -202,6 +208,7 @@ function fromStored(b: StoredBlock, cols: number, folded = false): FeedBlock {
     redacted: b.redacted ?? null,
     canNote: !!b.canNote,
     aiRead: b.aiRead ?? [],
+    proposedBy: b.proposedBy,
   };
 }
 
@@ -229,6 +236,13 @@ function join(chunks: Uint8Array[], size: number): Uint8Array {
 }
 
 const strong = (inner: ReactNode) => <strong>{inner}</strong>;
+
+/** Why the core did not run an AI's proposal, in the page's words, by its
+ * code (0.1.30); any other reason shows as the core said it. */
+const PROPOSAL_REFUSED: Record<string, string> = {
+  early: "feed.proposal_early",
+  typed: "feed.proposal_typed",
+};
 
 export function FeedTerminal(props: Props) {
   const { terminalId, shownTheme } = props;
@@ -274,6 +288,10 @@ export function FeedTerminal(props: Props) {
   events.current = props.events;
   const notify = useRef(props.notify);
   notify.current = props.notify;
+  const proposalGone = useRef(props.onProposalGone);
+  proposalGone.current = props.onProposalGone;
+  const words = useRef(t);
+  words.current = t;
   const ended = useRef(props.ended);
   ended.current = props.ended;
   const active = useRef(props.active);
@@ -636,7 +654,7 @@ export function FeedTerminal(props: Props) {
               finishedAt: null, exitCode: null, state: "running", cols: xterm.cols,
               rendered: null, partial: false, cut: false, stored: false,
               expanded: false, collapsed: false, ...NEW_LINE,
-              canNote: !!ev.command.trim(),
+              canNote: !!ev.command.trim(), proposedBy: ev.proposedBy,
             });
             if (again) {
               // Ringed in amber, as a block a link opens: the eye finds it.
@@ -678,10 +696,13 @@ export function FeedTerminal(props: Props) {
           clearPending();
           setAsk(question);
         },
-        refused: (command, reason) => {
+        refused: (command, reason, proposal) => {
           clearPending();
-          notify.current(reason);
-          putBack(command);
+          const said = proposal?.code ? PROPOSAL_REFUSED[proposal.code] : undefined;
+          notify.current(said ? words.current(said) : reason);
+          // A proposal run from its block stays there, unless it is over.
+          if (!proposal) putBack(command);
+          else if (proposal.over) proposalGone.current?.(proposal.id);
         },
         redacted: (block, redacted) => forgetCommand.current(block, redacted),
       }, st.knownSeq >= 0 ? st.knownSeq : null);
@@ -835,18 +856,18 @@ export function FeedTerminal(props: Props) {
   // ------------------------------------------------------------ actions
   /** Sends a command to the shell: whether it went. */
   const run = useCallback((command: string, confirmed = false,
-    again = false): boolean => {
+    again = false, proposal?: string): boolean => {
     const st = s.current;
     const channel = chan.current;
     if (!channel) return false;
     if (!socket.connected) {
       notify.current(t("feed.not_connected"));
-      putBack(command);
+      if (!proposal) putBack(command);
       return false;
     }
     if (phaseRef.current !== "prompt" || st.pending) {
       notify.current(t("feed.still_running"));
-      putBack(command);
+      if (!proposal) putBack(command);
       return false;
     }
     setAsk(null);
@@ -856,7 +877,7 @@ export function FeedTerminal(props: Props) {
       if (s.current.pending === pending) waitInput.current();
     }, INPUT_WAIT_MS);
     st.pending = pending;
-    channel.run(command, confirmed);
+    channel.run(command, confirmed, proposal);
     return true;
   }, [putBack, t]);
 
@@ -1164,6 +1185,15 @@ export function FeedTerminal(props: Props) {
           ))}
         </div>
       </div>
+      {props.proposal && !props.ended && (
+        <ProposalBlock proposal={props.proposal} ready={phase === "prompt" && !fullscreen}
+          onRun={() => {
+            const p = props.proposal;
+            if (p) run(p.command, false, false, p.id);
+          }}
+          onInsert={putBack} notify={props.notify}
+          onGone={(id) => props.onProposalGone?.(id)} />
+      )}
       {ask && !props.ended && (() => {
         // What the command would do, in the language shown; one the page
         // does not know yet, as it came.
@@ -1186,7 +1216,7 @@ export function FeedTerminal(props: Props) {
           </div>
           <div className="button-row">
             <button type="button" className="button-danger"
-              onClick={() => run(ask.command, true)}>{t("feed.run_it")}</button>
+              onClick={() => run(ask.command, true, false, ask.proposal)}>{t("feed.run_it")}</button>
             <button type="button" className="button-plain" autoFocus
               onClick={() => {
                 putBack(ask.command);

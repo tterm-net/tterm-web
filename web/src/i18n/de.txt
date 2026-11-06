@@ -1349,6 +1349,8 @@ block.found = Gefunden
 block.not_started_title = Die Shell wartet auf den Rest (ein offenes Anführungszeichen oder ein Heredoc) oder hat den Befehl nicht angenommen. Tipp in den Block oder drück „Stoppen“.
 block.not_started = nicht gestartet
 block.running = läuft
+block.proposed = von KI vorgeschlagen
+block.proposed_title = Du hast ihn auf Vorschlag von {ai} ausgeführt
 # A command that failed: exit 1.
 block.exit = exit {code}
 block.stop_title = Befehl stoppen (Ctrl+C)
@@ -1414,6 +1416,17 @@ danger.user_lost = Seine Dateien und sein Zugang verschwinden mit ihm.
 # Under it, for rm -rf aimed at / or ~.
 feed.everything = <strong>Das zielt auf die ganze Maschine.</strong> Nichts darauf würde überleben.
 feed.run_it = Ausführen
+feed.proposal_label = Ein Befehl, den {ai} vorschlägt
+feed.proposes = {ai} schlägt vor
+feed.proposal_waiting = noch nicht ausgeführt
+feed.proposal_wait = Ein Befehl läuft gerade: Warte, bis er fertig ist.
+feed.proposal_run = Ausführen
+feed.proposal_insert = Einfügen
+feed.proposal_remove = Entfernen
+feed.proposal_new = neu, anstelle des vorigen
+feed.proposal_early = Dieser Vorschlag ist gerade erst gekommen: Lies ihn, dann führe ihn aus.
+feed.proposal_typed = Diese Shell bekommt Befehle als getippte Tasten, und nicht lateinische Zeichen könnten verändert bei ihr ankommen. Darum führt „Ausführen“ diesen Befehl nicht aus. Um ihn auszuführen, drücke „Einfügen“ und dann Enter.
+feed.proposal_mixed = Die markierten Zeichen sind nicht lateinisch, stehen aber in Wörtern mit lateinischen Buchstaben: Prüfe sie, bevor du den Befehl ausführst.
 
 # ------------------------------------------------------------ log: the log of a machine, in the Logs folder of a project's notes (LogView.tsx, LogNotes.tsx)
 # The folder in the sidebar, before a project's folders of notes, and the
@@ -1478,8 +1491,12 @@ log.redacted_by_someone = Geschwärzt · {at} · {reason}
 # Who wrote a note: You, or a person's first name; an AI on someone's behalf: AI for You, AI for Anna. "AI" may be the language's own short word for it.
 log.you = Du
 log.someone = Jemand
-log.ai_for_you = KI in deinem Auftrag
-log.ai_for = KI im Auftrag von {who}
+log.ai_for_you = {ai} (von dir zugelassen)
+log.ai_for = {ai} (von {who} zugelassen)
+log.ai_unnamed = KI
+log.proposed_title = Auf Vorschlag von {ai} ausgeführt
+log.notes_under = Notizen unter den Zeilen
+log.notes_under_title = Jede Notiz unter ihrer Zeile, ohne die Zeile auszuklappen
 log.reply = Antworten
 # Writing a note. <k>…</k> are keys on the keyboard.
 log.note_label = Eine Notiz zum Befehl
@@ -2169,6 +2186,9 @@ ai.chip_one = {ai} schaut zu
 ai.chip_more = one: {ai} und eine weitere KI schauen zu | other: {ai} und {n} weitere schauen zu
 ai.chip_title = Dieses Terminal ist für {ai} sichtbar
 ai.pop_text = Sieht die Befehle und die Ausgabe dieses Terminals, wenn du etwas fragst. Gibt hier selbst nichts ein.
+ai.pop_text_notes = Sieht die Befehle und die Ausgabe dieses Terminals, wenn du etwas fragst, und schreibt Notizen darunter. Gibt hier selbst nichts ein.
+ai.pop_text_propose = Sieht die Befehle und die Ausgabe dieses Terminals, wenn du etwas fragst. Gibt hier selbst nichts ein: Vorgeschlagene Befehle erscheinen in einem Block „{ai} schlägt vor“, und du führst sie aus.
+ai.pop_text_both = Sieht die Befehle und die Ausgabe dieses Terminals, wenn du etwas fragst, und schreibt Notizen darunter. Gibt hier selbst nichts ein: Vorgeschlagene Befehle erscheinen in einem Block „{ai} schlägt vor“, und du führst sie aus.
 ai.pop_closed = Sieht diese Maschine gerade nicht: Die Schlüssel sind auf dem Gerät, auf dem du den Zugriff zugelassen hast, nicht geöffnet.
 ai.pop_forget = {ai} vergessen
 ai.pop_settings = Einstellungen › KI
@@ -2194,6 +2214,10 @@ ai.machines_note = Terminals: die Befehle und die Ausgabe in deinen Terminals au
 ai.can_title = Was {ai} darf
 ai.can_see = Zuschauen
 ai.can_see_text = Die Befehle, ihre Ausgabe und das Log der oben angehakten Maschinen.
+ai.can_propose = Befehle vorschlagen
+ai.can_propose_text = Ein Befehl erscheint im Terminal einer oben angehakten Maschine, in einem Block „{ai} schlägt vor“. Ausgeführt wird er nur, wenn du selbst auf „Ausführen“ drückst.
+ai.can_notes = Notizen ins Log schreiben
+ai.can_notes_text = Notizen unter den Befehlen der Maschinen, die für die KI sichtbar sind: was ein Befehl bewirkt hat, warum er fehlgeschlagen ist. Verfasst in der Sprache deines tTerm, derzeit auf Deutsch, und unterschrieben mit „{ai} (von dir zugelassen)“; eine Notiz wird nie geändert oder zurückgenommen, nur beantwortet.
 ai.cannot = {ai} kann nicht selbst Befehle eingeben oder ausführen, Terminals öffnen oder Schlüssel an sich nehmen.
 ai.term = Wie lange
 ai.term_forever = Bis ich es widerrufe (unbefristet)
@@ -2214,8 +2238,8 @@ ai.keys_open = Schlüssel öffnen
 ai.keys_opening = Wird geöffnet …
 ai.keys_no_password = Dein Tresor hat kein Passwort: Öffne die Schlüssel in tTerm auf diesem Gerät, in einem anderen Tab, und prüf dann erneut.
 ai.keys_check = Erneut prüfen
-ai.keys_open_here = Die Schlüssel sind in diesem Browser geöffnet. {machines}: {ai} sieht sie, solange die Schlüssel hier geöffnet sind, also bis du auf „Sperren“ drückst, dich abmeldest oder 8 Stunden ohne Aktivität vergehen.
-ai.keys_password_ok = Das Passwort stimmt. {machines}: {ai} sieht sie, solange die Schlüssel in tTerm auf diesem Gerät geöffnet sind, also bis du auf „Sperren“ drückst, dich abmeldest oder 8 Stunden ohne Aktivität vergehen.
+ai.keys_open_here = Die Schlüssel sind in diesem Browser geöffnet. {machines}: {ai} sieht sie, solange tTerm hier offen ist und deine Schlüssel geöffnet sind. Sobald sich die Schlüssel schließen (mit „Sperren“, beim Abmelden oder nach 8 Stunden ohne Aktivität), sieht {ai} sie nicht mehr.
+ai.keys_password_ok = Das Passwort stimmt. {machines}: {ai} sieht sie, solange tTerm in diesem Browser offen ist und deine Schlüssel geöffnet sind. Lass hier also einen Tab mit tTerm offen. Sobald sich die Schlüssel schließen (mit „Sperren“, beim Abmelden oder nach 8 Stunden ohne Aktivität), sieht {ai} sie nicht mehr.
 
 # ---------------------------------- connect_ai: the page an AI app opens to connect (ConnectAi.tsx)
 connect_ai.title_tab = KI verbinden

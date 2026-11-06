@@ -18,6 +18,7 @@ import datetime as dt
 import http.client
 import json
 import secrets
+import shutil
 import uuid
 import zlib
 from urllib.parse import parse_qs, urlencode, urlsplit
@@ -25,9 +26,12 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 from ..api import ai as api_ai
 from ..api import mcp
 from ..core import ai, auth, leaks, logs
-from .harness import OWNER_EMAIL, page_socket, request, sign_in_as
+from .harness import OWNER_EMAIL, page_socket, request, shell_server, sign_in_as
+from .test_feed import _frames, _op
 from .test_keys_here import _made_vault
-from .test_terminals import CHANGE
+from .test_terminals import (CHANGE, _ca_public, _home, _login_shell,
+                             _prompts, _until)
+from .test_terminals import _machine as _live_machine
 from .test_vault import _heard_one, _proven, _pw
 
 CLAUDE = "https://claude.ai/api/mcp/auth_callback"
@@ -114,11 +118,11 @@ async def _asked(core, *, redirect: str = CLAUDE, **register) -> tuple[dict, str
 
 async def _connect(core, machines, *, term: str = "forever",
                    cookie: str | None = None, password: str | None = None,
-                   redirect: str = CLAUDE) -> dict:
+                   redirect: str = CLAUDE, can: dict | None = None) -> dict:
     """An app connected as the person allows it: its tokens, and the app."""
     client, verifier, request_id = await _asked(core, redirect=redirect)
     r = await _allow(core, request_id, machines, term=term, cookie=cookie,
-                     password=password)
+                     password=password, can=can)
     assert r.status == 200, r.text
     back = _query(r.json()["redirect"])
     assert back["state"] == "st-1" and back["iss"] == f"http://localhost:{core.page_port}"
@@ -236,7 +240,7 @@ async def test_every_account_connects_its_ai(h):
         hers = await _machine(core, project, "anna-01")
         r = await request(core.page_port, "GET", "/api/state",
                           headers={"cookie": anna})
-        assert r.json()["ai"] == {"watching": []}, r.text
+        assert r.json()["ai"] == {"watching": [], "proposals": []}, r.text
         t = await _connect(core, [(hers, True, True)], cookie=anna)
         listed, failed = await _tool(core, t["access_token"], "list_machines")
         assert not failed and set(_names(listed)) == {"anna-01"}, listed
@@ -435,8 +439,8 @@ async def test_the_person_sees_who_asks_and_allows(h):
         assert r.json()["request"]["name"] == "Claude", "its own words"
         assert r.json()["request"]["warning"] == {
             "claims": "Claude", "real": "claude.ai", "host": "claude-ai.example"}
-        # Not a machine of the person's; nothing ticked; abilities not there
-        # yet (0.1.30); no Look.
+        # Not a machine of the person's; nothing ticked; proposing or notes
+        # without Look (0.1.30); no Look.
         stranger = await sign_in_as(core, "anna@example.com")
         other = await _machine(core, await core.pool.fetchval(
             "SELECT id FROM projects WHERE owner_id = (SELECT id FROM users "
@@ -446,8 +450,8 @@ async def test_the_person_sees_who_asks_and_allows(h):
         r = await _allow(core, request_id, [(web, False, False)])
         assert r.status == 422, r.text
         r = await _allow(core, request_id, [(web, True, True)],
-                         can={"see": True, "propose": True})
-        assert r.status == 422 and "yet" in r.json()["error"], r.text
+                         can={"see": False, "propose": True, "notes": True})
+        assert r.status == 422 and "sees too" in r.json()["error"], r.text
         r = await _allow(core, request_id, [(web, True, True)], can={"see": False})
         assert r.status == 422, r.text
         r = await _allow(core, request_id, [(web, True, True)], term="365")
@@ -1145,6 +1149,581 @@ async def test_the_page_hears_what_the_ai_read(h):
         assert [x["name"] for x in block["aiRead"]] == ["Claude"], block
         r = await request(core.page_port, "GET", "/api/ai")
         assert r.json()["connections"][0]["lastCall"] is not None
+
+
+CAN_ALL = {"see": True, "propose": True, "notes": True}
+
+
+async def test_an_ai_proposes_and_the_person_runs_it(h):
+    """0.1.30: an AI allowed to propose puts a command in one of the
+    person's open terminals; it waits there (/api/state, ai.proposal) until
+    the person runs it from its block, puts it into the line or removes it;
+    the command run so says which AI proposed it, in its block, its line of
+    the log and to the AI. Only one line, nothing that does not show; only
+    in an open terminal it sees; only while it may."""
+    login, full = _login_shell()
+    if not full:
+        return
+    home = _home()
+    settle = ai.PROPOSAL_SETTLE_SECONDS
+    try:
+        async with h.core() as core, \
+                shell_server(await _ca_public(core), home, login) as (port, host_key):
+            machine = await _live_machine(core, port, host_key)
+            live = await core.terminals.open(core.owner, machine, 90, 25)
+            await _until(lambda: _prompts(live) >= 1, what="the first prompt")
+            tid = str(live.id)
+            looks = await _connect(core, [(machine, True, True)])
+            t = await _connect(core, [(machine, True, True)], can=CAN_ALL)
+            token = t["access_token"]
+            # The tools and the instructions are what it may do.
+            r = await _mcp(core, looks["access_token"], "tools/list")
+            assert "propose_command" not in str(r.json()), r.text
+            r = await _mcp(core, looks["access_token"], "tools/call", {
+                "name": "propose_command",
+                "arguments": {"terminal_id": tid, "command": "ls"}})
+            assert "Unknown tool" in r.text, r.text
+            r = await _mcp(core, token, "tools/list")
+            names = [x["name"] for x in r.json()["result"]["tools"]]
+            assert "propose_command" in names and "write_notes" in names, names
+            r = await _mcp(core, token, "initialize",
+                           {"protocolVersion": "2025-06-18"})
+            said = r.json()["result"]["instructions"]
+            assert "propose_command" in said and "write_notes" in said, said
+            # Not a line, not shown, not open.
+            for bad in ("ls\nrm -rf /", "ls\x1b[2J", "echo ‮hi", "", " "):
+                found, failed = await _tool(core, token, "propose_command",
+                                            {"terminal_id": tid, "command": bad})
+                assert failed, (bad, found)
+            # Proposed: it waits, the pages hear it.
+            async with page_socket(core.page_port) as ws:
+                found, failed = await _tool(core, token, "propose_command", {
+                    "terminal_id": tid, "command": "echo proposed-$((40+2))",
+                    "why": "Shows the sum.\nOn one line."})
+                assert not failed, found
+                got = await _frames(ws, _op("ai.proposal"))
+            heard = next(f for f in got if isinstance(f, dict)
+                         and f.get("op") == "ai.proposal")
+            assert heard["proposal"]["command"] == "echo proposed-$((40+2))"
+            assert heard["proposal"]["why"] == "Shows the sum. On one line."
+            state = (await request(core.page_port, "GET", "/api/state")).json()
+            [waiting] = state["ai"]["proposals"]
+            assert waiting["id"] == found["proposed"]["id"] and waiting["ai"] == "Claude"
+            # A new one takes its place.
+            again, failed = await _tool(core, token, "propose_command", {
+                "terminal_id": tid, "command": "echo proposed-$((40+2))"})
+            assert not failed and again["proposed"]["id"] != waiting["id"]
+            state = (await request(core.page_port, "GET", "/api/state")).json()
+            [waiting] = state["ai"]["proposals"]
+            assert waiting["id"] == again["proposed"]["id"]
+            async with page_socket(core.page_port) as ws:
+                await ws.send(json.dumps({"op": "attach", "ch": 1, "id": tid,
+                                          "after": None, "cols": 90, "rows": 25}))
+                await _frames(ws, _op("replayed"))
+                # Just come: not run yet, it waits on (the security review:
+                # a click meant for the one before never lands on it).
+                ai.PROPOSAL_SETTLE_SECONDS = 600
+                await ws.send(json.dumps({"op": "run", "ch": 1,
+                                          "command": waiting["command"],
+                                          "proposal": waiting["id"]}))
+                refused = await _refused(ws)
+                assert refused["code"] == "early" and refused["over"] is False, refused
+                ai.PROPOSAL_SETTLE_SECONDS = 0
+                # Not the command proposed: refused, and it stays.
+                await ws.send(json.dumps({"op": "run", "ch": 1, "command": "id",
+                                          "proposal": waiting["id"]}))
+                refused = await _refused(ws)
+                assert refused["proposal"] == waiting["id"], refused
+                assert live._block is None, "nothing ran"
+                # The shell does not take it after all (a command came
+                # first): it waits again, and the page hears which it was.
+                live.run = lambda command: "A command came first."
+                try:
+                    await ws.send(json.dumps({"op": "run", "ch": 1,
+                                              "command": waiting["command"],
+                                              "proposal": waiting["id"]}))
+                    refused = await _refused(ws)
+                finally:
+                    del live.run
+                assert refused["proposal"] == waiting["id"], refused
+                assert refused["over"] is False and refused["reason"], refused
+                assert await core.pool.fetchval(
+                    "SELECT state FROM ai_proposals WHERE id = $1",
+                    uuid.UUID(waiting["id"])) == "waiting"
+                # Run from its block.
+                await ws.send(json.dumps({"op": "run", "ch": 1,
+                                          "command": waiting["command"],
+                                          "proposal": waiting["id"]}))
+                got = await _frames(ws, _op("ai.proposal"))
+                gone = next(f for f in got if isinstance(f, dict)
+                            and f.get("op") == "ai.proposal")
+                assert gone["proposal"] is None and gone["was"] == waiting["id"]
+                await _until(lambda: live._block is None and not live._typed
+                             and live.markers, what="back at the prompt")
+            await _became_block(core, waiting["id"])
+            row = await core.pool.fetchrow(
+                "SELECT state, seq FROM ai_proposals WHERE id = $1",
+                uuid.UUID(waiting["id"]))
+            assert row["state"] == "run", row
+            block = await core.pool.fetchrow(
+                "SELECT command, proposed_by FROM blocks WHERE terminal_id = $1 "
+                "AND seq_start = $2", live.id, row["seq"])
+            assert block["proposed_by"] == "Claude", block
+            line = await core.pool.fetchval(
+                "SELECT details->>'proposed' FROM journal WHERE kind = 'command.ran' "
+                "AND terminal_id = $1 AND (details->>'seq')::bigint = $2",
+                live.id, row["seq"])
+            assert line == "Claude", line
+            read, _ = await _tool(core, token, "read_terminal", {"terminal_id": tid})
+            [ran] = [c for c in read["commands"] if c["seq"] == row["seq"]]
+            assert ran["proposedBy"] == "Claude" and "proposed-42" in ran["output"]
+            assert read["proposals"][0]["state"] == "run", read["proposals"]
+            assert read["proposals"][1]["state"] == "replaced", read["proposals"]
+            r = await request(core.page_port, "GET", f"/api/terminals/{tid}/blocks")
+            [b] = [x for x in r.json()["blocks"] if x["seqStart"] == row["seq"]]
+            assert b["proposedBy"] == "Claude", b
+            # Put into the line, then run as it was: it is the proposal's too.
+            # Not in the moment it came.
+            found, _ = await _tool(core, token, "propose_command", {
+                "terminal_id": tid, "command": "echo inserted"})
+            pid = found["proposed"]["id"]
+            ai.PROPOSAL_SETTLE_SECONDS = 600
+            r = await request(core.page_port, "POST",
+                              f"/api/ai/proposals/{pid}/insert", headers=CHANGE,
+                              body=b"{}")
+            assert r.status == 425, r.text
+            ai.PROPOSAL_SETTLE_SECONDS = 0
+            r = await request(core.page_port, "POST",
+                              f"/api/ai/proposals/{pid}/insert", headers=CHANGE,
+                              body=b"{}")
+            assert r.status == 200 and r.json()["proposal"]["command"] == "echo inserted"
+            assert live.run("echo inserted") is None
+            await _became_block(core, pid)
+            await _until(lambda: live._block is None and not live._typed,
+                         what="back at the prompt")
+            # A shell not told what is pasted gets it as typed keys: a
+            # command beyond ASCII is not run from its block (it can go
+            # into the line).
+            found, _ = await _tool(core, token, "propose_command", {
+                "terminal_id": tid, "command": "echo café"})
+            pid = found["proposed"]["id"]
+            pasting = live.modes.state.get(2004)
+            live.modes.state[2004] = False
+            try:
+                async with page_socket(core.page_port) as ws:
+                    await ws.send(json.dumps({"op": "attach", "ch": 1, "id": tid,
+                                              "after": None, "cols": 90,
+                                              "rows": 25}))
+                    await _frames(ws, _op("replayed"))
+                    await ws.send(json.dumps({"op": "run", "ch": 1,
+                                              "command": "echo café",
+                                              "proposal": pid}))
+                    refused = await _refused(ws)
+            finally:
+                if pasting is None:
+                    live.modes.state.pop(2004, None)
+                else:
+                    live.modes.state[2004] = pasting
+            assert refused["code"] == "typed" and refused["over"] is False, refused
+            assert await core.pool.fetchval(
+                "SELECT state FROM ai_proposals WHERE id = $1",
+                uuid.UUID(pid)) == "waiting"
+            # Removed: nothing waits; once over, it cannot be run.
+            found, _ = await _tool(core, token, "propose_command", {
+                "terminal_id": tid, "command": "echo removed"})
+            pid = found["proposed"]["id"]
+            r = await request(core.page_port, "POST",
+                              f"/api/ai/proposals/{pid}/remove", headers=CHANGE,
+                              body=b"{}")
+            assert r.status == 200 and r.json() == {"removed": True}, r.text
+            r = await request(core.page_port, "POST",
+                              f"/api/ai/proposals/{pid}/remove", headers=CHANGE,
+                              body=b"{}")
+            assert r.status == 410, r.text
+            state = (await request(core.page_port, "GET", "/api/state")).json()
+            assert state["ai"]["proposals"] == []
+            # Someone else's proposal is nothing to another account.
+            found, _ = await _tool(core, token, "propose_command", {
+                "terminal_id": tid, "command": "echo mine"})
+            pid = found["proposed"]["id"]
+            anna = await sign_in_as(core, "anna@example.com")
+            r = await request(core.page_port, "POST",
+                              f"/api/ai/proposals/{pid}/remove",
+                              headers={**CHANGE, "cookie": anna}, body=b"{}")
+            assert r.status == 410, r.text
+            # It may not propose any more: what waits is over, and the tool
+            # is gone.
+            cid = await core.pool.fetchval(
+                "SELECT connection_id FROM ai_proposals WHERE id = $1",
+                uuid.UUID(pid))
+            r = await request(core.page_port, "PATCH", f"/api/ai/connections/{cid}",
+                              headers=CHANGE, body=json.dumps({
+                                  "machines": [{"id": str(machine), "terminals": True,
+                                                "log": True}],
+                                  "can": {"see": True, "notes": True},
+                                  "term": "keep", "zone": "UTC"}).encode())
+            assert r.status == 200, r.text
+            assert await core.pool.fetchval(
+                "SELECT state FROM ai_proposals WHERE id = $1", uuid.UUID(pid)) == "over"
+            r = await _mcp(core, token, "tools/call", {
+                "name": "propose_command",
+                "arguments": {"terminal_id": tid, "command": "ls"}})
+            assert "Unknown tool" in r.text, r.text
+            await live.close()
+            # In a terminal that ended, nothing waits.
+            t2 = await _connect(core, [(machine, True, True)], can=CAN_ALL)
+            found, failed = await _tool(core, t2["access_token"], "propose_command",
+                                        {"terminal_id": tid, "command": "ls"})
+            assert failed and "ended" in str(found), found
+    finally:
+        ai.PROPOSAL_SETTLE_SECONDS = settle
+        shutil.rmtree(home, ignore_errors=True)
+
+
+async def _refused(ws) -> dict:
+    """The page's next "refused"."""
+    got = await _frames(ws, _op("refused"))
+    return next(f for f in got if isinstance(f, dict) and f.get("op") == "refused")
+
+
+async def _became_block(core, proposal_id: str, timeout: float = 15) -> int:
+    """The block a proposal became, once its block is saved."""
+    async with asyncio.timeout(timeout):
+        while True:
+            seq = await core.pool.fetchval(
+                "SELECT seq FROM ai_proposals WHERE id = $1", uuid.UUID(proposal_id))
+            if seq is not None:
+                return seq
+            await asyncio.sleep(0.05)
+
+
+async def test_an_ai_writes_notes_under_the_lines(h):
+    """0.1.30: an AI allowed to write notes puts them under the lines it
+    sees, many at once, each on its own: under any line of a log it sees,
+    under the person's own commands where it sees only their terminals;
+    signed as the AI on the person's behalf, with where it lives and in
+    which language, cut of secrets; the pages hear them."""
+    async with h.core() as core:
+        project = await _project(core)
+        web = await _machine(core, project, "web-01")
+        db = await _machine(core, project, "db-01")
+        hidden = await _machine(core, project, "hidden-01")
+        anna = (await sign_in_as(core, "anna@example.com"), await core.pool.fetchval(
+            "SELECT id FROM users WHERE email = 'anna@example.com'"))
+        mine = await _terminal(core, web)
+        await _ran(core, project, web, mine, 3, "npm ci", b"ENOSPC\n", exit_code=1)
+        hers = await _terminal(core, web, owner=anna[1])
+        await _ran(core, project, web, hers, 4, "df -h", user=anna[1])
+        on_db = await _terminal(core, db, owner=anna[1])
+        await _ran(core, project, db, on_db, 2, "psql -l", user=anna[1])
+        off = await _terminal(core, hidden)
+        await _ran(core, project, hidden, off, 1, "uptime")
+        await core.pool.execute("UPDATE users SET language = NULL WHERE id = $1",
+                                core.owner.id)
+        # web-01: its terminals only; db-01: its log.
+        looks = await _connect(core, [(web, True, False), (db, False, True)])
+        r = await _mcp(core, looks["access_token"], "tools/call", {
+            "name": "write_notes",
+            "arguments": {"notes": [{"terminal_id": str(mine), "seq": 3,
+                                     "text": "x"}]}})
+        assert "Unknown tool" in r.text, r.text
+        client, verifier, request_id = await _asked(core)
+        body = {"machines": [{"id": str(web), "terminals": True, "log": False},
+                             {"id": str(db), "terminals": False, "log": True}],
+                "can": {"see": True, "notes": True}, "term": "forever",
+                "zone": "Europe/Lisbon", "language": "de"}
+        r = await request(core.page_port, "POST",
+                          f"/api/ai/requests/{request_id}/allow", headers=CHANGE,
+                          body=json.dumps(body).encode())
+        assert r.status == 200, r.text
+        back = _query(r.json()["redirect"])
+        r = await _token(core, {"grant_type": "authorization_code",
+                                "code": back["code"], "redirect_uri": CLAUDE,
+                                "client_id": client["client_id"],
+                                "code_verifier": verifier})
+        token = r.json()["access_token"]
+        r = await _mcp(core, token, "initialize", {"protocolVersion": "2025-06-18"})
+        assert "write in German" in r.json()["result"]["instructions"], r.text
+        secret = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"
+        async with page_socket(core.page_port) as ws:
+            found, failed = await _tool(core, token, "write_notes", {"notes": [
+                {"terminal_id": str(mine), "seq": 3,
+                 "text": f"Kein Platz auf der Platte. Token {secret}"},
+                {"terminal_id": str(hers), "seq": 4, "text": "Not mine."},
+                {"terminal_id": str(on_db), "seq": 2, "text": "Listet die Datenbanken."},
+                {"terminal_id": str(off), "seq": 1, "text": "Not allowed."},
+                {"terminal_id": str(mine), "seq": 99, "text": "No such line."},
+                {"terminal_id": str(mine), "seq": 3, "text": "x" * 2001},
+                {"terminal_id": "nope", "seq": 3, "text": "Bad id."},
+                "not a note"]})
+            assert not failed, found
+            got = await _frames(ws, _op("ai.notes"))
+        assert found["written"] == 2, found
+        errors = [n for n in found["notes"] if "error" in n]
+        assert len(errors) == 6, found
+        heard = [f for f in got if isinstance(f, dict) and f.get("op") == "ai.notes"]
+        assert {n["seq"] for f in heard for n in f["notes"]} == {3}, heard
+        rows = await core.pool.fetch(
+            "SELECT j.author, j.ai, j.user_id, j.details, x.text FROM journal j "
+            "JOIN log_texts x ON x.id = j.text_id WHERE j.kind = 'log.note' "
+            "ORDER BY j.id")
+        assert [r["author"] for r in rows] == ["ai", "ai"]
+        assert all(r["ai"] == "Claude" and r["user_id"] == core.owner.id for r in rows)
+        details = json.loads(rows[0]["details"])
+        assert details["lang"] == "de" and details["from"] == "claude.ai", details
+        assert secret not in rows[0]["text"] and "Kein Platz" in rows[0]["text"]
+        # The log shows it signed, with where the AI lives.
+        r = await request(core.page_port, "GET",
+                          f"/api/terminals/{mine}/blocks")
+        [b] = r.json()["blocks"]
+        [note] = b["notes"]
+        assert note["author"] == "ai" and note["ai"] == "Claude"
+        assert note["from"] == "claude.ai", note
+        # Too many at once.
+        found, failed = await _tool(core, token, "write_notes", {"notes": [
+            {"terminal_id": str(mine), "seq": 3, "text": "n"}] * 201})
+        assert failed and "200" in str(found), found
+
+
+async def _state_of(core, proposal_id: str) -> str:
+    return await core.pool.fetchval(
+        "SELECT state FROM ai_proposals WHERE id = $1", uuid.UUID(proposal_id))
+
+
+async def test_a_proposal_ends_where_its_ai_may_not_propose(h):
+    """The security review of 0.1.30: what an AI proposed is over once it
+    may not see the terminals of that machine (unticked in Change, the
+    project left, the machine removed): not listed, not put into the line;
+    one proposed as its right goes is refused. Not run or put in the moment
+    it came. A run the shell did not take waits again, or, if another came
+    meanwhile, was replaced. Why, cut longer than it came, is kept."""
+    settle = ai.PROPOSAL_SETTLE_SECONDS
+    ai.PROPOSAL_SETTLE_SECONDS = 0
+    try:
+        async with h.core() as core:
+            project = await _project(core)
+            web = await _machine(core, project, "web-01")
+            db = await _machine(core, project, "db-01")
+            on_web = await _terminal(core, web, ended=False)
+            on_db = await _terminal(core, db, ended=False)
+            t = await _connect(core, [(web, True, False), (db, True, False)],
+                               can=CAN_ALL)
+            c = await ai.connection_of(core.pool, t["access_token"])
+            # Unticked in Change.
+            p = await ai.propose(core.pool, c, on_web, "uptime", "The load.")
+            r = await request(core.page_port, "PATCH", f"/api/ai/connections/{c.id}",
+                              headers=CHANGE, body=json.dumps({
+                                  "machines": [{"id": str(db), "terminals": True,
+                                                "log": False}],
+                                  "can": CAN_ALL, "term": "keep",
+                                  "zone": "UTC"}).encode())
+            assert r.status == 200, r.text
+            assert await _state_of(core, p["id"]) == "over"
+            assert await ai.waiting(core.pool, core.owner.id) == []
+            r = await request(core.page_port, "POST",
+                              f"/api/ai/proposals/{p['id']}/insert",
+                              headers=CHANGE, body=b"{}")
+            assert r.status == 410, r.text
+            try:
+                await ai.propose(core.pool, c, on_web, "uptime", None)
+            except ai.Refused as exc:
+                assert exc.status == 403, exc
+            else:
+                raise AssertionError("proposed where it does not see")
+            # Its grant gone some other way: not listed, over when put in.
+            p = await ai.propose(core.pool, c, on_db, "df -h", None)
+            await core.pool.execute(
+                "UPDATE ai_grants SET terminals = false, log = true "
+                "WHERE connection_id = $1", c.id)
+            assert await ai.waiting(core.pool, core.owner.id) == []
+            try:
+                await ai.decide(core.pool, core.owner.id, uuid.UUID(p["id"]),
+                                "inserted")
+            except ai.Refused as exc:
+                assert exc.status == 410, exc
+            else:
+                raise AssertionError("put in where it does not see")
+            assert await _state_of(core, p["id"]) == "over"
+            # The project left.
+            await core.pool.execute(
+                "UPDATE ai_grants SET terminals = true, log = false "
+                "WHERE connection_id = $1", c.id)
+            p = await ai.propose(core.pool, c, on_db, "df -h", None)
+            assert await ai.leave_project(core.pool, core.owner.id, c.id, project)
+            assert await _state_of(core, p["id"]) == "over"
+            # The machine removed: the sweep ends it.
+            t = await _connect(core, [(web, True, False), (db, True, False)],
+                               can=CAN_ALL)
+            c = await ai.connection_of(core.pool, t["access_token"])
+            p = await ai.propose(core.pool, c, on_db, "df -h", None)
+            await core.pool.execute(
+                "UPDATE machines SET removed_at = now() WHERE id = $1", db)
+            await ai.sweep(core.pool)
+            assert await _state_of(core, p["id"]) == "over"
+            # Not in the moment it came.
+            p = await ai.propose(core.pool, c, on_web, "uptime", None)
+            ai.PROPOSAL_SETTLE_SECONDS = 600
+            try:
+                await ai.decide(core.pool, core.owner.id, uuid.UUID(p["id"]),
+                                "inserted")
+            except ai.Refused as exc:
+                assert exc.status == 425, exc
+            else:
+                raise AssertionError("put in the moment it came")
+            assert await _state_of(core, p["id"]) == "waiting"
+            ai.PROPOSAL_SETTLE_SECONDS = 0
+            await ai.decide(core.pool, core.owner.id, uuid.UUID(p["id"]), "inserted")
+            # A run the shell did not take: it waits again, or was replaced.
+            one = await ai.propose(core.pool, c, on_web, "echo one", None)
+            await ai.decide(core.pool, core.owner.id, uuid.UUID(one["id"]), "run")
+            assert await ai.undecide(core.pool, uuid.UUID(one["id"])) is False
+            assert await _state_of(core, one["id"]) == "waiting"
+            await ai.decide(core.pool, core.owner.id, uuid.UUID(one["id"]), "run")
+            two = await ai.propose(core.pool, c, on_web, "echo two", None)
+            assert await ai.undecide(core.pool, uuid.UUID(one["id"])) is True
+            assert await _state_of(core, one["id"]) == "replaced"
+            assert await _state_of(core, two["id"]) == "waiting"
+            # Why: its length checked as it came, then cut, longer, kept.
+            p = await ai.propose(core.pool, c, on_web, "uptime", "token=abc " * 30)
+            assert leaks.CUT in p["why"] and "abc" not in p["why"], p["why"]
+            assert len(p["why"]) <= ai.WHY_KEPT_MAX
+            # It may not propose any more, as it proposes: refused.
+            await core.pool.execute(
+                "UPDATE ai_connections SET can_propose = false WHERE id = $1", c.id)
+            try:
+                await ai.propose(core.pool, c, on_web, "uptime", None)
+            except ai.Refused as exc:
+                assert exc.status == 403, exc
+            else:
+                raise AssertionError("proposed with the right gone")
+    finally:
+        ai.PROPOSAL_SETTLE_SECONDS = settle
+
+
+def test_what_an_ai_writes_shows_as_it_is():
+    """The security review of 0.1.30: a command an AI proposes has nothing
+    that does not show as itself (a space the shell does not take for one,
+    a mark that draws as nothing); its why and its notes show as they are,
+    and a secret split by something unseen is whole for the cut."""
+    for bad in ("ls\u00a0-la", "ls -la\ufe0f", "ls\u200b -la", "ls \u3164",
+                "ls \u2800", "ls\u2028-la", "ls\u00ad", "echo \U000e0041",
+                "ls\u034f -la", "ls\u3000-la"):
+        try:
+            ai.clean_command(bad)
+        except ai.Refused:
+            continue
+        raise AssertionError(f"{bad!r} went through")
+    for good in ("ls -la", "echo привет", "git commit -m 'café'", "echo 日本語"):
+        assert ai.clean_command(good) == good
+    secret = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"
+    for unseen in ("\x01", "\u200b", "\ufe0f", "\u2060", "\u00ad", "\u034f",
+                   "\u202e"):
+        split = secret[:6] + unseen + secret[6:]
+        note = ai.clean_ai_note(f"Token {split} here.")
+        assert secret not in note and leaks.CUT in note, (unseen, note)
+        why = ai.clean_why(f"Token {split}.")
+        assert secret not in why and leaks.CUT in why, (unseen, why)
+    assert ai.as_shown("a\u00a0b\u2028c\u200bd") == "a b\ncd"
+    assert ai.clean_ai_note("Line one\nline two") == "Line one\nline two"
+    for bad in ("", " ", "\u200b", "x" * (ai.AI_NOTE_MAX + 1)):
+        try:
+            ai.clean_ai_note(bad)
+        except ai.Refused:
+            continue
+        raise AssertionError(f"{bad[:20]!r} went through")
+
+
+async def test_notes_keep_their_hour_and_their_rights(h):
+    """The security review of 0.1.30: the notes an hour hold for requests
+    at once and after a restart (counted from the log); a request writing
+    many asks again what the AI may do, and stops when the person turns
+    notes off; a request with as many notes as the tool takes fits."""
+    hour, at_once, recheck = ai.NOTES_PER_HOUR, ai.NOTES_AT_ONCE, mcp.RECHECK_SECONDS
+    add_note = logs.add_note
+    try:
+        async with h.core() as core:
+            project = await _project(core)
+            web = await _machine(core, project, "web-01")
+            mine = await _terminal(core, web)
+            await _ran(core, project, web, mine, 3, "npm ci")
+            t = await _connect(core, [(web, True, False)],
+                               can={"see": True, "notes": True})
+            token = t["access_token"]
+            c = await ai.connection_of(core.pool, token)
+            ai.NOTES_PER_HOUR, ai.NOTES_AT_ONCE = 30, 20
+            batch = {"notes": [{"terminal_id": str(mine), "seq": 3, "text": f"n{i}"}
+                               for i in range(20)]}
+            got = await asyncio.gather(*(_tool(core, token, "write_notes", batch)
+                                         for _ in range(3)))
+            assert sum(found["written"] for found, failed in got
+                       if not failed) == 30, got
+            assert await core.pool.fetchval(
+                "SELECT count(*) FROM journal WHERE kind = 'log.note'") == 30
+            # After a restart, the hour is counted again from the log.
+            fresh = mcp.Mcp(core.pool, None, page_url="http://localhost",
+                            keys_open_on=lambda *_: False)
+            assert await fresh._notes_left(c.id) == 0
+            ai.NOTES_PER_HOUR, ai.NOTES_AT_ONCE = hour, at_once
+            assert await fresh._notes_left(c.id) == hour - 30
+            # Turned off while it writes: the rest is refused.
+            mcp.RECHECK_SECONDS = 0
+
+            async def turned_off(*args, **kw):
+                found = await add_note(*args, **kw)
+                await core.pool.execute(
+                    "UPDATE ai_connections SET can_note = false WHERE id = $1", c.id)
+                return found
+
+            logs.add_note = turned_off
+            found, failed = await _tool(core, token, "write_notes", {"notes": [
+                {"terminal_id": str(mine), "seq": 3, "text": f"m{i}"}
+                for i in range(3)]})
+            logs.add_note = add_note
+            assert not failed and found["written"] == 1, found
+            assert all("turned notes off" in n["error"] for n in found["notes"][1:]), found
+            # As many as the tool takes, in one request.
+            await core.pool.execute(
+                "UPDATE ai_connections SET can_note = true WHERE id = $1", c.id)
+            mcp.RECHECK_SECONDS = recheck
+            found, failed = await _tool(core, token, "write_notes", {"notes": [
+                {"terminal_id": str(mine), "seq": 3, "text": "x" * ai.AI_NOTE_MAX}]
+                * 150})
+            assert not failed and found["written"] == 150, str(found)[:300]
+    finally:
+        ai.NOTES_PER_HOUR, ai.NOTES_AT_ONCE = hour, at_once
+        mcp.RECHECK_SECONDS = recheck
+        logs.add_note = add_note
+
+
+async def test_proposals_under_the_keys_answer_only_where_they_are_open(h):
+    """The security review of 0.1.30: from a device whose keys are closed,
+    a proposal on a machine under them is neither put into the line nor
+    removed: the answer would say whether it waits there."""
+    settle = ai.PROPOSAL_SETTLE_SECONDS
+    ai.PROPOSAL_SETTLE_SECONDS = 0
+    try:
+        async with h.core() as core:
+            project = await _project(core)
+            mac = await _machine(core, project, "MacBook-Pro", kind="computer")
+            term = await _terminal(core, mac, ended=False)
+            t = await _connect(core, [(mac, True, True)], can=CAN_ALL)
+            c = await ai.connection_of(core.pool, t["access_token"])
+            p = await ai.propose(core.pool, c, term, "uptime", None)
+            await _made_vault(core)
+            for what in ("insert", "remove"):
+                r = await request(core.page_port, "POST",
+                                  f"/api/ai/proposals/{p['id']}/{what}",
+                                  headers=CHANGE, body=b"{}")
+                assert r.status == 410, (what, r.text)
+            assert await _state_of(core, p["id"]) == "waiting"
+            async with _proven(core, auth=_pw()["auth"]):
+                r = await request(core.page_port, "POST",
+                                  f"/api/ai/proposals/{p['id']}/remove",
+                                  headers=CHANGE, body=b"{}")
+                assert r.status == 200, r.text
+            assert await _state_of(core, p["id"]) == "removed"
+    finally:
+        ai.PROPOSAL_SETTLE_SECONDS = settle
 
 
 async def test_the_sweep_takes_what_apps_left(h):

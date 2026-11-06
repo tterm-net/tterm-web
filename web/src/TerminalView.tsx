@@ -27,7 +27,7 @@
 // keys are proved open here and the socket attaches it again.
 
 import { useEffect, useRef, useState } from "react";
-import { endTerminal, terminalInfo, type Me, type TerminalInfo,
+import { endTerminal, terminalInfo, type AiProposal, type Me, type TerminalInfo,
   type TerminalState } from "./api";
 import { shortPath } from "./BlockView";
 import { ClassicTerminal, type ViewEvents } from "./ClassicTerminal";
@@ -104,6 +104,10 @@ interface Props {
   here?: boolean;
   /** Who is looking: notes under blocks (0.1.20). */
   me: Me;
+  /** A command an AI proposed here, waiting (0.1.30); gone from the page
+   * when the core says it is over. */
+  proposal?: AiProposal | null;
+  onProposalGone?: (id: string) => void;
 }
 
 export function TerminalView(props: Props) {
@@ -262,6 +266,7 @@ export function TerminalView(props: Props) {
             events={events} machine={machine} home={info?.home ?? ""}
             onClassic={() => choose("classic")} notify={props.notify}
             paste={props.paste} me={props.me}
+            proposal={props.proposal ?? null} onProposalGone={props.onProposalGone}
             after={props.here ? (b, all) => <SshStrip block={b} blocks={all} /> : undefined} />
         )}
         {state === "connecting" && !missing && info?.vault && !lockedHere && (

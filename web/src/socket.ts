@@ -37,7 +37,9 @@ const SIGNED_OUT = 4401;
 export type MarkerEvent =
   | { t: "P"; code: number | null; cwd: string; home: string; branch: string;
       venv: string; trim: number; at: number }
-  | { t: "C"; command: string; prev: number | null; at: number };
+  | { t: "C"; command: string; prev: number | null; at: number;
+      /** Run as an AI proposed it (0.1.30). */
+      proposedBy?: string };
 
 /** A command held back until the person says yes. */
 export interface Confirm {
@@ -45,6 +47,8 @@ export interface Confirm {
   what: string;
   lost: string;
   everything: boolean;
+  /** A command an AI proposed, run from its block (0.1.30). */
+  proposal?: string;
 }
 
 export interface ChannelHandlers {
@@ -64,8 +68,11 @@ export interface ChannelHandlers {
   gone: (terminal: TerminalInfo | null) => void;
   /** A command from run() that needs a yes first. */
   confirm?: (ask: Confirm) => void;
-  /** A command from run() the shell could not take. */
-  refused?: (command: string, reason: string) => void;
+  /** A command from run() the shell could not take; `proposal`, the AI's
+   * proposal it was, `over` when that is over, `code` why in the page's
+   * words: "early" (it just came), "typed" (0.1.30). */
+  refused?: (command: string, reason: string,
+    proposal?: { id: string; over: boolean; code?: string }) => void;
   /** A command of the terminal redacted in its machine's log (0.1.20):
    * `block` is the block's number. */
   redacted?: (block: number, redacted: Redaction) => void;
@@ -82,8 +89,9 @@ export interface Channel {
   unfocus: () => void;
   input: (data: string) => void;
   inputBinary: (data: string) => void;
-  /** A whole command, typed at the prompt by the core. */
-  run: (command: string, confirmed?: boolean) => void;
+  /** A whole command, typed at the prompt by the core; `proposal`, the
+   * AI's proposal it is (0.1.30). */
+  run: (command: string, confirmed?: boolean, proposal?: string) => void;
   resize: (cols: number, rows: number) => void;
   pause: () => void;
   resume: () => void;
@@ -231,8 +239,8 @@ class Socket {
         for (let i = 0; i < data.length; i++) bytes[i] = data.charCodeAt(i) & 255;
         this.sendInput(ch, bytes);
       },
-      run: (command, confirmed = false) =>
-        this.json({ op: "run", ch, command, confirmed }),
+      run: (command, confirmed = false, proposal) =>
+        this.json({ op: "run", ch, command, confirmed, ...(proposal ? { proposal } : {}) }),
       resize: (c, r) => {
         open.cols = c;
         open.rows = r;
@@ -375,7 +383,11 @@ class Socket {
         h.confirm?.(msg as unknown as Confirm);
         break;
       case "refused":
-        h.refused?.(String(msg.command ?? ""), String(msg.reason ?? ""));
+        h.refused?.(String(msg.command ?? ""), String(msg.reason ?? ""),
+          typeof msg.proposal === "string"
+            ? { id: msg.proposal, over: msg.over === true,
+              code: typeof msg.code === "string" ? msg.code : undefined }
+            : undefined);
         break;
       case "redacted":
         open.lastSeq = msg.seq as number;

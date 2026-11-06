@@ -8,7 +8,7 @@
 
 import { useState, type ReactNode } from "react";
 import {
-  loadVault, openVaultPassword, type LoginMethod, type MachineKind,
+  loadVault, openVaultPassword, type AiCan, type LoginMethod, type MachineKind,
 } from "./api";
 import { machineHow, TERMS, termOption, untilWords, type Term } from "./aiText";
 import { list, useT, type Translate } from "./i18n";
@@ -63,6 +63,10 @@ export function choiceSummary(ai: string, projects: ChoiceProject[], ticks: Tick
     until: untilWords(until, t) });
 }
 
+/** What an AI may do as at first (0.1.30): look and write notes, not
+ * propose commands: the canvas, version 121. */
+export const CAN_AT_FIRST: AiCan = { see: true, propose: false, notes: true };
+
 /** The machines of a project ticked as at first: all, both. */
 export function allTicked(project: ChoiceProject | undefined): Ticks {
   const out: Ticks = {};
@@ -80,6 +84,9 @@ interface Props {
   onTicks: (ticks: Ticks) => void;
   term: ChoiceTerm;
   onTerm: (term: ChoiceTerm) => void;
+  /** What it may do: look, and from 0.1.30 propose commands, write notes. */
+  can: AiCan;
+  onCan: (can: AiCan) => void;
   /** In Change: until when it is now; "keep" leaves it. */
   keep?: { until: number | null };
   /** Between the machines and what it may do: the keys' block. */
@@ -167,6 +174,22 @@ export function AiChoice(props: Props) {
             <span>{t("ai.can_see_text")}</span>
           </span>
         </div>
+        <label className={props.can.propose ? "ai-can-item ai-can-pick on" : "ai-can-item ai-can-pick"}>
+          <input type="checkbox" checked={props.can.propose} disabled={props.disabled}
+            onChange={() => props.onCan({ ...props.can, propose: !props.can.propose })} />
+          <span className="ai-can-text">
+            <strong>{t("ai.can_propose")}</strong>
+            <span>{t("ai.can_propose_text", { ai })}</span>
+          </span>
+        </label>
+        <label className={props.can.notes ? "ai-can-item ai-can-pick on" : "ai-can-item ai-can-pick"}>
+          <input type="checkbox" checked={props.can.notes} disabled={props.disabled}
+            onChange={() => props.onCan({ ...props.can, notes: !props.can.notes })} />
+          <span className="ai-can-text">
+            <strong>{t("ai.can_notes")}</strong>
+            <span>{t("ai.can_notes_text", { ai })}</span>
+          </span>
+        </label>
         <p className="ai-cannot"><Cross size={10} />{t("ai.cannot", { ai })}</p>
       </fieldset>
       <div className="ai-field">

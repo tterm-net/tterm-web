@@ -20,7 +20,8 @@ else as JSON text:
                   {"op": "gone", "ch": 1, "terminal": {...} | null}
                   {"op": "confirm", "ch": 1, "command": "...", "what": "...",
                    "lost": "...", "everything": false}
-                  {"op": "refused", "ch": 1, "command": "...", "reason": "..."}
+                  {"op": "refused", "ch": 1, "command": "...", "reason": "...",
+                   ("proposal": "…", "over": false, "code": "early"|"typed")}
                   {"op": "error", "message": "..."}
                   binary: 0x01, channel (4 bytes), number (8 bytes), output
 
@@ -33,7 +34,10 @@ page the one that types into the terminal (see Watcher).
 "run" is a whole command from tTerm's own input line. A command that would
 do damage nothing brings back is first answered with "confirm"; the page
 asks, and sends it again with "confirmed". A command the shell cannot take
-now (another one is running) is answered with "refused".
+now (another one is running) is answered with "refused". A command an AI
+proposed (0.1.30) is run with its "proposal" id; "refused" then says which,
+whether it is over, and, as "code", why in words the page has: "early" (it
+just came), "typed" (the shell would take it as keys).
 
 From 0.1.17 the socket also carries the vault signing relay (core/vault.py).
 The page says which of the person's vault keys it can sign for now, and the
@@ -85,7 +89,7 @@ from types import SimpleNamespace
 import asyncpg
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from ..core import auth, danger, vault
+from ..core import ai, auth, danger, vault
 from ..core.terminals import INPUT, Terminals, Watcher, clean_command
 
 log = logging.getLogger("tterm.ws")
@@ -176,6 +180,9 @@ class PageSocket:
         #: The app's computer (Session.computer_id), kept up to date by
         #: POST /api/computers/this while the socket is open.
         self.computer_id = session.computer_id
+        #: Tells the person's pages that see a machine something about it
+        #: (page.py, to_pages_seeing): a proposal run here is gone there.
+        self.tell_seeing = None
 
     @property
     def session_id(self) -> uuid.UUID:
@@ -374,19 +381,101 @@ class PageSocket:
         # Checked as it will be typed: a control character in the middle of
         # a word must not hide it from the check and then vanish.
         command = clean_command(command)
+        proposal = msg.get("proposal")
         if msg.get("confirmed") is not True:
             held = danger.looks_destructive(command)
             if held is not None:
-                await self.json({"op": "confirm", "ch": ch, "command": command,
-                                 "what": held.what, "lost": held.lost,
-                                 "everything": danger.hits_everything(command)})
+                confirm = {"op": "confirm", "ch": ch, "command": command,
+                           "what": held.what, "lost": held.lost,
+                           "everything": danger.hits_everything(command)}
+                if proposal is not None:
+                    confirm["proposal"] = str(proposal)
+                await self.json(confirm)
+                return
+        taken = None
+        if proposal is not None:
+            # A command an AI proposed (0.1.30), run from its block: as
+            # proposed, in its terminal, while the AI may still propose.
+            taken = await self._take_proposal(ch, watcher, proposal, command)
+            if taken is None:
                 return
         # Running a command is typing: this page becomes the one that types.
         watcher.focus()
         why = watcher.terminal.run(command)
         if why is not None:
-            await self.json({"op": "refused", "ch": ch, "command": command,
-                             "reason": why})
+            refused = {"op": "refused", "ch": ch, "command": command,
+                       "reason": why}
+            if taken is not None:
+                # It waits again in its block; over, if another took its
+                # place meanwhile (the page puts it away then).
+                watcher.terminal.forget_proposal()
+                over = True
+                try:
+                    over = await ai.undecide(self.pool, uuid.UUID(taken["id"]))
+                except (OSError, asyncpg.PostgresError) as exc:
+                    log.warning("could not put a proposal back: %s", exc)
+                refused.update(proposal=taken["id"], over=over)
+            await self.json(refused)
+        elif taken is not None:
+            await self._proposal_gone(watcher, taken)
+
+    async def _take_proposal(self, ch: int, watcher: Watcher, raw,
+                             command: str) -> dict | None:
+        """The proposal the person runs, now run (or None, the page told
+        why not: `code` says it for the page to put in its words; `over`,
+        that the proposal is over and its block goes); the terminal expects
+        its command.
+
+        A shell that is not told what is pasted (no bracketed paste) gets
+        the command typed as keys: one with characters beyond ASCII is not
+        run so (the security review of 0.1.30: the line editor of a shell in
+        the C locale can read their bytes as keys of its own). The person
+        can put it into the line and run it, as any command they type."""
+        try:
+            proposal_id = uuid.UUID(str(raw))
+        except ValueError:
+            proposal_id = None
+        why = (watcher.terminal.why_not_run() if proposal_id is not None
+               else "This proposal is over.")
+        over, code = proposal_id is None, None
+        if why is None and not command.isascii() and not watcher.terminal.pastes:
+            why, code = ("This shell takes a command as typed keys, and "
+                         "characters beyond Latin could reach it changed: put "
+                         "the command into the line, check it and run it "
+                         "yourself."), "typed"
+        taken = None
+        if why is None:
+            try:
+                taken = await ai.decide(self.pool, self.user_id, proposal_id,
+                                        "run", terminal_id=watcher.terminal.id,
+                                        command=command)
+            except ai.Refused as exc:
+                why, over = str(exc), exc.status in (409, 410)
+                code = "early" if exc.status == 425 else None
+            except (OSError, asyncpg.PostgresError) as exc:
+                log.warning("could not take a proposal: %s", exc)
+                why = "Something went wrong. Try again."
+        if taken is None:
+            refused = {"op": "refused", "ch": ch, "command": command,
+                       "reason": why, "proposal": str(raw), "over": over}
+            if code is not None:
+                refused["code"] = code
+            await self.json(refused)
+            return None
+        watcher.terminal.expect_proposal(proposal_id, taken["ai"], command,
+                                         ai.PROPOSAL_RUN_SECONDS)
+        return taken
+
+    async def _proposal_gone(self, watcher: Watcher, taken: dict) -> None:
+        """The person's other pages put away the proposal run here."""
+        if self.tell_seeing is None:
+            return
+        try:
+            await self.tell_seeing(self.user_id, {
+                "op": "ai.proposal", "terminalId": taken["terminalId"],
+                "proposal": None, "was": taken["id"]}, watcher.terminal.machine)
+        except Exception as exc:  # they see it is over when they press it
+            log.warning("could not tell the pages a proposal ran: %s", exc)
 
     async def _detach(self, ch: int) -> None:
         watcher = self.watchers.pop(ch, None)

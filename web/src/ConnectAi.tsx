@@ -11,10 +11,10 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   AccountChanged, AiRequestOver, allowAi, ConfirmFirst, CoreError, denyAi, endSession,
-  loadAiRequest, loadState, SignedOut, type AiRequest,
+  loadAiRequest, loadState, SignedOut, type AiCan, type AiRequest,
 } from "./api";
 import {
-  AiChoice, AiKeys, allTicked, choiceSummary, lockedNames, tickedMachines,
+  AiChoice, AiKeys, allTicked, CAN_AT_FIRST, choiceSummary, lockedNames, tickedMachines,
   type ChoiceProject, type ChoiceTerm, type Ticks,
 } from "./AiChoice";
 import { termUntil } from "./aiText";
@@ -51,6 +51,7 @@ export function ConnectAi() {
   const [ticks, setTicks] = useState<Ticks>({});
   const [seen, setSeen] = useState<Set<string>>(new Set());
   const [term, setTerm] = useState<ChoiceTerm>("forever");
+  const [can, setCan] = useState<AiCan | null>(null);
   const [proof, setProof] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -92,6 +93,9 @@ export function ConnectAi() {
           return allTicked(asked.projects.find((p) => p.id === first));
         });
         setSeen((was) => (was.size ? was : new Set([first])));
+        // What it may do: as the same app's latest connection had it, or
+        // as at first (0.1.30).
+        setCan((was) => was ?? (asked.same ? { ...asked.same.can, see: true } : CAN_AT_FIRST));
         setView({ kind: "ask", asked });
         if (thenAllowFor !== null && asked.me.id === thenAllowFor) void allowNow(asked);
       })
@@ -124,7 +128,7 @@ export function ConnectAi() {
           id: m.id, name: m.name, kind: m.kind, method: m.method, guarded: m.guarded })) })),
       ticks, term === "keep" ? null : termUntil(term), t);
       const { redirect } = await allowAi(asked.request.id, {
-        machines: tickedMachines(ticks), can: { see: true, propose: false, notes: false },
+        machines: tickedMachines(ticks), can: can ?? CAN_AT_FIRST, language: t.lang,
         term, zone: zone(), account: asked.me.id, ...(proof ? { auth: proof } : {}),
       });
       setView({ kind: "going", asked, summary });
@@ -276,6 +280,7 @@ export function ConnectAi() {
         )}
         <AiChoice ai={ai} projects={projects} project={project} onProject={pickProject}
           ticks={ticks} onTicks={setTicks} term={term} onTerm={setTerm} disabled={busy}
+          can={can ?? CAN_AT_FIRST} onCan={setCan}
           idPrefix="ca" locks={asked.keys.guarding}
           keys={asked.keys.guarding ? (
             <AiKeys ai={ai} locked={locked} open={asked.keys.open} proof={proof}

@@ -1349,6 +1349,8 @@ block.found = Encontrado
 block.not_started_title = El shell espera el resto del comando (unas comillas o un heredoc sin cerrar) o no lo aceptó. Escribe en el bloque o presiona «Detener».
 block.not_started = sin iniciar
 block.running = en ejecución
+block.proposed = propuesto por IA
+block.proposed_title = Lo ejecutaste a propuesta de {ai}
 # A command that failed: exit 1.
 block.exit = código {code}
 block.stop_title = Detener el comando (Ctrl+C)
@@ -1414,6 +1416,17 @@ danger.user_lost = Sus archivos y su acceso se pierden con ella.
 # Under it, for rm -rf aimed at / or ~.
 feed.everything = <strong>Esto apunta a toda la máquina.</strong> No quedaría nada en ella.
 feed.run_it = Ejecutarlo
+feed.proposal_label = Un comando que propone {ai}
+feed.proposes = {ai} propone
+feed.proposal_waiting = aún sin ejecutar
+feed.proposal_wait = Se está ejecutando un comando: espera a que termine.
+feed.proposal_run = Ejecutar
+feed.proposal_insert = Insertar
+feed.proposal_remove = Quitar
+feed.proposal_new = nueva, en lugar de la anterior
+feed.proposal_early = Esta propuesta acaba de llegar: léela y luego ejecútala.
+feed.proposal_typed = Este shell recibe los comandos como teclas pulsadas, y los caracteres no latinos podrían llegarle cambiados, así que «Ejecutar» no ejecuta este comando. Para ejecutarlo, pulsa «Insertar» y luego Enter.
+feed.proposal_mixed = Los caracteres marcados no son latinos, aunque están en palabras con letras latinas: revísalos antes de ejecutar el comando.
 
 # ------------------------------------------------------------ log: the log of a machine, in the Logs folder of a project's notes (LogView.tsx, LogNotes.tsx)
 # The folder in the sidebar, before a project's folders of notes, and the
@@ -1478,8 +1491,12 @@ log.redacted_by_someone = Texto censurado · {at} · {reason}
 # Who wrote a note: You, or a person's first name; an AI on someone's behalf: AI for You, AI for Anna. "AI" may be the language's own short word for it.
 log.you = Tú
 log.someone = Alguien
-log.ai_for_you = IA en tu nombre
-log.ai_for = IA en nombre de {who}
+log.ai_for_you = {ai} (con tu autorización)
+log.ai_for = {ai} (con autorización de {who})
+log.ai_unnamed = IA
+log.proposed_title = Ejecutado a propuesta de {ai}
+log.notes_under = Notas bajo las líneas
+log.notes_under_title = Cada nota bajo su línea, sin desplegar la línea
 log.reply = Responder
 # Writing a note. <k>…</k> are keys on the keyboard.
 log.note_label = Una nota sobre el comando
@@ -2169,6 +2186,9 @@ ai.chip_one = {ai} está mirando
 ai.chip_more = one: {ai} y otra IA están mirando | other: {ai} y {n} más están mirando
 ai.chip_title = Esta terminal es visible para {ai}
 ai.pop_text = Ve los comandos y la salida de esta terminal cuando le pides algo. Aquí no escribe nada.
+ai.pop_text_notes = Ve los comandos y la salida de esta terminal cuando le pides algo, y escribe notas debajo de ellos. Aquí no teclea nada.
+ai.pop_text_propose = Ve los comandos y la salida de esta terminal cuando le pides algo. Aquí no teclea nada por su cuenta: sus comandos llegan en un bloque «{ai} propone» y tú los ejecutas.
+ai.pop_text_both = Ve los comandos y la salida de esta terminal cuando le pides algo, y escribe notas debajo de ellos. Aquí no teclea nada por su cuenta: sus comandos llegan en un bloque «{ai} propone» y tú los ejecutas.
 ai.pop_closed = Ahora no ve esta máquina: las claves están cerradas en el dispositivo desde el que se autorizó.
 ai.pop_forget = Olvidar {ai}
 ai.pop_settings = Configuración › IA
@@ -2194,6 +2214,10 @@ ai.machines_note = Terminales: los comandos y la salida de tus terminales en la 
 ai.can_title = Qué puede hacer {ai}
 ai.can_see = Mirar
 ai.can_see_text = Los comandos, su salida y la bitácora de las máquinas marcadas arriba.
+ai.can_propose = Proponer comandos
+ai.can_propose_text = Un comando llega a la terminal de una máquina marcada arriba, en un bloque «{ai} propone». Lo ejecutas tú al presionar «Ejecutar».
+ai.can_notes = Escribir notas en la bitácora
+ai.can_notes_text = Notas bajo los comandos de las máquinas que ve: qué hizo un comando, por qué falló. Escribe en el idioma de tu tTerm, que ahora es el español. Van firmadas como «{ai} (con tu autorización)»; una nota nunca se modifica ni se retira, solo se le puede responder.
 ai.cannot = {ai} no puede escribir ni ejecutar comandos por su cuenta, abrir terminales ni tomar claves.
 ai.term = Durante cuánto tiempo
 ai.term_forever = Hasta que lo retire (sin plazo)
@@ -2214,8 +2238,8 @@ ai.keys_open = Abrir las claves
 ai.keys_opening = Abriendo…
 ai.keys_no_password = Tu bóveda no tiene contraseña: abre las claves en tTerm en otra pestaña de este dispositivo y vuelve a comprobarlo.
 ai.keys_check = Volver a comprobar
-ai.keys_open_here = Las claves están abiertas en este navegador. {machines}: {ai} podrá verlas mientras las claves sigan abiertas aquí, hasta que presiones «Bloquear», cierres sesión o pasen 8 horas sin actividad.
-ai.keys_password_ok = La contraseña es correcta. {machines}: {ai} podrá verlas mientras las claves estén abiertas en tTerm en este dispositivo, hasta que presiones «Bloquear», cierres sesión o pasen 8 horas sin actividad.
+ai.keys_open_here = Las claves están abiertas en este navegador. {machines}: {ai} podrá verlas mientras tTerm siga abierto aquí y tus claves estén abiertas. Cuando las claves se cierren (al presionar «Bloquear», al cerrar sesión o tras 8 horas sin actividad), {ai} dejará de verlas.
+ai.keys_password_ok = La contraseña es correcta. {machines}: {ai} podrá verlas mientras tTerm siga abierto en este navegador y tus claves estén abiertas, así que deja abierta aquí una pestaña de tTerm. Cuando las claves se cierren (al presionar «Bloquear», al cerrar sesión o tras 8 horas sin actividad), {ai} dejará de verlas.
 
 # ---------------------------------- connect_ai: the page an AI app opens to connect (ConnectAi.tsx)
 connect_ai.title_tab = Conectar una IA

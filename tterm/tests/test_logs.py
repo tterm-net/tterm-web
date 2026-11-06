@@ -729,7 +729,8 @@ async def test_the_commands_of_before_come_into_the_log(h):
         assert await db.migrate(pool) == ["016_machine_log", "017_log_words",
                                           "018_core_runs", "019_support",
                                           "020_vault_password",
-                                          "021_keys_here", "022_ai"]
+                                          "021_keys_here", "022_ai",
+                                          "023_ai_propose_notes"]
         # The words looked for by a trigram index, where pg_trgm is (0.1.21).
         trgm = await pool.fetchval("SELECT count(*) FROM pg_extension "
                                    "WHERE extname = 'pg_trgm'")

@@ -1349,6 +1349,8 @@ block.found = Bulundu
 block.not_started_title = Kabuk komutun geri kalanını bekliyor (açık bir tırnak ya da heredoc) ya da komutu almadı. Bloğa yaz ya da Durdur'a bas.
 block.not_started = başlamadı
 block.running = çalışıyor
+block.proposed = YZ önerisi
+block.proposed_title = {ai} tarafından önerildiği gibi çalıştırdın
 # A command that failed: exit 1.
 block.exit = çıkış {code}
 block.stop_title = Komutu durdur (Ctrl+C)
@@ -1414,6 +1416,17 @@ danger.user_lost = Kullanıcının dosyaları ve erişimi de onunla birlikte gid
 # Under it, for rm -rf aimed at / or ~.
 feed.everything = <strong>Bu komut makinenin tamamını hedefliyor.</strong> Makinedeki hiçbir şey kurtulmaz.
 feed.run_it = Çalıştır
+feed.proposal_label = {ai} tarafından önerilen bir komut
+feed.proposes = {ai} öneriyor
+feed.proposal_waiting = henüz çalıştırılmadı
+feed.proposal_wait = Bir komut çalışıyor: bitmesini bekle.
+feed.proposal_run = Çalıştır
+feed.proposal_insert = Satıra aktar
+feed.proposal_remove = Kaldır
+feed.proposal_new = yeni, öncekinin yerine
+feed.proposal_early = Bu öneri az önce geldi: önce oku, sonra çalıştır.
+feed.proposal_typed = Bu kabuk komutları tuş vuruşları olarak alıyor ve Latin olmayan karakterler ona değişmiş olarak ulaşabilir; bu yüzden Çalıştır düğmesi bu komutu çalıştırmaz. Çalıştırmak için Satıra aktar düğmesine, ardından Enter'a bas.
+feed.proposal_mixed = İşaretli karakterler Latin değil, ama Latin harfli sözcüklerin içinde duruyor: komutu çalıştırmadan önce onları kontrol et.
 
 # ------------------------------------------------------------ log: the log of a machine, in the Logs folder of a project's notes (LogView.tsx, LogNotes.tsx)
 # The folder in the sidebar, before a project's folders of notes, and the
@@ -1478,8 +1491,12 @@ log.redacted_by_someone = Silindi · {at} · {reason}
 # Who wrote a note: You, or a person's first name; an AI on someone's behalf: AI for You, AI for Anna. "AI" may be the language's own short word for it.
 log.you = Sen
 log.someone = Biri
-log.ai_for_you = Senin adına YZ
-log.ai_for = {who} adına YZ
+log.ai_for_you = {ai} (senin izninle)
+log.ai_for = {ai} ({who} izin verdi)
+log.ai_unnamed = YZ
+log.proposed_title = {ai} tarafından önerildiği gibi çalıştırıldı
+log.notes_under = Notlar satır altında
+log.notes_under_title = Her not kendi satırının altında, satırı açmadan
 log.reply = Yanıtla
 # Writing a note. <k>…</k> are keys on the keyboard.
 log.note_label = Komut için not
@@ -2169,6 +2186,9 @@ ai.chip_one = {ai} izliyor
 ai.chip_more = one: {ai} ve bir YZ daha izliyor | other: {ai} ve {n} YZ daha izliyor
 ai.chip_title = {ai} bu terminali görebilir
 ai.pop_text = Ona bir şey sorduğunda bu terminalin komutlarını ve çıktısını görür. Buraya kendisi hiçbir şey yazmaz.
+ai.pop_text_notes = Ona bir şey sorduğunda bu terminalin komutlarını ve çıktısını görür ve altlarına not yazar. Buraya kendisi hiçbir şey yazmaz.
+ai.pop_text_propose = Ona bir şey sorduğunda bu terminalin komutlarını ve çıktısını görür. Buraya kendisi hiçbir şey yazmaz: önerdiği komutlar “{ai} öneriyor” bloğunda gelir, onları sen çalıştırırsın.
+ai.pop_text_both = Ona bir şey sorduğunda bu terminalin komutlarını ve çıktısını görür ve altlarına not yazar. Buraya kendisi hiçbir şey yazmaz: önerdiği komutlar “{ai} öneriyor” bloğunda gelir, onları sen çalıştırırsın.
 ai.pop_closed = Bu makineyi şu anda görmüyor: izin verildiği cihazda anahtarlar kapalı.
 ai.pop_forget = {ai} bağlantısını unut
 ai.pop_settings = Ayarlar › YZ
@@ -2194,6 +2214,10 @@ ai.machines_note = Terminaller: makinedeki terminallerinin komutları ve çıkt�
 ai.can_title = {ai} neler yapabilir
 ai.can_see = Görüntüleme
 ai.can_see_text = Yukarıda işaretlenen makinelerin komutları, çıktıları ve logları.
+ai.can_propose = Komut önerme
+ai.can_propose_text = Önerilen komut, yukarıda işaretlenen bir makinenin terminaline “{ai} öneriyor” bloğunda gelir. Onu Çalıştır düğmesiyle kendin çalıştırırsın.
+ai.can_notes = Loga not yazma
+ai.can_notes_text = Gördüğü makinelerdeki komutların altına not yazar: bir komutun ne yaptığını, neden başarısız olduğunu. Notları tTerm'inin dilinde, yani şu anda Türkçe yazar. İmza: “{ai} (senin izninle)”; bir not asla değiştirilmez ya da geri alınmaz, yalnızca yanıtlanır.
 ai.cannot = {ai} kendi başına komut yazamaz ya da çalıştıramaz, terminal açamaz ve anahtarları alamaz.
 ai.term = Ne kadar süre
 ai.term_forever = Geri alana kadar (süresiz)
@@ -2214,8 +2238,8 @@ ai.keys_open = Anahtarları aç
 ai.keys_opening = Açılıyor…
 ai.keys_no_password = Kasanın parolası yok: anahtarları bu cihazdaki tTerm'de, başka bir sekmede aç; sonra yeniden kontrol et.
 ai.keys_check = Yeniden kontrol et
-ai.keys_open_here = Anahtarlar bu tarayıcıda açık. {machines}: {ai}, anahtarlar burada açık olduğu sürece görecek, yani Kilitle düğmesine basılana, çıkış yapılana ya da 8 saat boyunca hiçbir işlem yapılmayana kadar.
-ai.keys_password_ok = Parola doğru. {machines}: {ai}, bu cihazdaki tTerm'de anahtarlar açık olduğu sürece görecek, yani Kilitle düğmesine basılana, çıkış yapılana ya da 8 saat boyunca hiçbir işlem yapılmayana kadar.
+ai.keys_open_here = Anahtarlar bu tarayıcıda açık. {machines}: burada tTerm ve anahtarların açık olduğu sürece {ai} bunları görecek. Anahtarlar kapandığında (Kilitle düğmesine basılınca, çıkış yapılınca ya da 8 saat boyunca hiçbir işlem yapılmayınca) {ai} bunları görmeyi bırakır.
+ai.keys_password_ok = Parola doğru. {machines}: bu tarayıcıda tTerm ve anahtarların açık olduğu sürece {ai} bunları görecek; bu yüzden burada bir tTerm sekmesini açık tut. Anahtarlar kapandığında (Kilitle düğmesine basılınca, çıkış yapılınca ya da 8 saat boyunca hiçbir işlem yapılmayınca) {ai} bunları görmeyi bırakır.
 
 # ---------------------------------- connect_ai: the page an AI app opens to connect (ConnectAi.tsx)
 connect_ai.title_tab = YZ bağla

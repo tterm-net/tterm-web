@@ -176,9 +176,10 @@ async def command_ran(conn: asyncpg.Connection, *, project_id: uuid.UUID,
                       terminal_id: uuid.UUID, command: str, seq: int,
                       started_at: dt.datetime, finished_at: dt.datetime,
                       exit_code: int | None, cwd: str, branch: str,
-                      home: str) -> int | None:
+                      home: str, proposed_by: str | None = None) -> int | None:
     """The line of a command that ended, in the transaction that saves its
-    block; its id. None for a line with nothing typed on it."""
+    block; its id. None for a line with nothing typed on it. `proposed_by`:
+    the AI whose proposal the person ran (0.1.30)."""
     if not command.strip():
         return None
     expires_at = await conn.fetchval(
@@ -189,6 +190,8 @@ async def command_ran(conn: asyncpg.Connection, *, project_id: uuid.UUID,
     ms = max(0, int((finished_at - started_at).total_seconds() * 1000))
     details = {"seq": seq, "exit": exit_code, "ms": ms, "cwd": cwd or None,
                "branch": branch or None, "home": home or None, "fp": fp}
+    if proposed_by:
+        details["proposed"] = proposed_by
     return await conn.fetchval(
         """
         INSERT INTO journal (at, project_id, user_id, kind, machine_id,
@@ -229,12 +232,21 @@ _ENTRY = """
 async def add_note(pool: asyncpg.Pool, user_id: uuid.UUID, text: object, *,
                    entry_id: int | None = None,
                    terminal_id: uuid.UUID | None = None,
-                   seq: int | None = None, ai: str | None = None) -> dict:
+                   seq: int | None = None, ai: str | None = None,
+                   scope: tuple[set, set] | None = None, late: bool = True,
+                   extra: dict | None = None) -> dict:
     """A note under the line `entry_id`, or under the line of the block
     `seq` of a terminal (the feed knows its blocks by their numbers), as
     `user_id` wrote it; with `ai`, the model that wrote it on their behalf,
     with their rights and no more. The note as the log shows it, with the
-    line's id as `entry`."""
+    line's id as `entry`.
+
+    An AI connected through MCP (0.1.30) writes only where it sees:
+    `scope` is the machines under any of whose lines it may write, and
+    those under whose lines of the person's own terminals only; `extra`
+    goes into the row (which connection, from where, in which language);
+    `late` False looks for the line once, not waiting for a block still
+    being saved."""
     text = clean_note(text)
     if ai is not None:
         ai = accounts.one_line(_storable(ai))[:AI_MAX]
@@ -251,12 +263,19 @@ async def add_note(pool: asyncpg.Pool, user_id: uuid.UUID, text: object, *,
         args = (terminal_id, seq)
     else:
         raise Invalid("Say which line the note is under.")
-    for attempt in range(LATE_TRIES):
+    tries = LATE_TRIES if late else 1
+    for attempt in range(tries):
         async with pool.acquire() as conn, conn.transaction():
             entry = await conn.fetchrow(_ENTRY.format(where=where), *args)
             if entry is not None:
                 now = await _now(conn, entry["machine_id"], user_id)
                 if now is None:
+                    raise NotFound("No such line in the log.")
+                if scope is not None and not (
+                        entry["machine_id"] in scope[0]
+                        or (entry["machine_id"] in scope[1] and await conn.fetchval(
+                            "SELECT owner_id = $2 FROM terminals WHERE id = $1",
+                            entry["terminal_id"], user_id))):
                     raise NotFound("No such line in the log.")
                 if now["role"] not in WRITERS:
                     raise NotAllowed("An observer reads the log and does not "
@@ -271,17 +290,20 @@ async def add_note(pool: asyncpg.Pool, user_id: uuid.UUID, text: object, *,
                             $9, $10)
                     RETURNING id, at
                     """, entry["project_id"], user_id, entry["machine_id"],
-                    entry["terminal_id"], _json({"fp": fp}),
+                    entry["terminal_id"], _json({**(extra or {}), "fp": fp}),
                     entry["expires_at"], "ai" if ai else "person", ai,
                     text_id, entry["id"])
                 people = await _people(conn, {user_id}, user_id)
+                note = {"id": row["id"], "at": _ms(row["at"]),
+                        "by": people.get(user_id),
+                        "author": "ai" if ai else "person", "ai": ai,
+                        "text": text, "redacted": None}
+                if ai and extra and extra.get("from"):
+                    note["from"] = extra["from"]
                 return {"entry": entry["id"], "terminalId": str(entry["terminal_id"]),
-                        "seq": entry["seq"],
-                        "note": {"id": row["id"], "at": _ms(row["at"]),
-                                 "by": people.get(user_id),
-                                 "author": "ai" if ai else "person", "ai": ai,
-                                 "text": text, "redacted": None}}
-        if entry_id is not None or attempt == LATE_TRIES - 1:
+                        "seq": entry["seq"], "machineId": str(entry["machine_id"]),
+                        "note": note}
+        if entry_id is not None or attempt == tries - 1:
             break
         # The block of a command that just ended is saved a moment later.
         await asyncio.sleep(0.4)
@@ -428,7 +450,8 @@ async def _notes(conn: asyncpg.Connection,
     return await conn.fetch(
         """
         SELECT j.id, j.about, j.at, j.user_id, j.author, j.ai, x.text,
-               x.redacted_at, x.redacted_by, x.reason
+               x.redacted_at, x.redacted_by, x.reason,
+               j.details->>'from' AS ai_from
         FROM journal j JOIN log_texts x ON x.id = j.text_id
         WHERE j.about = ANY($1::bigint[]) AND j.kind = 'log.note'
           AND j.expires_at > now()
@@ -437,10 +460,14 @@ async def _notes(conn: asyncpg.Connection,
 
 
 def _note(row: asyncpg.Record, people: dict) -> dict:
-    return {"id": row["id"], "at": _ms(row["at"]),
+    note = {"id": row["id"], "at": _ms(row["at"]),
             "by": people.get(row["user_id"]), "author": row["author"],
             "ai": row["ai"], "text": row["text"],
             "redacted": _redacted(row, people)}
+    if row["author"] == "ai" and row["ai_from"]:
+        # Where the AI that wrote it lives (claude.ai), for its signature.
+        note["from"] = row["ai_from"]
+    return note
 
 
 async def machine_of(conn: asyncpg.Connection, machine_id: uuid.UUID,
@@ -532,6 +559,9 @@ async def _entries(conn: asyncpg.Connection, rows: list[asyncpg.Record],
                 "output": kept, "cols": r["cols"] if kept else None,
                 "notes": by_entry.get(r["id"], []),
                 "canNote": role in WRITERS, "canRedact": role in MANAGERS})
+            if d.get("proposed"):
+                # Run as an AI proposed it (0.1.30).
+                entry["proposedBy"] = d["proposed"]
         elif r["kind"] == "terminal.closed":
             entry["reason"] = r["end_reason"] or d.get("reason") or ""
         elif r["kind"] == "machine.moved":

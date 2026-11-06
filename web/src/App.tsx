@@ -9,7 +9,7 @@ import {
   welcomeSeen, type Folder, type FoundBlock, type FoundNote,
   type Machine, type MachineKind, type Note, type NoteSummary, type Project,
   type ProjectFields, type ProjectTint, type State, type TerminalInfo,
-  type Theme,
+  type Theme, type AiProposal, type LogNote,
 } from "./api";
 import { colorClass, terminalName } from "./colors";
 import { Confirm, Removed } from "./Confirm";
@@ -63,6 +63,7 @@ import {
   applyTheme, onSystemThemeChange, rememberedPin, rememberPin, shown,
   type Shown,
 } from "./theme";
+import { logChanged } from "./logday";
 import { ago, lastSeen } from "./time";
 import { Welcome } from "./Welcome";
 
@@ -621,6 +622,32 @@ export function App() {
 
   // The page's connection to tTerm Web.
   useEffect(() => socket.onConnection(setOnline), []);
+
+  // What an AI does in the terminals (0.1.30): a command it proposed comes
+  // (in place of the one waiting there) or goes (that one only, `was`: one
+  // that came meanwhile stays); notes it wrote go under their blocks and
+  // lines, as a note written on this page does.
+  useEffect(() => socket.onAi((msg) => {
+    if (msg.op === "ai.proposal") {
+      const terminalId = String(msg.terminalId ?? "");
+      const proposal = (msg.proposal ?? null) as AiProposal | null;
+      const was = typeof msg.was === "string" ? msg.was : null;
+      setState((s) => s && s.ai ? { ...s, ai: { ...s.ai, proposals: [
+        ...(s.ai.proposals ?? []).filter((p) => proposal
+          ? p.terminalId !== terminalId : p.id !== was),
+        ...(proposal ? [proposal] : [])] } } : s);
+    } else if (msg.op === "ai.notes" && Array.isArray(msg.notes)) {
+      for (const n of msg.notes as { entry: number; terminalId: string; seq: number;
+        note: LogNote }[]) {
+        logChanged({ kind: "note", entry: n.entry, terminalId: n.terminalId,
+          seq: n.seq, note: n.note });
+      }
+    }
+  }), []);
+  const proposalGone = useCallback((id: string) => {
+    setState((s) => s && s.ai ? { ...s, ai: { ...s.ai,
+      proposals: (s.ai.proposals ?? []).filter((p) => p.id !== id) } } : s);
+  }, []);
 
   // The theme: apply the choice, and follow the system while it says so.
   useEffect(() => {
@@ -1869,6 +1896,8 @@ export function App() {
             onChanged={refresh} notify={notYet}
             machineThere={(machineId) => machineIds.has(machineId)}
             paste={paste?.terminalId === id ? paste : null} me={state.me}
+            proposal={state.ai?.proposals?.find((p) => p.terminalId === id) ?? null}
+            onProposalGone={proposalGone}
             here={hereIds.has(liveTerminals.find((x) => x.id === id)?.machineId ?? "")} />
           );
         })}

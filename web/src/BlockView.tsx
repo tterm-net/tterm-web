@@ -56,6 +56,9 @@ export interface FeedBlock {
   canNote: boolean;
   /** The AI that read it (0.1.29): its eye in the block's line. */
   aiRead?: { id: string; name: string }[];
+  /** The AI whose proposal it was: the person ran it from its block
+   * (0.1.30). */
+  proposedBy?: string;
 }
 
 /** What a block's copy buttons copy. */
@@ -218,6 +221,12 @@ export function BlockView(props: Props) {
             </span>
           )}
           {block.state === "running" && <span className="amber">{t("block.running")}</span>}
+          {block.proposedBy && (
+            <span className="block-proposed"
+              title={t("block.proposed_title", { ai: block.proposedBy })}>
+              {t("block.proposed")}
+            </span>
+          )}
           {failed && (
             <span className="red">{t("block.exit", { code: String(block.exitCode) })}</span>
           )}

@@ -1349,6 +1349,8 @@ block.found = 検索結果
 block.not_started_title = シェルが続きを待っているか（閉じていない引用符やヒアドキュメント）、コマンドを受け付けませんでした。ブロックに入力するか、「停止」を押してください。
 block.not_started = 未開始
 block.running = 実行中
+block.proposed = AI の提案
+block.proposed_title = {ai} の提案どおりにあなたが実行しました
 # A command that failed: exit 1.
 block.exit = 終了コード {code}
 block.stop_title = コマンドを停止（Ctrl+C）
@@ -1414,6 +1416,17 @@ danger.user_lost = そのユーザーのファイルとアクセス権も一緒�
 # Under it, for rm -rf aimed at / or ~.
 feed.everything = <strong>このコマンドはマシン全体を対象にしています。</strong>マシン上のものは何も残りません。
 feed.run_it = 実行する
+feed.proposal_label = {ai} が提案するコマンド
+feed.proposes = {ai} の提案
+feed.proposal_waiting = 未実行
+feed.proposal_wait = コマンドが実行中です。終わるまでお待ちください。
+feed.proposal_run = 実行
+feed.proposal_insert = 挿入
+feed.proposal_remove = 削除
+feed.proposal_new = 前の提案と入れ替わりました
+feed.proposal_early = この提案は届いたばかりです。読んでから実行してください。
+feed.proposal_typed = このシェルはコマンドをキー入力として受け取るため、ラテン文字以外の文字が変わって届くおそれがあります。そのため「実行」ではこのコマンドを実行しません。実行するには「挿入」を押してから Enter を押してください。
+feed.proposal_mixed = 印の付いた文字はラテン文字ではありませんが、ラテン文字の単語の中にあります。コマンドを実行する前に確認してください。
 
 # ------------------------------------------------------------ log: the log of a machine, in the Logs folder of a project's notes (LogView.tsx, LogNotes.tsx)
 # The folder in the sidebar, before a project's folders of notes, and the
@@ -1478,8 +1491,12 @@ log.redacted_by_someone = 墨消し済み · {at} · {reason}
 # Who wrote a note: You, or a person's first name; an AI on someone's behalf: AI for You, AI for Anna. "AI" may be the language's own short word for it.
 log.you = あなた
 log.someone = 不明なユーザー
-log.ai_for_you = AI（あなたの代理）
-log.ai_for = AI（{who} の代理）
+log.ai_for_you = {ai}（あなたが許可）
+log.ai_for = {ai}（{who} が許可）
+log.ai_unnamed = AI
+log.proposed_title = {ai} の提案どおりに実行されました
+log.notes_under = ノートを行の下に表示
+log.notes_under_title = 行を開かずに、すべてのノートをそれぞれの行の下に表示
 log.reply = 返信
 # Writing a note. <k>…</k> are keys on the keyboard.
 log.note_label = コマンドへのノート
@@ -2169,6 +2186,9 @@ ai.chip_one = {ai} が閲覧中
 ai.chip_more = other: {ai} ほか {n} 件が閲覧中
 ai.chip_title = {ai} はこのターミナルを閲覧できます
 ai.pop_text = あなたが何かを頼んだときに、このターミナルのコマンドと出力を閲覧します。ここで何かを入力することはありません。
+ai.pop_text_notes = あなたが何かを頼んだときに、このターミナルのコマンドと出力を閲覧し、コマンドの下にノートを書きます。ここで何かを入力することはありません。
+ai.pop_text_propose = あなたが何かを頼んだときに、このターミナルのコマンドと出力を閲覧します。ここで自分で何かを入力することはありません。提案するコマンドは「{ai} の提案」ブロックに表示され、実行するのはあなたです。
+ai.pop_text_both = あなたが何かを頼んだときに、このターミナルのコマンドと出力を閲覧し、コマンドの下にノートを書きます。ここで自分で何かを入力することはありません。提案するコマンドは「{ai} の提案」ブロックに表示され、実行するのはあなたです。
 ai.pop_closed = AI を許可したデバイスでは鍵が開いていないため、現在このマシンは閲覧できません。
 ai.pop_forget = {ai} の登録を解除
 ai.pop_settings = 設定 › AI
@@ -2194,6 +2214,10 @@ ai.machines_note = ターミナル：そのマシン上のあなたのターミ�
 ai.can_title = {ai} にできること
 ai.can_see = 閲覧
 ai.can_see_text = 上でチェックしたマシンのコマンド、その出力、ログ。
+ai.can_propose = コマンドの提案
+ai.can_propose_text = コマンドは、上でチェックしたマシンのターミナルに「{ai} の提案」ブロックとして表示されます。実行は、あなた自身が「実行」を押して行います。
+ai.can_notes = ログへのノートの書き込み
+ai.can_notes_text = 閲覧できるマシンのコマンドの下に、コマンドが何をしたか、なぜ失敗したかといったノートを書きます。ノートは tTerm の表示言語（現在は日本語）で書かれます。署名は「{ai}（あなたが許可）」です。ノートが変更されたり取り消されたりすることはなく、返信できるだけです。
 ai.cannot = {ai} は、自分でコマンドを入力・実行することも、ターミナルを開くことも、鍵を持ち出すこともできません。
 ai.term = 期間
 ai.term_forever = 自分で取り消すまで（期限なし）
@@ -2214,8 +2238,8 @@ ai.keys_open = 鍵を開く
 ai.keys_opening = 開いています…
 ai.keys_no_password = 保管庫にはパスワードがありません。このデバイスの別のタブで tTerm を開いて鍵を開き、もう一度確認してください。
 ai.keys_check = もう一度確認
-ai.keys_open_here = このブラウザーで鍵が開いています。{machines}：ここで鍵が開いているあいだ、{ai} が閲覧できます。鍵は「ロック」を押す、サインアウトする、または 8 時間何も操作しないと閉じます。
-ai.keys_password_ok = パスワードを確認しました。{machines}：このデバイスの tTerm で鍵が開いているあいだ、{ai} が閲覧できます。鍵は「ロック」を押す、サインアウトする、または 8 時間何も操作しないと閉じます。
+ai.keys_open_here = このブラウザーで鍵が開いています。{machines}：ここで tTerm が開いていて、鍵も開いているあいだ、{ai} が閲覧できます。鍵が閉じると（「ロック」を押す、サインアウトする、または 8 時間何も操作しない）、{ai} は閲覧できなくなります。
+ai.keys_password_ok = パスワードを確認しました。{machines}：このブラウザーで tTerm が開いていて、鍵も開いているあいだ、{ai} が閲覧できます。そのため、tTerm のタブをここで開いたままにしてください。鍵が閉じると（「ロック」を押す、サインアウトする、または 8 時間何も操作しない）、{ai} は閲覧できなくなります。
 
 # ---------------------------------- connect_ai: the page an AI app opens to connect (ConnectAi.tsx)
 connect_ai.title_tab = AI を接続

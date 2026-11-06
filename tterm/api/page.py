@@ -817,6 +817,11 @@ def create_page_app(pool: asyncpg.Pool, dist: Path, page_url: str,
         listed = await accounts.projects_of(pool, me.id)
         closed = await closed_to(session)
         guards = await guarding(session)
+
+        def open_here(terminal_id: str) -> bool:
+            """A terminal of the person's that runs and is not closed here."""
+            t = terminals.get(uuid.UUID(terminal_id), me.id) if terminals else None
+            return t is not None and not closed(t.machine)
         # Each project's folders of notes, with the notes listed but not
         # their text: the sidebar and the project's page (0.1.0).
         folders = await notes.folders_of(
@@ -850,11 +855,14 @@ def create_page_app(pool: asyncpg.Pool, dist: Path, page_url: str,
             "terminals": ([shown(t, closed) for t in terminals.live(me.id)]
                           if terminals else []),
             # AI through MCP (0.1.29): the AI that may see the terminals of
-            # which machines.
+            # which machines; from 0.1.30 the commands it proposed that wait
+            # in the terminals open to this device.
             "ai": {"watching": [
                 {**{k: v for k, v in w.items() if k != "_keys"},
                  "keysOpen": not guards or keys_open_on(*w["_keys"])}
-                for w in await ai.watching(pool, me.id)]},
+                for w in await ai.watching(pool, me.id)],
+                "proposals": [p for p in await ai.waiting(pool, me.id)
+                              if open_here(p["terminalId"])]},
         })
 
     @app.patch("/api/me")
@@ -1909,6 +1917,7 @@ def create_page_app(pool: asyncpg.Pool, dist: Path, page_url: str,
             websocket, terminals, session, pool, relay,
             label=auth.socket_label(session, websocket.headers.get("user-agent", "")),
             ip=client_ip(websocket))
+        page_socket.tell_seeing = to_pages_seeing
         sockets.add(page_socket)
         try:
             await page_socket.run()

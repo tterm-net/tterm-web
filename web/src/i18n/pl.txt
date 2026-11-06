@@ -1349,6 +1349,8 @@ block.found = Znaleziono
 block.not_started_title = Powłoka czeka na resztę polecenia (otwarty cudzysłów lub heredoc) albo go nie przyjęła. Pisz dalej w bloku albo naciśnij Zatrzymaj.
 block.not_started = nieuruchomione
 block.running = działa
+block.proposed = zaproponowane przez AI
+block.proposed_title = Zaproponowane przez {ai}, uruchomione przez ciebie bez zmian
 # A command that failed: exit 1.
 block.exit = kod wyjścia {code}
 block.stop_title = Zatrzymaj polecenie (Ctrl+C)
@@ -1414,6 +1416,17 @@ danger.user_lost = Razem z kontem znikną pliki i dostęp tego użytkownika.
 # Under it, for rm -rf aimed at / or ~.
 feed.everything = <strong>To polecenie dotyczy całej maszyny.</strong> Nic na niej nie przetrwa.
 feed.run_it = Uruchom
+feed.proposal_label = Polecenie, które proponuje {ai}
+feed.proposes = {ai} proponuje
+feed.proposal_waiting = jeszcze nieuruchomione
+feed.proposal_wait = Działa polecenie: poczekaj, aż się zakończy.
+feed.proposal_run = Uruchom
+feed.proposal_insert = Wstaw
+feed.proposal_remove = Usuń
+feed.proposal_new = nowe, w miejsce poprzedniego
+feed.proposal_early = Ta propozycja właśnie przyszła: przeczytaj ją, potem uruchom.
+feed.proposal_typed = Ta powłoka dostaje polecenia jako wpisywane klawisze, a znaki spoza alfabetu łacińskiego mogą do niej dotrzeć zmienione, więc Uruchom nie uruchamia tego polecenia. Aby je uruchomić, naciśnij Wstaw, a potem Enter.
+feed.proposal_mixed = Zaznaczone znaki nie są łacińskie, choć stoją w słowach z literami łacińskimi: sprawdź je przed uruchomieniem polecenia.
 
 # ------------------------------------------------------------ log: the log of a machine, in the Logs folder of a project's notes (LogView.tsx, LogNotes.tsx)
 # The folder in the sidebar, before a project's folders of notes, and the
@@ -1478,8 +1491,12 @@ log.redacted_by_someone = Wymazane · {at} · {reason}
 # Who wrote a note: You, or a person's first name; an AI on someone's behalf: AI for You, AI for Anna. "AI" may be the language's own short word for it.
 log.you = Ty
 log.someone = Ktoś
-log.ai_for_you = Ty przez AI
-log.ai_for = {who} przez AI
+log.ai_for_you = {ai} (za twoją zgodą)
+log.ai_for = {ai} (za zgodą: {who})
+log.ai_unnamed = AI
+log.proposed_title = Zaproponowane przez {ai}, uruchomione bez zmian
+log.notes_under = Notatki pod wierszami
+log.notes_under_title = Każda notatka pod swoim wierszem, bez rozwijania wiersza
 log.reply = Odpowiedz
 # Writing a note. <k>…</k> are keys on the keyboard.
 log.note_label = Notatka do polecenia
@@ -2169,6 +2186,9 @@ ai.chip_one = {ai} patrzy
 ai.chip_more = one: {ai} i jeszcze {n} patrzą | few: {ai} i jeszcze {n} patrzą | many: {ai} i jeszcze {n} patrzą
 ai.chip_title = Wgląd w ten terminal ma {ai}
 ai.pop_text = Widzi polecenia i ich wyniki w tym terminalu, gdy o coś zapytasz. Niczego tu nie wpisuje.
+ai.pop_text_notes = Widzi polecenia i ich wyniki w tym terminalu, gdy o coś zapytasz, i pisze pod nimi notatki. Niczego tu nie wpisuje.
+ai.pop_text_propose = Widzi polecenia i ich wyniki w tym terminalu, gdy o coś zapytasz. Samodzielnie niczego tu nie wpisuje: swoje polecenia przysyła w bloku „{ai} proponuje”, a uruchamiasz je ty.
+ai.pop_text_both = Widzi polecenia i ich wyniki w tym terminalu, gdy o coś zapytasz, i pisze pod nimi notatki. Samodzielnie niczego tu nie wpisuje: swoje polecenia przysyła w bloku „{ai} proponuje”, a uruchamiasz je ty.
 ai.pop_closed = Teraz nie widzi tej maszyny: klucze są zamknięte na urządzeniu, na którym zezwolono na połączenie.
 ai.pop_forget = Zapomnij {ai}
 ai.pop_settings = Ustawienia › AI
@@ -2194,6 +2214,10 @@ ai.machines_note = Terminale: polecenia i ich wyniki w twoich terminalach na tej
 ai.can_title = Co {ai} może robić
 ai.can_see = Patrzeć
 ai.can_see_text = Polecenia, ich wyniki i log maszyn zaznaczonych wyżej.
+ai.can_propose = Proponować polecenia
+ai.can_propose_text = Polecenie trafia do terminala maszyny zaznaczonej wyżej, w bloku „{ai} proponuje”. Uruchamiasz je ty, naciskając Uruchom.
+ai.can_notes = Pisać notatki w logu
+ai.can_notes_text = Notatki pod poleceniami maszyn, które widzi: co zrobiło polecenie, dlaczego się nie powiodło. Pisze w języku twojego tTerma, teraz po polsku. Podpis: „{ai} (za twoją zgodą)”; notatka nigdy nie jest zmieniana ani wycofywana, można na nią tylko odpowiedzieć.
 ai.cannot = {ai} nie może samodzielnie wpisywać ani uruchamiać poleceń, otwierać terminali ani pobierać kluczy.
 ai.term = Jak długo
 ai.term_forever = Dopóki nie odbiorę dostępu (bez terminu)
@@ -2214,8 +2238,8 @@ ai.keys_open = Otwórz klucze
 ai.keys_opening = Otwieranie…
 ai.keys_no_password = Twój sejf nie ma hasła: otwórz klucze w tTermie na tym urządzeniu, w innej karcie, a potem sprawdź ponownie.
 ai.keys_check = Sprawdź ponownie
-ai.keys_open_here = Klucze są otwarte w tej przeglądarce. {machines}: {ai} będzie je widzieć, dopóki są tu otwarte, czyli do naciśnięcia Zablokuj, wylogowania lub upływu 8 godzin bez żadnej aktywności.
-ai.keys_password_ok = Hasło się zgadza. {machines}: {ai} będzie je widzieć, dopóki klucze są otwarte w tTermie na tym urządzeniu, czyli do naciśnięcia Zablokuj, wylogowania lub upływu 8 godzin bez żadnej aktywności.
+ai.keys_open_here = Klucze są otwarte w tej przeglądarce. {machines}: {ai} będzie je widzieć, dopóki tTerm jest tu otwarty, a twoje klucze są otwarte. Gdy klucze się zamkną (po naciśnięciu Zablokuj, wylogowaniu lub upływie 8 godzin bez żadnej aktywności), {ai} przestanie widzieć te maszyny.
+ai.keys_password_ok = Hasło się zgadza. {machines}: {ai} będzie je widzieć, dopóki tTerm jest otwarty w tej przeglądarce, a twoje klucze są otwarte, więc zostaw tu otwartą kartę z tTermem. Gdy klucze się zamkną (po naciśnięciu Zablokuj, wylogowaniu lub upływie 8 godzin bez żadnej aktywności), {ai} przestanie widzieć te maszyny.
 
 # ---------------------------------- connect_ai: the page an AI app opens to connect (ConnectAi.tsx)
 connect_ai.title_tab = Podłącz AI

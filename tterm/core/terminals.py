@@ -208,6 +208,9 @@ class Block:
     started_at: dt.datetime
     #: The width it ran at: the page draws its output again at this width.
     cols: int = 80
+    #: The AI whose proposal it is, the person ran it (0.1.30); its id.
+    proposed_by: str | None = None
+    proposal: uuid.UUID | None = None
     started: float = field(default_factory=time.monotonic)
     head: bytearray = field(default_factory=bytearray)
     tail: deque = field(default_factory=deque)
@@ -341,6 +344,9 @@ class Terminal:
         #: marker yet: no second one goes in on top of it.
         self._typed = False
         self._typed_at = 0.0
+        #: A proposal of an AI the person ran or put into the line (0.1.30):
+        #: (its id, the AI, the command, until when it is expected).
+        self._proposal: tuple[uuid.UUID, str, str, float] | None = None
         self._side = asyncio.Semaphore(SIDE_AT_ONCE)
         self._saving: set[asyncio.Task] = set()
         self._tick = asyncio.Event()
@@ -683,16 +689,43 @@ class Terminal:
                 # One line of several commands: the one before ended here.
                 self._finish_block(prev)
             self._typed = False
-            self._event({"t": "C", "command": m.field(0), "prev": prev,
-                         "at": at})
+            proposed = self._proposed_now(m.field(0))
+            event = {"t": "C", "command": m.field(0), "prev": prev, "at": at}
+            if proposed is not None:
+                event["proposedBy"] = proposed[1]
+            self._event(event)
             self._block = Block(command=m.field(0), cwd=self.cwd,
                                 branch=self.branch, seq_start=self.last_seq,
                                 started_at=dt.datetime.now(dt.UTC),
-                                cols=self.cols)
+                                cols=self.cols,
+                                proposal=proposed[0] if proposed else None,
+                                proposed_by=proposed[1] if proposed else None)
             self._recent.append({
                 "command": m.field(0), "cwd": self.cwd, "branch": self.branch,
                 "seqStart": self.last_seq, "seqEnd": None, "cols": self.cols,
-                "at": at})
+                "at": at, "proposedBy": proposed[1] if proposed else None})
+
+    def expect_proposal(self, proposal: uuid.UUID, ai: str, command: str,
+                        seconds: float) -> None:
+        """The person runs a command an AI proposed, or put it into the line
+        (0.1.30): the next command, if it is this one and starts within
+        `seconds`, is that proposal's."""
+        self._proposal = (proposal, ai, command.strip(),
+                          time.monotonic() + seconds)
+
+    def forget_proposal(self) -> None:
+        """What was expected did not run after all."""
+        self._proposal = None
+
+    def _proposed_now(self, command: str) -> tuple[uuid.UUID, str] | None:
+        """For a command that starts: the proposal it is, if it is the one
+        expected. Any command that starts settles what was expected."""
+        expected, self._proposal = self._proposal, None
+        if expected is None or time.monotonic() > expected[3]:
+            return None
+        if command.strip() != expected[2]:
+            return None
+        return expected[0], expected[1]
 
     def _finish_block(self, exit_code: int | None) -> int:
         """Saves the running command's block; returns how many bytes of
@@ -734,25 +767,32 @@ class Terminal:
                                         command, started_by, started_at,
                                         finished_at, exit_code, cwd, branch,
                                         output, output_cut, cols, expires_at,
-                                        output_text)
+                                        output_text, proposed_by)
                     VALUES ($1, 'command', $2, $3, $4, $5, $6, $7, $8, $9, $10,
                             $11, $12, $14,
                             now() + make_interval(days => (
                                 SELECT output_days FROM projects WHERE id = $13)),
-                            $15)
+                            $15, $16)
                     """,
                     self.id, block.seq_start, seq_end, block.command,
                     self.owner.id, block.started_at, finished_at, exit_code,
                     block.cwd or None, block.branch or None,
                     zlib.compress(output, 6), cut, self.machine.project_id,
-                    block.cols, text)
+                    block.cols, text, block.proposed_by)
+                if block.proposal is not None:
+                    # Run as an AI proposed it (0.1.30): the proposal knows
+                    # which block it became.
+                    await conn.execute(
+                        "UPDATE ai_proposals SET seq = $2 WHERE id = $1",
+                        block.proposal, block.seq_start)
                 await logs.command_ran(
                     conn, project_id=self.machine.project_id,
                     user_id=self.owner.id, machine_id=self.machine.id,
                     terminal_id=self.id, command=block.command,
                     seq=block.seq_start, started_at=block.started_at,
                     finished_at=finished_at, exit_code=exit_code,
-                    cwd=block.cwd, branch=block.branch, home=self.home)
+                    cwd=block.cwd, branch=block.branch, home=self.home,
+                    proposed_by=block.proposed_by)
         except Exception:               # noqa: BLE001 - the screen goes on
             log.exception("could not save a block of terminal %s", self.id)
 
@@ -765,6 +805,28 @@ class Terminal:
             room = PENDING_MAX - len(self._pending)
             if room > 0:
                 self._pending += data[:room]
+
+    @property
+    def pastes(self) -> bool:
+        """Whether the shell's line editor takes what is pasted as text now
+        (bracketed paste, mode 2004: bash 5.1+ and zsh, at their prompt).
+        Without it, run() types a command as keys."""
+        return bool(self.modes.state.get(2004))
+
+    def why_not_run(self) -> str | None:
+        """Why a command cannot be run now, as run() would say; None if it
+        can (a proposal of an AI is taken only then, 0.1.30)."""
+        if self.state != "open" or self._chan is None:
+            return "The terminal is not open."
+        if self.away:
+            return AWAY.format(name=self.machine.name)
+        if not self.blocks:
+            return ("This shell does not mark where commands start, so it "
+                    "runs in the classic mode only.")
+        if self._block is not None or (
+                self._typed and time.monotonic() - self._typed_at < TYPED_STALE):
+            return "A command is still running."
+        return None
 
     def run(self, command: str) -> str | None:
         """Types a whole command at the shell's prompt and presses Enter, the
@@ -804,7 +866,7 @@ class Terminal:
         text = clean_command(command)
         if not text.strip():
             return "There is no command to run."
-        if self.modes.state.get(2004):
+        if self.pastes:
             data = b"\x15\x1b[200~" + text.encode() + b"\x1b[201~\r"
         else:
             data = b"\x15" + text.replace("\t", " ").encode() + b"\r"
@@ -1088,7 +1150,7 @@ def _block_json(row: asyncpg.Record) -> dict:
         modes.feed(output[:at])
         tail = modes.restore() + output[at:]
         partial = True
-    return {
+    block = {
         "id": row["id"],
         "seqStart": row["seq_start"],
         "seqEnd": row["seq_end"],
@@ -1104,6 +1166,10 @@ def _block_json(row: asyncpg.Record) -> dict:
         "size": size,
         "output": base64.b64encode(tail).decode("ascii"),
     }
+    if row.get("proposed_by"):
+        # Run as an AI proposed it (0.1.30).
+        block["proposedBy"] = row["proposed_by"]
+    return block
 
 
 class Terminals:
@@ -1365,7 +1431,7 @@ class Terminals:
         rows = await self.pool.fetch(
             """
             SELECT id, seq_start, seq_end, command, cwd, branch, started_at,
-                   finished_at, exit_code, output, output_cut, cols
+                   finished_at, exit_code, output, output_cut, cols, proposed_by
             FROM blocks
             WHERE terminal_id = $1 AND kind = 'command' AND expires_at > now()
               AND ($2::bigint IS NULL OR seq_start < $2)

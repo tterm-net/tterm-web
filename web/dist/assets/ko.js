@@ -1349,6 +1349,8 @@ block.found = 검색 결과
 block.not_started_title = 셸이 나머지 입력을 기다리고 있거나(닫히지 않은 따옴표나 heredoc), 명령을 받지 않았어요. 블록에 이어서 입력하거나 중지를 누르세요.
 block.not_started = 시작 안 됨
 block.running = 실행 중
+block.proposed = AI 제안
+block.proposed_title = {ai}의 제안대로 내가 실행했어요
 # A command that failed: exit 1.
 block.exit = 종료 코드 {code}
 block.stop_title = 명령 중지 (Ctrl+C)
@@ -1414,6 +1416,17 @@ danger.user_lost = 그 사용자의 파일과 접근 권한도 함께 사라져�
 # Under it, for rm -rf aimed at / or ~.
 feed.everything = <strong>머신 전체가 대상이에요.</strong> 머신에 있는 어떤 것도 남지 않아요.
 feed.run_it = 실행
+feed.proposal_label = {ai}에서 제안한 명령
+feed.proposes = {ai}의 제안
+feed.proposal_waiting = 아직 실행 안 됨
+feed.proposal_wait = 명령이 실행 중이에요. 끝날 때까지 기다리세요.
+feed.proposal_run = 실행
+feed.proposal_insert = 넣기
+feed.proposal_remove = 제거
+feed.proposal_new = 새 제안으로 바뀌었어요
+feed.proposal_early = 이 제안은 방금 도착했어요. 먼저 읽고 실행하세요.
+feed.proposal_typed = 이 셸은 명령을 키 입력으로 받기 때문에 라틴 문자가 아닌 문자가 바뀌어 전달될 수 있어요. 그래서 ‘실행’으로는 이 명령을 실행하지 않아요. 실행하려면 ‘넣기’를 누른 다음 Enter를 누르세요.
+feed.proposal_mixed = 표시된 문자는 라틴 문자가 아니지만 라틴 문자로 된 단어 안에 있어요. 명령을 실행하기 전에 확인하세요.
 
 # ------------------------------------------------------------ log: the log of a machine, in the Logs folder of a project's notes (LogView.tsx, LogNotes.tsx)
 # The folder in the sidebar, before a project's folders of notes, and the
@@ -1478,8 +1491,12 @@ log.redacted_by_someone = 지워짐 · {at} · {reason}
 # Who wrote a note: You, or a person's first name; an AI on someone's behalf: AI for You, AI for Anna. "AI" may be the language's own short word for it.
 log.you = 나
 log.someone = 누군가
-log.ai_for_you = 내 AI
-log.ai_for = {who} 님의 AI
+log.ai_for_you = {ai} (내가 허용함)
+log.ai_for = {ai} ({who} 님이 허용함)
+log.ai_unnamed = AI
+log.proposed_title = {ai}의 제안대로 실행됨
+log.notes_under = 줄 아래 노트
+log.notes_under_title = 줄을 펼치지 않아도 모든 노트가 각 줄 아래에 보여요
 log.reply = 답글
 # Writing a note. <k>…</k> are keys on the keyboard.
 log.note_label = 명령에 대한 노트
@@ -2169,6 +2186,9 @@ ai.chip_one = {ai}에서 보는 중
 ai.chip_more = other: {ai} 외 {n}개에서 보는 중
 ai.chip_title = {ai}에게 이 터미널 보기가 허용되어 있어요
 ai.pop_text = AI에게 무언가를 요청하면 이 터미널의 명령과 출력을 봐요. 여기에는 아무것도 입력하지 않아요.
+ai.pop_text_notes = AI에게 무언가를 요청하면 이 터미널의 명령과 출력을 보고, 그 아래에 노트를 써요. 여기에는 아무것도 입력하지 않아요.
+ai.pop_text_propose = AI에게 무언가를 요청하면 이 터미널의 명령과 출력을 봐요. 여기에는 아무것도 직접 입력하지 않아요. 명령은 ‘{ai}의 제안’ 블록으로 보내고, 실행은 내가 해요.
+ai.pop_text_both = AI에게 무언가를 요청하면 이 터미널의 명령과 출력을 보고, 그 아래에 노트를 써요. 여기에는 아무것도 직접 입력하지 않아요. 명령은 ‘{ai}의 제안’ 블록으로 보내고, 실행은 내가 해요.
 ai.pop_closed = 지금은 AI에게 이 머신이 보이지 않아요. AI를 허용한 기기에서 키가 닫혀 있어요.
 ai.pop_forget = {ai} 지우기
 ai.pop_settings = 설정 > AI
@@ -2194,6 +2214,10 @@ ai.machines_note = 터미널: 그 머신에 있는 내 터미널의 명령과 �
 ai.can_title = {ai}에게 허용할 일
 ai.can_see = 보기
 ai.can_see_text = 위에서 체크한 머신의 명령, 출력, 로그.
+ai.can_propose = 명령 제안
+ai.can_propose_text = 위에서 체크한 머신의 터미널에 명령이 ‘{ai}의 제안’ 블록으로 표시돼요. ‘실행’을 눌러 내가 직접 실행해요.
+ai.can_notes = 로그에 노트 작성
+ai.can_notes_text = AI에게 보이는 머신의 명령 아래에 남기는 노트: 명령이 한 일, 실패한 이유 등. 내 tTerm의 언어(지금은 한국어)로 써요. 서명은 ‘{ai} (내가 허용함)’이에요. 노트는 수정하거나 철회할 수 없고, 답글만 달 수 있어요.
 ai.cannot = {ai}에게는 직접 명령을 입력하거나 실행하고, 터미널을 열고, 키를 가져갈 권한이 없어요.
 ai.term = 기간
 ai.term_forever = 취소할 때까지 (기한 없음)
@@ -2214,8 +2238,8 @@ ai.keys_open = 키 열기
 ai.keys_opening = 여는 중…
 ai.keys_no_password = 보관함에 비밀번호가 없어요. 이 기기의 다른 탭에 있는 tTerm에서 키를 연 다음 다시 확인하세요.
 ai.keys_check = 다시 확인
-ai.keys_open_here = 이 브라우저에서 키가 열려 있어요. {machines}: 여기서 키가 열려 있는 동안, 즉 ‘잠그기’를 누르거나 로그아웃하거나 8시간 동안 아무 활동이 없을 때까지 {ai}에게 보여요.
-ai.keys_password_ok = 비밀번호가 맞아요. {machines}: 이 기기의 tTerm에서 키가 열려 있는 동안, 즉 ‘잠그기’를 누르거나 로그아웃하거나 8시간 동안 아무 활동이 없을 때까지 {ai}에게 보여요.
+ai.keys_open_here = 이 브라우저에서 키가 열려 있어요. {machines}: 여기서 tTerm이 열려 있고 키도 열려 있는 동안 {ai}에게 보여요. ‘잠그기’를 누르거나 로그아웃하거나 8시간 동안 아무 활동이 없어 키가 닫히면 {ai}에게 더 이상 보이지 않아요.
+ai.keys_password_ok = 비밀번호가 맞아요. {machines}: 이 브라우저에서 tTerm이 열려 있고 키도 열려 있는 동안 {ai}에게 보이니, 여기에 tTerm 탭을 열어 두세요. ‘잠그기’를 누르거나 로그아웃하거나 8시간 동안 아무 활동이 없어 키가 닫히면 {ai}에게 더 이상 보이지 않아요.
 
 # ---------------------------------- connect_ai: the page an AI app opens to connect (ConnectAi.tsx)
 connect_ai.title_tab = AI 연결

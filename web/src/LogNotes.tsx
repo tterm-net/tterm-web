@@ -6,6 +6,7 @@
 
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { LogNote, LogPerson, Me, Redaction } from "./api";
+import { aiTitle } from "./aiText";
 import { useT, type Translate } from "./i18n";
 import { Bubble, Erase, Spark } from "./icons";
 import { marked } from "./marks";
@@ -108,6 +109,16 @@ export function NoteEdit(props: {
   );
 }
 
+/** Who wrote a note of an AI's (0.1.30, the owner, 05.11): the AI, and who
+ * allowed it, "Claude (allowed by you)". "Allowed", not "allowed it": a
+ * verb of a person changes with them in some languages, and tTerm does not
+ * know how. */
+export function aiNoteWho(note: LogNote, me: Me, t: Translate): string {
+  const ai = note.ai || t("log.ai_unnamed");
+  return !note.by || note.by.id === me.id ? t("log.ai_for_you", { ai })
+    : t("log.ai_for", { ai, who: note.by.firstName });
+}
+
 function Message(props: {
   note: LogNote;
   me: Me;
@@ -120,9 +131,7 @@ function Message(props: {
   const { note, me } = props;
   const ai = note.author === "ai";
   const who = note.by;
-  const name = ai
-    ? (!who || who.id === me.id ? t("log.ai_for_you") : t("log.ai_for", { who: who.firstName }))
-    : whoOf(who, me, t);
+  const name = ai ? aiNoteWho(note, me, t) : whoOf(who, me, t);
   return (
     <div className="lmsg" id={`n${note.id}`}>
       <div className="lmsg-by">
@@ -131,7 +140,8 @@ function Message(props: {
         ) : (
           <Avatar who={who} me={me} size="xs" named />
         )}
-        <span className="lmsg-who" title={ai && note.ai ? note.ai : undefined}>{name}</span>
+        <span className="lmsg-who"
+          title={ai && note.ai ? aiTitle(note.ai, note.from ?? "", t) : undefined}>{name}</span>
         <span>{stampOf(note.at, t)}</span>
         {props.menu}
       </div>

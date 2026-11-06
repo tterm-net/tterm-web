@@ -1349,6 +1349,8 @@ block.found = 搜索结果
 block.not_started_title = shell 正在等待命令的剩余部分（未闭合的引号或 heredoc），或者没有接受它。请在块中继续输入，或点击“停止”。
 block.not_started = 未启动
 block.running = 运行中
+block.proposed = AI 建议
+block.proposed_title = 你按照 {ai} 的建议运行了这条命令
 # A command that failed: exit 1.
 block.exit = 退出码 {code}
 block.stop_title = 停止命令（Ctrl+C）
@@ -1414,6 +1416,17 @@ danger.user_lost = 该用户的文件和访问权限都会随之消失。
 # Under it, for rm -rf aimed at / or ~.
 feed.everything = <strong>这条命令针对的是整台机器。</strong>机器上的所有内容都将不复存在。
 feed.run_it = 运行
+feed.proposal_label = {ai} 建议的命令
+feed.proposes = {ai} 建议
+feed.proposal_waiting = 尚未运行
+feed.proposal_wait = 有命令正在运行：请等它结束。
+feed.proposal_run = 运行
+feed.proposal_insert = 插入
+feed.proposal_remove = 移除
+feed.proposal_new = 已换成新的建议
+feed.proposal_early = 这条建议刚刚送达：请先阅读，再运行。
+feed.proposal_typed = 这个 shell 以按键的方式接收命令，非拉丁字符可能在送达时被改变，所以“运行”不会运行这条命令。要运行它，请点击“插入”，然后按 Enter。
+feed.proposal_mixed = 标出的字符不是拉丁字符，却出现在含拉丁字母的词中：运行命令前请先检查。
 
 # ------------------------------------------------------------ log: the log of a machine, in the Logs folder of a project's notes (LogView.tsx, LogNotes.tsx)
 # The folder in the sidebar, before a project's folders of notes, and the
@@ -1478,8 +1491,12 @@ log.redacted_by_someone = 已抹除 · {at} · {reason}
 # Who wrote a note: You, or a person's first name; an AI on someone's behalf: AI for You, AI for Anna. "AI" may be the language's own short word for it.
 log.you = 你
 log.someone = 某人
-log.ai_for_you = AI（代表你）
-log.ai_for = AI（代表 {who}）
+log.ai_for_you = {ai}（由你允许）
+log.ai_for = {ai}（由 {who} 允许）
+log.ai_unnamed = AI
+log.proposed_title = 按照 {ai} 的建议运行
+log.notes_under = 行下显示笔记
+log.notes_under_title = 每条笔记都显示在所在行的下方，无需展开该行
 log.reply = 回复
 # Writing a note. <k>…</k> are keys on the keyboard.
 log.note_label = 关于这条命令的笔记
@@ -2169,6 +2186,9 @@ ai.chip_one = {ai} 正在查看
 ai.chip_more = other: {ai} 和另外 {n} 个 AI 正在查看
 ai.chip_title = {ai} 可以查看这个终端
 ai.pop_text = 当你向它提问时，它能看到这个终端的命令和输出。它不会在这里输入任何内容。
+ai.pop_text_notes = 当你向它提问时，它能看到这个终端的命令和输出，并在命令下方写笔记。它不会在这里输入任何内容。
+ai.pop_text_propose = 当你向它提问时，它能看到这个终端的命令和输出。它自己不会在这里输入任何内容：它的命令会出现在“{ai} 建议”块中，由你来运行。
+ai.pop_text_both = 当你向它提问时，它能看到这个终端的命令和输出，并在命令下方写笔记。它自己不会在这里输入任何内容：它的命令会出现在“{ai} 建议”块中，由你来运行。
 ai.pop_closed = 它现在看不到这台机器：当初允许它的那台设备上的密钥已关闭。
 ai.pop_forget = 移除 {ai}
 ai.pop_settings = 设置 › AI
@@ -2194,6 +2214,10 @@ ai.machines_note = 终端：你在这台机器的终端中运行的命令及其�
 ai.can_title = {ai} 可以做什么
 ai.can_see = 查看
 ai.can_see_text = 上面勾选的机器的命令、命令输出和日志。
+ai.can_propose = 建议命令
+ai.can_propose_text = 命令会以“{ai} 建议”块的形式出现在上面勾选的机器的终端中。由你自己点击“运行”来运行它。
+ai.can_notes = 在日志中写笔记
+ai.can_notes_text = 写在它能看到的机器的命令下方的笔记：命令做了什么、为什么失败。它用你的 tTerm 界面语言书写，现在是简体中文。署名为“{ai}（由你允许）”；笔记不会被修改或撤回，只能回复。
 ai.cannot = {ai} 不能自行输入或运行命令、打开终端或获取密钥。
 ai.term = 有效期
 ai.term_forever = 直到我撤销（无期限）
@@ -2214,8 +2238,8 @@ ai.keys_open = 打开密钥
 ai.keys_opening = 正在打开…
 ai.keys_no_password = 你的保险库还没有密码：请在这台设备上另开一个标签页，在 tTerm 中打开密钥，然后重新检查。
 ai.keys_check = 重新检查
-ai.keys_open_here = 密钥已在这个浏览器中打开。{machines}：只要密钥在这里保持打开，{ai} 就能看到它们，也就是直到你点击“锁定”、退出登录或 8 小时没有任何操作为止。
-ai.keys_password_ok = 密码正确。{machines}：只要这台设备上 tTerm 中的密钥保持打开，{ai} 就能看到它们，也就是直到你点击“锁定”、退出登录或 8 小时没有任何操作为止。
+ai.keys_open_here = 密钥已在这个浏览器中打开。{machines}：只要 tTerm 在这里开着，且你的密钥处于打开状态，{ai} 就能看到它们。密钥一旦关闭（点击“锁定”、退出登录或 8 小时没有任何操作），{ai} 就无法再看到它们。
+ai.keys_password_ok = 密码正确。{machines}：只要 tTerm 在这个浏览器中开着，且你的密钥处于打开状态，{ai} 就能看到它们，所以请在这里保留一个 tTerm 标签页。密钥一旦关闭（点击“锁定”、退出登录或 8 小时没有任何操作），{ai} 就无法再看到它们。
 
 # ---------------------------------- connect_ai: the page an AI app opens to connect (ConnectAi.tsx)
 connect_ai.title_tab = 连接 AI
