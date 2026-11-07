@@ -19,6 +19,7 @@ import http.client
 import json
 import secrets
 import shutil
+import time
 import uuid
 import zlib
 from urllib.parse import parse_qs, urlencode, urlsplit
@@ -645,7 +646,7 @@ async def test_mcp_of_both_kinds(h):
         r = await _mcp(core, token, "tools/list")
         names = [t["name"] for t in r.json()["result"]["tools"]]
         assert names == ["list_machines", "read_terminal", "read_output",
-                         "read_log", "search"], names
+                         "read_log", "search", "wait_for_command"], names
         assert all(t["annotations"]["readOnlyHint"] for t in r.json()["result"]["tools"])
         assert "resultType" not in r.json()["result"]
         assert (await _mcp(core, token, "ping")).json()["result"] == {}
@@ -664,7 +665,7 @@ async def test_mcp_of_both_kinds(h):
         r = await _mcp(core, token, "tools/list", modern=True)
         res = r.json()["result"]
         assert res["cacheScope"] == "private" and res["ttlMs"] > 0
-        assert len(res["tools"]) == 5
+        assert len(res["tools"]) == 6
         found, error = await _tool(core, token, "list_machines", modern=True)
         assert not error and "web-01" in _names(found), found
         # The headers must say what the body does.
@@ -1743,3 +1744,382 @@ async def test_the_sweep_takes_what_apps_left(h):
         await ai.sweep(core.pool)
         for table in ("ai_requests", "ai_codes", "ai_connections", "ai_clients"):
             assert await core.pool.fetchval(f"SELECT count(*) FROM {table}") == 0, table
+
+
+async def test_an_ai_waits_for_the_command_to_end(h):
+    """0.1.31: wait_for_command waits, a little at a time, for a command in
+    a terminal the AI sees to end: its proposal, once the person runs it;
+    the one running; the one it names. Then what it printed, at once, so
+    that a note can go under it; a proposal removed meanwhile leaves
+    nothing to wait for, at once; what the AI may see is asked again after
+    the wait; a few waits of one connection at once."""
+    login, full = _login_shell()
+    if not full:
+        return
+    home = _home()
+    settle = ai.PROPOSAL_SETTLE_SECONDS
+    try:
+        async with h.core() as core, \
+                shell_server(await _ca_public(core), home, login) as (port, host_key):
+            machine = await _live_machine(core, port, host_key)
+            live = await core.terminals.open(core.owner, machine, 90, 25)
+            await _until(lambda: _prompts(live) >= 1, what="the first prompt")
+            tid = str(live.id)
+            looks = (await _connect(core, [(machine, True, True)]))["access_token"]
+            token = (await _connect(core, [(machine, True, True)], can=CAN_ALL))["access_token"]
+            # Looking is enough to wait.
+            r = await _mcp(core, looks, "tools/list")
+            assert "wait_for_command" in [x["name"] for x in r.json()["result"]["tools"]]
+            found, failed = await _tool(core, looks, "wait_for_command",
+                                        {"terminal_id": tid, "seconds": 1})
+            assert not failed and found["state"] == "nothing", found
+            assert "proposals" not in found, "it may not propose"
+            for bad in ({"seq": 10 ** 9}, {"seconds": 26}, {"seconds": 0}):
+                found, failed = await _tool(core, looks, "wait_for_command",
+                                            {"terminal_id": tid, **bad})
+                assert failed, (bad, found)
+            # Its proposal, once the person runs it: what it printed.
+            ai.PROPOSAL_SETTLE_SECONDS = 0
+            proposed, _ = await _tool(core, token, "propose_command", {
+                "terminal_id": tid, "command": "echo waited-$((40+2))"})
+            pid = proposed["proposed"]["id"]
+
+            async def run_soon():
+                await asyncio.sleep(0.5)
+                async with page_socket(core.page_port) as ws:
+                    await ws.send(json.dumps({"op": "attach", "ch": 1, "id": tid,
+                                              "after": None, "cols": 90, "rows": 25}))
+                    await _frames(ws, _op("replayed"))
+                    await ws.send(json.dumps({"op": "run", "ch": 1,
+                                              "command": "echo waited-$((40+2))",
+                                              "proposal": pid}))
+                    await _frames(ws, _op("ai.proposal"))
+
+            runner = asyncio.create_task(run_soon())
+            found, failed = await _tool(core, token, "wait_for_command",
+                                        {"terminal_id": tid, "seconds": 8})
+            await runner
+            assert not failed and found["state"] == "ended", found
+            ran = found["command"]
+            assert ran["command"] == "echo waited-$((40+2))", ran
+            assert "waited-42" in ran["output"] and ran["exitCode"] == 0, ran
+            assert ran["proposedBy"] == "Claude", ran
+            assert found["proposals"][0]["state"] == "run", found
+            assert "write_notes" in found["next"], found
+            assert await core.pool.fetchval(
+                "SELECT count(*) FROM ai_reads WHERE terminal_id = $1 "
+                "AND seq_start = $2", live.id, ran["seq"]) == 1, "the eye"
+            # Run before the AI began to wait (it said something in
+            # between): the wait gives that command at once, once; then the
+            # next one.
+            proposed, _ = await _tool(core, token, "propose_command", {
+                "terminal_id": tid, "command": "echo quick"})
+            async with page_socket(core.page_port) as ws:
+                await ws.send(json.dumps({"op": "attach", "ch": 1, "id": tid,
+                                          "after": None, "cols": 90, "rows": 25}))
+                await _frames(ws, _op("replayed"))
+                await ws.send(json.dumps({"op": "run", "ch": 1,
+                                          "command": "echo quick",
+                                          "proposal": proposed["proposed"]["id"]}))
+                await _frames(ws, _op("ai.proposal"))
+            await _until(lambda: live._block is None and not live._typed
+                         and live.markers, what="back at the prompt")
+            began = time.monotonic()
+            found, failed = await _tool(core, token, "wait_for_command",
+                                        {"terminal_id": tid, "seconds": 8})
+            assert not failed and found["state"] == "ended", found
+            assert found["command"]["command"] == "echo quick", found
+            assert "not your proposal" not in found["next"], found
+            assert time.monotonic() - began < 4, "it did not wait for it"
+            found, failed = await _tool(core, token, "wait_for_command",
+                                        {"terminal_id": tid, "seconds": 1})
+            assert not failed and found["state"] == "nothing", found
+            # Put into the line and run as it is: its own, and run; then
+            # nothing waits. Put in and changed: nothing of it comes.
+            for runs, ends in (("echo inserted", "ended"), ("echo changed", "nothing")):
+                proposed, _ = await _tool(core, token, "propose_command", {
+                    "terminal_id": tid, "command": "echo inserted"})
+                pid = proposed["proposed"]["id"]
+                r = await request(core.page_port, "POST",
+                                  f"/api/ai/proposals/{pid}/insert",
+                                  headers=CHANGE, body=b"{}")
+                assert r.status == 200, r.text
+                assert live.run(runs) is None
+                await _until(lambda: live._block is None and not live._typed
+                             and live.markers, what="back at the prompt")
+                found, failed = await _tool(core, token, "wait_for_command",
+                                            {"terminal_id": tid, "seconds": 2})
+                assert not failed and found["state"] == ends, (runs, found)
+                if ends == "ended":
+                    assert found["command"]["command"] == "echo inserted", found
+                    assert "not your proposal" not in found["next"], found
+                    assert found["proposals"][0]["state"] == "run", found
+                    found, failed = await _tool(core, token, "wait_for_command",
+                                                {"terminal_id": tid, "seconds": 1})
+                    assert not failed and found["state"] == "nothing", found
+            # The note goes under it at once; named by its seq, the command
+            # comes back at once, with it.
+            wrote, failed = await _tool(core, token, "write_notes", {"notes": [
+                {"terminal_id": tid, "seq": ran["seq"], "text": "Напечатала 42."}]})
+            assert not failed and wrote["written"] == 1, wrote
+            began = time.monotonic()
+            found, failed = await _tool(core, looks, "wait_for_command",
+                                        {"terminal_id": tid, "seq": ran["seq"]})
+            assert not failed and found["state"] == "ended", found
+            assert found["command"]["notes"][0]["text"] == "Напечатала 42.", found
+            assert time.monotonic() - began < 3, "no wait for what ended"
+            # Removed meanwhile: nothing to wait for, at once.
+            proposed, _ = await _tool(core, token, "propose_command", {
+                "terminal_id": tid, "command": "echo never"})
+            pid = proposed["proposed"]["id"]
+
+            async def remove_soon():
+                await asyncio.sleep(0.5)
+                return await request(core.page_port, "POST",
+                                     f"/api/ai/proposals/{pid}/remove",
+                                     headers=CHANGE, body=b"{}")
+
+            remover = asyncio.create_task(remove_soon())
+            began = time.monotonic()
+            found, failed = await _tool(core, token, "wait_for_command",
+                                        {"terminal_id": tid, "seconds": 8})
+            assert (await remover).status == 200
+            assert not failed and found["state"] == "nothing", found
+            assert "removed" in found["next"], found
+            assert time.monotonic() - began < 4, "it woke at once"
+            # Not run yet when the time is up: it says the proposal waits.
+            await _tool(core, token, "propose_command", {
+                "terminal_id": tid, "command": "echo later"})
+            found, failed = await _tool(core, token, "wait_for_command",
+                                        {"terminal_id": tid, "seconds": 1})
+            assert not failed and found["state"] == "waiting", found
+            # The person's own command comes first: that one ends, and the
+            # proposal waits on.
+
+            async def mine_soon():
+                await asyncio.sleep(0.5)
+                assert live.run("echo mine-first") is None
+
+            runner = asyncio.create_task(mine_soon())
+            found, failed = await _tool(core, token, "wait_for_command",
+                                        {"terminal_id": tid, "seconds": 8})
+            await runner
+            assert not failed and found["state"] == "ended", found
+            assert found["command"]["command"] == "echo mine-first", found
+            assert "not your proposal" in found["next"], found
+            await _until(lambda: live._block is None and not live._typed,
+                         what="back at the prompt")
+            # Running on: what it printed so far; then, by its seq, its end.
+            assert live.run("sh -c 'echo first-part; sleep 3; echo end-of-it'") is None
+            await _until(lambda: live._block is not None, what="it runs")
+            found, failed = await _tool(core, looks, "wait_for_command",
+                                        {"terminal_id": tid, "seconds": 1})
+            assert not failed and found["state"] == "running", found
+            assert "first-part" in found["command"]["output"], found
+            seq = found["command"]["seq"]
+            assert "seq " + str(seq) in found["next"], found
+            found, failed = await _tool(core, looks, "wait_for_command",
+                                        {"terminal_id": tid, "seq": seq, "seconds": 8})
+            assert not failed and found["state"] == "ended", found
+            assert "end-of-it" in found["command"]["output"], found
+            # Three waits of one connection at once, not four.
+            got = await asyncio.gather(*(
+                _tool(core, looks, "wait_for_command",
+                      {"terminal_id": tid, "seconds": 2}) for _ in range(4)))
+            refused = [x for x, failed in got if failed]
+            assert len(refused) == 1 and "already" in refused[0], got
+            # Its terminals taken away while it waits: it gets nothing.
+            cid = (await request(core.page_port, "GET", "/api/ai")).json()[
+                "connections"][0]["id"]
+            waiter = asyncio.create_task(_tool(core, looks, "wait_for_command",
+                                               {"terminal_id": tid, "seconds": 3}))
+            await asyncio.sleep(0.5)
+            r = await request(core.page_port, "PATCH", f"/api/ai/connections/{cid}",
+                              headers=CHANGE, body=json.dumps({
+                                  "machines": [{"id": str(machine), "terminals": False,
+                                                "log": True}],
+                                  "can": {"see": True}, "term": "keep",
+                                  "zone": "UTC"}).encode())
+            assert r.status == 200, r.text
+            found, failed = await waiter
+            assert failed and "No such terminal" in found, found
+            # The terminal ends while it waits.
+            waiter = asyncio.create_task(_tool(core, token, "wait_for_command",
+                                               {"terminal_id": tid, "seconds": 8}))
+            await asyncio.sleep(0.5)
+            await live.close()
+            found, failed = await waiter
+            assert not failed and found["state"] == "terminal ended", found
+    finally:
+        ai.PROPOSAL_SETTLE_SECONDS = settle
+        shutil.rmtree(home, ignore_errors=True)
+
+
+async def test_a_command_still_being_saved_is_read_in_the_next_wait(h):
+    """0.1.31, the security review: a command that ended while tTerm still
+    saves it is said to be so, with its seq, and is not marked read; the
+    next wait with that seq reads it, once it is saved."""
+    login, full = _login_shell()
+    if not full:
+        return
+    home = _home()
+    try:
+        async with h.core() as core, \
+                shell_server(await _ca_public(core), home, login) as (port, host_key):
+            machine = await _live_machine(core, port, host_key)
+            live = await core.terminals.open(core.owner, machine, 90, 25)
+            await _until(lambda: _prompts(live) >= 1, what="the first prompt")
+            tid = str(live.id)
+            token = (await _connect(core, [(machine, True, True)]))["access_token"]
+            real = live._save_block
+
+            async def slow(*args, **kw):
+                await asyncio.sleep(4)          # a busy database
+                return await real(*args, **kw)
+
+            live._save_block = slow
+
+            async def run_soon():
+                await asyncio.sleep(0.3)
+                assert live.run("echo slow-$((3+4))") is None
+
+            runner = asyncio.create_task(run_soon())
+            found, failed = await _tool(core, token, "wait_for_command",
+                                        {"terminal_id": tid, "seconds": 2})
+            await runner
+            assert not failed and found["state"] == "ended", found
+            assert found["command"]["saved"] is False, found
+            assert "output" not in found["command"], found
+            seq = found["command"]["seq"]
+            assert f"seq {seq}" in found["next"], found
+            assert await core.pool.fetchval(
+                "SELECT count(*) FROM ai_reads WHERE terminal_id = $1", live.id) == 0
+            found, failed = await _tool(core, token, "wait_for_command",
+                                        {"terminal_id": tid, "seq": seq, "seconds": 8})
+            assert not failed and found["state"] == "ended", found
+            assert "slow-7" in found["command"]["output"], found
+            await live.close()
+    finally:
+        shutil.rmtree(home, ignore_errors=True)
+
+
+async def test_a_wait_knows_the_ai_proposal_whatever_came_between(h):
+    """0.1.31, the second look of the security review: the AI's proposal is
+    its own by the proposal, not by its name or its state. Read while it
+    ran, its end is still given; a new proposal meanwhile does not make the
+    one ending someone else's; a Run the shell never got leaves nothing to
+    wait for; a command tTerm could not keep is said so, once."""
+    login, full = _login_shell()
+    if not full:
+        return
+    home = _home()
+    settle = ai.PROPOSAL_SETTLE_SECONDS
+    try:
+        async with h.core() as core, \
+                shell_server(await _ca_public(core), home, login) as (port, host_key):
+            machine = await _live_machine(core, port, host_key)
+            live = await core.terminals.open(core.owner, machine, 90, 25)
+            await _until(lambda: _prompts(live) >= 1, what="the first prompt")
+            tid = str(live.id)
+            token = (await _connect(core, [(machine, True, True)], can=CAN_ALL))["access_token"]
+            ai.PROPOSAL_SETTLE_SECONDS = 0
+
+            async def propose(command):
+                found, failed = await _tool(core, token, "propose_command",
+                                            {"terminal_id": tid, "command": command})
+                assert not failed, found
+                return found["proposed"]["id"]
+
+            async def run_it(pid, command):
+                async with page_socket(core.page_port) as ws:
+                    await ws.send(json.dumps({"op": "attach", "ch": 1, "id": tid,
+                                              "after": None, "cols": 90, "rows": 25}))
+                    await _frames(ws, _op("replayed"))
+                    await ws.send(json.dumps({"op": "run", "ch": 1, "command": command,
+                                              "proposal": pid}))
+                    await _frames(ws, _op("ai.proposal"))
+
+            async def idle():
+                await _until(lambda: live._block is None and not live._typed
+                             and live.markers, what="back at the prompt")
+
+            # Read while it ran: its end is given all the same, its own.
+            command = "sh -c 'echo p-start; sleep 2; echo p-end; exit 3'"
+            pid = await propose(command)
+            await run_it(pid, command)
+            await _until(lambda: live._block is not None, what="it runs")
+            seen, _ = await _tool(core, token, "read_terminal", {"terminal_id": tid})
+            assert seen["running"]["command"] == command, seen
+            ran = await _became_block(core, pid)
+            await idle()
+            found, failed = await _tool(core, token, "wait_for_command",
+                                        {"terminal_id": tid, "seconds": 3})
+            assert not failed and found["state"] == "ended", found
+            assert found["command"]["seq"] == ran and found["command"]["exitCode"] == 3
+            assert found["command"]["yours"] is True, found
+            # A new proposal while it waits for the one running: that one
+            # is still its own.
+            command = "sh -c 'sleep 1.5; echo A-done'"
+            pid = await propose(command)
+            await run_it(pid, command)
+            await _until(lambda: live._block is not None, what="it runs")
+            waiter = asyncio.create_task(_tool(core, token, "wait_for_command",
+                                               {"terminal_id": tid, "seconds": 8}))
+            await asyncio.sleep(0.3)
+            later = await propose("echo B")
+            found, failed = await waiter
+            assert not failed and found["command"]["command"] == command, found
+            assert found["command"]["yours"] is True, found
+            assert "not your proposal" not in found["next"], found
+            # The person's own command first: not its own, and it says
+            # its proposal waits.
+            await idle()
+            assert live.run("echo person-own") is None
+            await idle()
+            found, failed = await _tool(core, token, "wait_for_command", {
+                "terminal_id": tid, "seq": live.commands_since(0)[-1]["seqStart"]})
+            assert found["command"]["yours"] is False, found
+            assert "which still waits" in found["next"], found
+            r = await request(core.page_port, "POST", f"/api/ai/proposals/{later}/remove",
+                              headers=CHANGE, body=b"{}")
+            assert r.status == 200, r.text
+            # Run pressed, and the shell never got it: nothing to wait for,
+            # soon.
+            command = "echo never-started"
+            pid = await propose(command)
+            await ai.decide(core.pool, core.owner.id, uuid.UUID(pid), "run",
+                            terminal_id=live.id, command=command)
+            live.expect_proposal(uuid.UUID(pid), "Claude", command, 0.1)
+            began = time.monotonic()
+            found, failed = await _tool(core, token, "wait_for_command",
+                                        {"terminal_id": tid, "seconds": 5})
+            assert not failed and found["state"] == "nothing", found
+            assert "never got it" in found["next"], found
+            assert time.monotonic() - began < 3, "it did not wait the time out"
+            # A command tTerm could not keep: said so, at once, with or
+            # without its seq; not "saved: false" over and over.
+            real = live._save_block
+
+            async def failed_save(*args, **kw):
+                return None                     # as after a database error
+
+            live._save_block = failed_save
+            try:
+                command = "echo lost-$((5+5))"
+                pid = await propose(command)
+                await run_it(pid, command)
+                await idle()
+                lost = live.commands_since(0)[-1]["seqStart"]
+                await _until(lambda: not live.saving(lost), what="the save gave up")
+                found, failed = await _tool(core, token, "wait_for_command",
+                                            {"terminal_id": tid, "seq": lost})
+                assert failed and "could not keep" in found, found
+                found, failed = await _tool(core, token, "wait_for_command",
+                                            {"terminal_id": tid, "seconds": 1})
+                assert not failed and found["state"] == "nothing", found
+            finally:
+                live._save_block = real
+            await live.close()
+    finally:
+        ai.PROPOSAL_SETTLE_SECONDS = settle
+        shutil.rmtree(home, ignore_errors=True)

@@ -347,6 +347,11 @@ class Terminal:
         #: A proposal of an AI the person ran or put into the line (0.1.30):
         #: (its id, the AI, the command, until when it is expected).
         self._proposal: tuple[uuid.UUID, str, str, float] | None = None
+        #: The proposals the last commands were, by where each started
+        #: (0.1.31: an AI waiting knows its own).
+        self._ran_proposals: dict[int, uuid.UUID] = {}
+        #: Where the commands being saved now started (0.1.31).
+        self._saving_seqs: set[int] = set()
         self._side = asyncio.Semaphore(SIDE_AT_ONCE)
         self._saving: set[asyncio.Task] = set()
         self._tick = asyncio.Event()
@@ -427,6 +432,31 @@ class Terminal:
                                              or entry["seqEnd"] > seq):
                 return dict(entry)
         return None
+
+    def commands_since(self, seq: int) -> list[dict]:
+        """The last commands that started after the number `seq`, oldest
+        first; seqEnd is None while one runs (0.1.31: what an AI waits
+        for)."""
+        return [dict(e) for e in self._recent if e["seqStart"] > seq]
+
+    def command_at(self, seq_start: int) -> dict | None:
+        """One of the last commands, by the number it started at."""
+        for entry in reversed(self._recent):
+            if entry["seqStart"] == seq_start:
+                return dict(entry)
+        return None
+
+    def saving(self, seq_start: int) -> bool:
+        """Whether the command that started there is being saved now: it
+        ended a moment ago (0.1.31). One whose saving failed is not."""
+        return seq_start in self._saving_seqs
+
+    async def saved(self, timeout: float) -> None:
+        """Until the commands that ended so far are saved, `timeout` at
+        most (0.1.31: what an AI waited for is read from the database)."""
+        pending = list(self._saving)
+        if pending:
+            await asyncio.wait(pending, timeout=timeout)
 
     @property
     def tick(self) -> asyncio.Event:
@@ -704,6 +734,10 @@ class Terminal:
                 "command": m.field(0), "cwd": self.cwd, "branch": self.branch,
                 "seqStart": self.last_seq, "seqEnd": None, "cols": self.cols,
                 "at": at, "proposedBy": proposed[1] if proposed else None})
+            if proposed is not None:
+                self._ran_proposals[self.last_seq] = proposed[0]
+                while len(self._ran_proposals) > self._recent.maxlen:
+                    del self._ran_proposals[next(iter(self._ran_proposals))]
 
     def expect_proposal(self, proposal: uuid.UUID, ai: str, command: str,
                         seconds: float) -> None:
@@ -716,6 +750,25 @@ class Terminal:
     def forget_proposal(self) -> None:
         """What was expected did not run after all."""
         self._proposal = None
+
+    def expecting(self, proposal: uuid.UUID) -> bool:
+        """Whether the next command, as it is, would be this proposal:
+        put into the line, and not used up or run out (0.1.31)."""
+        expected = self._proposal
+        return (expected is not None and expected[0] == proposal
+                and time.monotonic() <= expected[3])
+
+    def proposal_of(self, seq_start: int) -> uuid.UUID | None:
+        """The proposal one of the last commands was, if it was one."""
+        return self._ran_proposals.get(seq_start)
+
+    def command_of(self, proposal: uuid.UUID) -> int | None:
+        """Where the one of the last commands that was this proposal
+        started, if one was: saved or not yet."""
+        for seq_start, ran in self._ran_proposals.items():
+            if ran == proposal:
+                return seq_start
+        return None
 
     def _proposed_now(self, command: str) -> tuple[uuid.UUID, str] | None:
         """For a command that starts: the proposal it is, if it is the one
@@ -747,7 +800,10 @@ class Terminal:
             block, exit_code, output, cut, self.last_seq,
             dt.datetime.now(dt.UTC)))
         self._saving.add(task)
+        self._saving_seqs.add(block.seq_start)
         task.add_done_callback(self._saving.discard)
+        task.add_done_callback(
+            lambda _, seq_start=block.seq_start: self._saving_seqs.discard(seq_start))
         return trim
 
     async def _save_block(self, block: Block, exit_code: int | None,
@@ -781,10 +837,14 @@ class Terminal:
                     block.cols, text, block.proposed_by)
                 if block.proposal is not None:
                     # Run as an AI proposed it (0.1.30): the proposal knows
-                    # which block it became.
+                    # which block it became; one put into the line first is
+                    # run now too (0.1.31: nothing of it waits any more).
                     await conn.execute(
-                        "UPDATE ai_proposals SET seq = $2 WHERE id = $1",
-                        block.proposal, block.seq_start)
+                        "UPDATE ai_proposals SET seq = $2, state = CASE WHEN "
+                        "state = 'inserted' THEN 'run' ELSE state END, "
+                        "decided_at = CASE WHEN state = 'inserted' "
+                        "THEN $3 ELSE decided_at END WHERE id = $1",
+                        block.proposal, block.seq_start, block.started_at)
                 await logs.command_ran(
                     conn, project_id=self.machine.project_id,
                     user_id=self.owner.id, machine_id=self.machine.id,

@@ -25,6 +25,13 @@ tTerm only: `propose_command` puts a command in one of the person's open
 terminals, where it waits until they run it (the AI runs nothing), and
 `write_notes` writes notes under the lines of the logs it sees, signed as
 the AI on the person's behalf. The tools an AI has are what it may do.
+
+From 0.1.31 `wait_for_command` waits, a little at a time, for a command in
+a terminal it sees to end: the one it names, the one running, or the next,
+such as its proposal once the person runs it. So it can say what came of
+a command, or write the note asked for, the moment it ends (the owner,
+06.11: "дать команду и сразу после её выполнения написать комментарий к
+ней").
 """
 from __future__ import annotations
 
@@ -32,6 +39,7 @@ import asyncio
 import base64
 import binascii
 import collections
+import contextlib
 import datetime as dt
 import json
 import logging
@@ -72,6 +80,30 @@ ENDED_DAYS = 7
 #: write_notes asks again what the AI may do and see, at least this often
 #: while it writes (0.1.30: the person may turn notes off meanwhile).
 RECHECK_SECONDS = 0.5
+#: How long wait_for_command waits at most, one question (0.1.31): under
+#: what AI apps give a tool before they give up on it. ChatGPT ends any call
+#: after 60 s, Claude Code over HTTP after about 60, and claude.ai has been
+#: seen giving up after 30; not ended by then, the AI asks again. With the
+#: checks and the reads after it, an answer comes in under 25 s.
+WAIT_SECONDS = 20
+#: Waits of one connection at once.
+WAITS_AT_ONCE = 3
+#: A command that ended is read from the database: its block is saved a
+#: moment after, this long at most.
+WAIT_SAVED_SECONDS = 3.0
+#: While the AI's proposal waits for the person, how often a wait asks
+#: whether it was removed or replaced meanwhile.
+WAIT_LOOK_SECONDS = 0.5
+#: How often a wait looks at its terminal at most, however much it prints.
+WAIT_TICKS = 10
+#: The AI's proposal the person ran before the AI began to wait: a wait
+#: without seq gives its command, if the AI has not read it since it ended
+#: and it was run this long ago at most.
+WAIT_RAN_MINUTES = 15
+#: A Run with no command of it started, and none expected any more, this
+#: long after it: the shell never got it (the moment between the Run and
+#: the terminal expecting it is far shorter).
+WAIT_RUN_GRACE_SECONDS = 1.0
 
 SERVER_INFO = {"name": "tterm", "title": "tTerm", "version": __version__,
                "websiteUrl": "https://tterm.net"}
@@ -93,7 +125,9 @@ INSTRUCTIONS = (
 MAY_PROPOSE = (
     " You may propose a command for one of their open terminals "
     "(propose_command): it waits there, and only they run it, when they "
-    "choose to. Propose only what they asked for or agreed to.")
+    "choose to. Propose only what they asked for or agreed to. Then "
+    "wait_for_command answers once they ran it and it ended, with what it "
+    "printed: tell them what came of it.")
 MAY_NOTE = (
     " You may write notes under the lines of the logs (write_notes), when "
     "they ask for them: write in {language}. A note is signed as yours, on "
@@ -218,6 +252,42 @@ TOOLS = [
             "additionalProperties": False,
         },
         "annotations": {"title": "Search", **_READ_ONLY},
+    },
+    {
+        # 0.1.31.
+        "name": "wait_for_command",
+        "title": "Wait for a command to end",
+        "description": (
+            f"Waits, up to {WAIT_SECONDS} seconds, for a command in one of the "
+            "person's terminals to end, then gives what it printed and how it "
+            "ended, as read_terminal does. Without seq: the command running "
+            "now, or else your proposal there, once the person runs it (at "
+            "once if they already did), or else the next one to start. Not "
+            "ended by then: call it again, with its seq. It also says what "
+            "became of your proposals there: one removed or replaced leaves "
+            "nothing to wait for."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "terminal_id": {"type": "string",
+                                "description": "A terminal's id, from "
+                                               "list_machines."},
+                "seq": {"type": "integer", "minimum": 1,
+                        "description": "A command that started already: its "
+                                       "seq, from read_terminal or an earlier "
+                                       "wait."},
+                "seconds": {"type": "integer", "minimum": 1,
+                            "maximum": WAIT_SECONDS, "default": WAIT_SECONDS,
+                            "description": "How long to wait, at most."},
+                "output_chars": {"type": "integer", "minimum": 200,
+                                 "maximum": 20000, "default": 4000,
+                                 "description": "Of its output, this much of "
+                                                "its end."},
+            },
+            "required": ["terminal_id"],
+            "additionalProperties": False,
+        },
+        "annotations": {"title": "Wait for a command to end", **_READ_ONLY},
     },
 ]
 
@@ -367,6 +437,8 @@ class Mcp:
         #: the hour is counted again from the log.
         self._notes: dict[uuid.UUID, collections.deque] = {}
         self._held: dict[uuid.UUID, int] = {}
+        #: The waits of each connection going on now (0.1.31).
+        self._waits: dict[uuid.UUID, int] = {}
 
     # ------------------------------------------------------------ the wire
 
@@ -565,7 +637,8 @@ class Mcp:
                      "read_terminal": self._read_terminal,
                      "read_output": self._read_output,
                      "read_log": self._read_log,
-                     "search": self._search}
+                     "search": self._search,
+                     "wait_for_command": self._wait_for_command}
             if c.can_see and c.can_propose:
                 tools["propose_command"] = self._propose_command
             if c.can_see and c.can_note:
@@ -691,42 +764,14 @@ class Mcp:
         feed = await self.terminals.feed(terminal_id, c.user_id, before, limit)
         if feed is None:
             raise ToolError("No such terminal among those you may see.")
-
-        def made() -> list[dict]:
-            out = []
-            for b in feed["blocks"]:
-                raw = base64.b64decode(b["output"]) if b["output"] else b""
-                text, shortened = _tail(leaks.cut(search.screen_text(raw)), chars)
-                out.append({
-                    "seq": b["seqStart"], "command": leaks.cut(b["command"]),
-                    "redacted": b.get("redacted") is not None,
-                    "cwd": b["cwd"], "branch": b["branch"] or None,
-                    "startedAt": self._when(c, b["startedAt"]),
-                    "seconds": (round((b["finishedAt"] - b["startedAt"]) / 1000, 1)
-                                if b["finishedAt"] and b["startedAt"] else None),
-                    "exitCode": b["exitCode"],
-                    "output": text,
-                    "outputShortened": shortened or b["partial"] or b["cut"],
-                    "notes": [_note(self, c, n) for n in b.get("notes") or []]})
-                if b.get("proposedBy"):
-                    # The person ran it as an AI proposed it (0.1.30).
-                    out[-1]["proposedBy"] = b["proposedBy"]
-            return out
-
-        commands = await asyncio.to_thread(made)
+        commands = await asyncio.to_thread(
+            lambda: [self._command(c, b, chars) for b in feed["blocks"]])
         running = None
         seqs = [b["seq"] for b in commands]
         if live is not None:
-            now = live.running_output()
-            if now is not None:
-                info, raw, middle = now
-                text, shortened = await asyncio.to_thread(
-                    lambda: _tail(leaks.cut(search.screen_text(raw)), chars))
-                running = {"seq": info["seqStart"],
-                           "command": leaks.cut(info["command"] or ""),
-                           "cwd": info["cwd"], "since": self._when(c, info["at"]),
-                           "output": text, "outputShortened": shortened or middle}
-                seqs.append(info["seqStart"])
+            running = await self._running(c, live, chars)
+            if running is not None:
+                seqs.append(running["seq"])
         await ai.mark_read(self.pool, c.id, terminal_id, seqs)
         await self._read(c, terminal_id, seqs, machine)
         state = live.describe() if live is not None else None
@@ -749,6 +794,298 @@ class Mcp:
                  "decidedAt": self._when(c, p["decidedAt"]), "seq": p["seq"]}
                 for p in await ai.proposals_of(self.pool, terminal_id, c.id)]
         return found
+
+    def _command(self, c: ai.Connection, b: dict, chars: int) -> dict:
+        """A command that ended, as the AI reads it: a block of the feed,
+        its output's end cut of secrets. Work: not in the event loop."""
+        raw = base64.b64decode(b["output"]) if b["output"] else b""
+        text, shortened = _tail(leaks.cut(search.screen_text(raw)), chars)
+        item = {
+            "seq": b["seqStart"], "command": leaks.cut(b["command"]),
+            "redacted": b.get("redacted") is not None,
+            "cwd": b["cwd"], "branch": b["branch"] or None,
+            "startedAt": self._when(c, b["startedAt"]),
+            "seconds": (round((b["finishedAt"] - b["startedAt"]) / 1000, 1)
+                        if b["finishedAt"] and b["startedAt"] else None),
+            "exitCode": b["exitCode"],
+            "output": text,
+            "outputShortened": shortened or b["partial"] or b["cut"],
+            "notes": [_note(self, c, n) for n in b.get("notes") or []]}
+        if b.get("proposedBy"):
+            # The person ran it as an AI proposed it (0.1.30).
+            item["proposedBy"] = b["proposedBy"]
+        return item
+
+    async def _running(self, c: ai.Connection, live, chars: int) -> dict | None:
+        """The command running in a live terminal, with what it printed so
+        far; None while none runs."""
+        now = live.running_output()
+        if now is None:
+            return None
+        info, raw, middle = now
+        text, shortened = await asyncio.to_thread(
+            lambda: _tail(leaks.cut(search.screen_text(raw)), chars))
+        return {"seq": info["seqStart"],
+                "command": leaks.cut(info["command"] or ""),
+                "cwd": info["cwd"], "since": self._when(c, info["at"]),
+                "output": text, "outputShortened": shortened or middle}
+
+    async def _ended_command(self, c: ai.Connection, terminal_id: uuid.UUID,
+                             seq: int, chars: int) -> dict | None:
+        """A command of the terminal that ended, by its seq, as the AI reads
+        it; None if there is none such (or it is no longer kept)."""
+        feed = await self.terminals.feed(terminal_id, c.user_id, seq + 1, 1)
+        blocks = feed["blocks"] if feed is not None else []
+        if not blocks or blocks[-1]["seqStart"] != seq:
+            return None
+        return await asyncio.to_thread(self._command, c, blocks[-1], chars)
+
+    async def _wait_for_command(self, c: ai.Connection, args: dict) -> dict:
+        """0.1.31: until a command in the terminal ends, WAIT_SECONDS at
+        most; what it printed and how it ended, or that it runs on, or that
+        nothing came."""
+        terminal_id, m, live, machine = await self._terminal(c, args)
+        seq = _int_arg(args, "seq", None, 1, 2 ** 62)
+        seconds = _int_arg(args, "seconds", WAIT_SECONDS, 1, WAIT_SECONDS)
+        chars = _int_arg(args, "output_chars", 4000, 200, 20000)
+        if seq is not None and live is not None and seq > live.last_seq:
+            raise ToolError("No command with this seq has started yet: "
+                            "read_terminal says which there are.")
+        if self._waits.get(c.id, 0) >= WAITS_AT_ONCE:
+            raise ToolError(f"You wait for {WAITS_AT_ONCE} commands already: "
+                            "one wait at a time is enough.")
+        self._waits[c.id] = self._waits.get(c.id, 0) + 1
+        deadline = time.monotonic() + seconds
+        try:
+            state, target, why = await self._waited(c, terminal_id, live, seq,
+                                                    deadline)
+            # What ended is settled, its block saved, before what the AI may
+            # see is asked again: nothing is read after that but the rows
+            # (the security review of 0.1.31).
+            if state == "running" and live is not None and _ended(live, target):
+                state = "ended"
+            if state == "ended" and live is not None:
+                await live.saved(min(WAIT_SAVED_SECONDS,
+                                     max(0.5, deadline - time.monotonic())))
+        finally:
+            self._waits[c.id] -= 1
+            if not self._waits[c.id]:
+                del self._waits[c.id]
+        # What it may see, asked again after the wait: the person may have
+        # taken the terminal from it meanwhile, or the keys closed.
+        now = await ai.connection_again(self.pool, c.id)
+        if now is None or not now.can_see:
+            raise ToolError("The person disconnected you meanwhile.")
+        c = now
+        terminal_id, m, live, machine = await self._terminal(c, args)
+        command = None
+        if state == "running":
+            command = (await self._running(c, live, chars)
+                       if live is not None else None)
+            if command is None or command["seq"] != target:
+                # It ended this moment, after the check: it is read in the
+                # next wait, checked again.
+                state, command = "ended", {"seq": target, "saved": False}
+        elif state == "ended":
+            command = await self._ended_command(c, terminal_id, target, chars)
+            if command is None:
+                if live is not None and live.saving(target):
+                    # Ended, and tTerm still saves it.
+                    command = {"seq": target, "saved": False}
+                elif live is not None and live.command_at(target) is not None:
+                    raise ToolError(f"The command at seq {target} ended, but "
+                                    "tTerm could not keep it: read_terminal "
+                                    "says what there is.")
+                elif seq is not None:
+                    raise ToolError("No such command in this terminal, or it "
+                                    "is no longer kept: read_terminal says "
+                                    "which there are.")
+                else:
+                    state = "nothing"
+        found: dict = {"terminalId": str(terminal_id), "machine": m.name,
+                       "state": state}
+        if command is not None:
+            found["command"] = command
+            if command.get("saved") is not False:
+                if c.can_propose:
+                    # Whether it is one it proposed: by the proposal, not by
+                    # the AI's name, which another connection may share.
+                    command["yours"] = await self._yours(c, terminal_id, live,
+                                                         target)
+                await ai.mark_read(self.pool, c.id, terminal_id, [target])
+                await self._read(c, terminal_id, [target], machine)
+        latest = None
+        if c.can_propose:
+            mine = await ai.proposals_of(self.pool, terminal_id, c.id, 3)
+            latest = mine[0] if mine else None
+            found["proposals"] = [
+                {"command": p["command"], "state": p["state"],
+                 "at": self._when(c, p["at"]),
+                 "decidedAt": self._when(c, p["decidedAt"]), "seq": p["seq"]}
+                for p in mine]
+        if command is not None and command.get("saved") is False:
+            found["next"] = (f"It ended this moment, and tTerm is saving it: "
+                             f"call wait_for_command again with seq {target} "
+                             "to read it.")
+            return found
+        found["next"] = {
+            "ended": "It ended: tell the person what came of it"
+                     + (", or write the note they asked for (write_notes, "
+                        "with this terminal_id and seq)." if c.can_note else "."),
+            "running": (f"It runs on: call wait_for_command again with seq "
+                        f"{target} to wait more."),
+            "waiting": ("Your proposal still waits for the person to run it: "
+                        "call wait_for_command again to wait more, or leave "
+                        "it to them."),
+            "nothing": (f"Your proposal was {why}: nothing to wait for." if why
+                        else "No command started in this terminal meanwhile."),
+            "terminal ended": "This terminal has ended.",
+        }[state]
+        if state in ("ended", "running") and latest is not None \
+                and command.get("yours") is False:
+            pid = uuid.UUID(latest["id"])
+            ran_as = latest["seq"] if latest["seq"] is not None else (
+                live.command_of(pid) if live is not None else None)
+            if _still_waits(latest, live):
+                # The person's own command came first: the proposal waits on.
+                found["next"] += (" This was not your proposal, which still "
+                                  "waits: call wait_for_command again, "
+                                  "without seq, to wait for it.")
+            elif latest["state"] == "run" and ran_as is not None:
+                found["next"] += (" This was not your proposal: that ran as "
+                                  f"seq {ran_as}.")
+        return found
+
+    async def _waited(self, c: ai.Connection, terminal_id: uuid.UUID, live,
+                      seq: int | None, deadline: float
+                      ) -> tuple[str, int | None, str | None]:
+        """Waits for the command `seq`, or the one running, or the AI's
+        proposal once run, or the next one to start, until `deadline`:
+        (how it stands, its seq, and for "nothing" what became of the AI's
+        proposal, if one waited)."""
+        if live is None:
+            # Not running any more: only a command that ended is there.
+            return ("ended", seq, None) if seq is not None else (
+                "terminal ended", None, None)
+        target = seq
+        since = live.last_seq
+        pending = None
+        if target is None:
+            running = live.describe().get("running")
+            if running is not None:
+                target = running["seqStart"]
+            elif c.can_propose:
+                target, pending = await self._proposal_to_wait_for(
+                    c, terminal_id, live)
+        look_at = 0.0
+        while True:
+            tick = live.tick
+            if target is None:
+                started = live.commands_since(since)
+                if pending is not None:
+                    # Its proposal, if that started; else the first that did.
+                    started = [e for e in started if live.proposal_of(
+                        e["seqStart"]) == pending] or started
+                if started:
+                    target = started[0]["seqStart"]
+            if target is not None and _ended(live, target):
+                return "ended", target, None
+            if live.state == "ended":
+                return "terminal ended", target, None
+            if pending is not None and target is None \
+                    and time.monotonic() >= look_at:
+                row = await self.pool.fetchrow(
+                    "SELECT state, seq, decided_at FROM ai_proposals "
+                    "WHERE id = $1", pending)
+                if row is not None and row["seq"] is not None:
+                    # Run and ended, its block saved: the command it became.
+                    target = row["seq"]
+                    continue
+                state = row["state"] if row is not None else "removed"
+                if state == "inserted" and not live.expecting(pending):
+                    # Put into the line; then another command ran, or its
+                    # time is up: none of it will come.
+                    return ("nothing", None,
+                            "put into the line and not run as it was")
+                if state == "run" and _not_started(
+                        {"id": str(pending), "state": state, "seq": None,
+                         "decidedAt": row["decided_at"]}, live):
+                    return "nothing", None, "run, and the shell never got it"
+                if state not in ("waiting", "inserted", "run"):
+                    return "nothing", None, state
+                look_at = time.monotonic() + WAIT_LOOK_SECONDS
+            left = deadline - time.monotonic()
+            if left <= 0:
+                break
+            if pending is not None and target is None:
+                left = min(left, max(0.05, look_at - time.monotonic()))
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(tick.wait(), left)
+                # A terminal that prints a lot ticks all the time: a wait
+                # looks again WAIT_TICKS times a second at most.
+                await asyncio.sleep(min(1 / WAIT_TICKS,
+                                        max(0.0, deadline - time.monotonic())))
+        if target is not None:
+            return "running", target, None
+        return ("waiting" if pending is not None else "nothing"), None, None
+
+    async def _proposal_to_wait_for(self, c: ai.Connection,
+                                    terminal_id: uuid.UUID, live
+                                    ) -> tuple[int | None, uuid.UUID | None]:
+        """The AI's latest proposal in the terminal, for a wait without seq
+        while nothing runs (the security review of 0.1.31): one that waits
+        for the person, or is in the line yet, is waited for; one the person
+        ran before the AI began to wait (it often says something in between)
+        is its command, if the AI has not read it, or, being saved yet, in
+        a moment. (the seq to give, or the proposal to wait for)"""
+        ran_since = dt.datetime.now(dt.UTC) - dt.timedelta(
+            minutes=WAIT_RAN_MINUTES)
+        for p in await ai.proposals_of(self.pool, terminal_id, c.id, 1):
+            pid = uuid.UUID(p["id"])
+            if _still_waits(p, live):
+                return None, pid
+            if p["state"] not in ("run", "inserted") or p["decidedAt"] is None \
+                    or p["decidedAt"] <= ran_since:
+                return None, None
+            ran = p["seq"]
+            if ran is None:
+                ran = live.command_of(pid)
+                if ran is None:
+                    # Run and not started yet: in a moment. Never started,
+                    # or put into the line and not run as it was: none of
+                    # it will come.
+                    waits = p["state"] == "run" and not _not_started(p, live)
+                    return None, (pid if waits else None)
+                if _ended(live, ran) and not live.saving(ran):
+                    # Ended and not being saved: saved this moment, or never.
+                    ran = await self.pool.fetchval(
+                        "SELECT seq FROM ai_proposals WHERE id = $1", pid)
+                    if ran is None:
+                        return None, None
+            if not await self._read_after_end(c, terminal_id, ran):
+                return ran, None
+        return None, None
+
+    async def _read_after_end(self, c: ai.Connection, terminal_id: uuid.UUID,
+                              seq: int) -> bool:
+        """Whether the AI read a command after it ended: read while it ran,
+        it has not seen how it ended (the security review of 0.1.31)."""
+        return bool(await self.pool.fetchval(
+            "SELECT true FROM ai_reads r JOIN blocks b "
+            "ON b.terminal_id = r.terminal_id AND b.seq_start = r.seq_start "
+            "AND b.kind = 'command' WHERE r.connection_id = $1 "
+            "AND r.terminal_id = $2 AND r.seq_start = $3 "
+            "AND r.at >= b.finished_at", c.id, terminal_id, seq))
+
+    async def _yours(self, c: ai.Connection, terminal_id: uuid.UUID, live,
+                     seq: int) -> bool:
+        """Whether a command of the terminal is one this AI proposed: by the
+        proposal it was (0.1.31)."""
+        ran = live.proposal_of(seq) if live is not None else None
+        return bool(await self.pool.fetchval(
+            "SELECT true FROM ai_proposals WHERE connection_id = $1 "
+            "AND terminal_id = $2 AND (seq = $3 OR id = $4) LIMIT 1",
+            c.id, terminal_id, seq, ran))
 
     async def _read_output(self, c: ai.Connection, args: dict) -> dict:
         terminal_id, m, _, machine = await self._terminal(c, args)
@@ -1037,6 +1374,34 @@ def _tools_of(c: ai.Connection) -> list[dict]:
         return []
     return (TOOLS + ([TOOL_PROPOSE] if c.can_propose else [])
             + ([TOOL_NOTES] if c.can_note else []))
+
+
+def _ended(live, seq: int) -> bool:
+    """Whether a command of a live terminal ended: it did, or it is from
+    before the last ones the terminal keeps (0.1.31)."""
+    entry = live.command_at(seq)
+    return entry is None or entry["seqEnd"] is not None
+
+
+def _not_started(p: dict, live) -> bool:
+    """Whether a proposal Run was pressed on never reached the shell: no
+    command of it, none expected, a moment after (0.1.31)."""
+    if p["state"] != "run" or p["seq"] is not None or live is None:
+        return False
+    pid = uuid.UUID(p["id"])
+    return (live.command_of(pid) is None and not live.expecting(pid)
+            and p["decidedAt"] is not None
+            and dt.datetime.now(dt.UTC) - p["decidedAt"]
+            > dt.timedelta(seconds=WAIT_RUN_GRACE_SECONDS))
+
+
+def _still_waits(p: dict, live) -> bool:
+    """Whether an AI's proposal waits for the person yet: in its block, or
+    put into the line and not used up (0.1.31)."""
+    if p["state"] == "waiting":
+        return True
+    return (p["state"] == "inserted" and p["seq"] is None and live is not None
+            and live.expecting(uuid.UUID(p["id"])))
 
 
 def _text_result(found, *, error: bool = False) -> dict:

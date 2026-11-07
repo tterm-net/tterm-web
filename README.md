@@ -4,7 +4,11 @@ tTerm in the browser: a real terminal with command blocks, for people who work
 with servers and for their teams. Projects, roles, a journal of who ran what,
 and watching a colleague's terminal, always with them knowing.
 
-**Status:** early development. Version 0.1.29 lets an AI see your
+**Status:** early development. Version 0.1.31 lets that AI wait for a
+command to end, one it proposed once you run it among them, and tell you
+at once what came of it, or note it under the command. Version 0.1.30
+lets it propose commands, which only you run, and write notes in the
+log. Version 0.1.29 lets an AI see your
 terminals over MCP: Claude, ChatGPT, Claude Code, Cursor or any AI that
 connects remote MCP servers adds `https://app.tterm.net/mcp`, opens a page
 of tTerm where you tick the machines (their terminals, their log), and
@@ -539,6 +543,21 @@ the lines it sees, signed as the AI on the person's behalf, in the language
 of the person's tTerm, as they show and then cut of secrets: up to 200 at
 once and 500 an hour (requests at once and a restart included), never
 changed, like any note.
+
+From 0.1.31 it may wait for a command to end, 20 seconds a question at
+most (under what AI apps give a tool before they give up on it; not ended
+by then, it asks again): the command it names, the one running, its
+proposal once the person runs it (at once if they did before it began to
+wait and it has not read how it ended), or the next. Then it has what the
+command printed and how it ended at once, and whether it is one it
+proposed (by the proposal, not by its name), to tell the person or to
+write the note asked for, which the page puts under the block as it
+comes. A proposal removed or replaced meanwhile, or a Run the shell never
+got, ends the wait at once, with nothing to wait for; one put into the
+line and run as it was is run. Waiting only reads,
+so looking is enough for it; what ended is saved before what the AI may
+see is asked again, when a wait ends, and nothing is read after that but
+the rows; a connection waits for three commands at once at most.
 
 The page guards itself as well: it answers only when the browser asks for
 its own address (`TTERM_PAGE_URL`; on a laptop `localhost` or `127.0.0.1`
